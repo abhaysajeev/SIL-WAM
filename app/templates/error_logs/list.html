@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Error Logs — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/docview.css">
+<style>
+  .el-unseen-dot {
+    display:inline-block;width:7px;height:7px;border-radius:50%;
+    background:var(--red,#e53935);margin-right:6px;vertical-align:middle;
+  }
+  .el-mark-all {
+    font-size:11px;font-weight:600;letter-spacing:.05em;
+    color:var(--muted);background:transparent;border:1px solid var(--line-2);
+    padding:6px 12px;cursor:pointer;transition:all .18s;
+  }
+  .el-mark-all:hover { background:var(--bg);color:var(--ink); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dv-page-header">
+  <div>
+    <div class="dv-title">
+      Error Logs
+      {% if unseen_count > 0 %}
+      <span style="font-size:13px;font-weight:600;color:var(--red);margin-left:8px;">
+        {{ unseen_count }} unseen
+      </span>
+      {% endif %}
+    </div>
+    <div class="dv-subtitle">{{ rows | length }} most recent — newest first</div>
+  </div>
+  <div class="dv-actions">
+    {% if unseen_count > 0 %}
+    <button class="el-mark-all" id="markAllBtn">
+      <i class="fas fa-check-double"></i> Mark all seen
+    </button>
+    {% endif %}
+  </div>
+</div>
+
+<div class="dv-search-bar">
+  <i class="fas fa-search dv-search-icon"></i>
+  <input type="text" class="dv-search-input" id="searchInput" placeholder="Search by title or method…">
+</div>
+
+<div class="dv-table-wrap">
+  <table class="dv-table">
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Method</th>
+        <th>Type</th>
+        <th>User</th>
+        <th>Time</th>
+        <th>Seen</th>
+      </tr>
+    </thead>
+    <tbody id="tableBody">
+      {% for row in rows %}
+      <tr class="dv-row"
+          data-search="{{ row.title | lower }} {{ row.method | lower }} {{ row.error_type | lower }} {{ row.user | lower }}"
+          onclick="window.location='/error-logs/{{ row.id }}'">
+        <td>
+          {% if not row.seen %}<span class="el-unseen-dot"></span>{% endif %}
+          {{ row.title }}
+        </td>
+        <td><span class="dv-mono">{{ row.method }}</span></td>
+        <td><span class="dv-mono">{{ row.error_type }}</span></td>
+        <td>{{ row.user }}</td>
+        <td>{{ row.created_at }}</td>
+        <td>
+          {% if row.seen %}
+          <span class="dv-badge dv-badge-active">Seen</span>
+          {% else %}
+          <span class="dv-badge dv-badge-inactive">Unseen</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="dv-empty">No error logs yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  var input = document.getElementById('searchInput');
+  if (input) {
+    input.addEventListener('input', function () {
+      var q = input.value.toLowerCase();
+      document.querySelectorAll('#tableBody .dv-row').forEach(function (row) {
+        row.style.display = row.dataset.search.includes(q) ? '' : 'none';
+      });
+    });
+  }
+
+  var markAllBtn = document.getElementById('markAllBtn');
+  if (markAllBtn) {
+    markAllBtn.addEventListener('click', async function () {
+      markAllBtn.disabled = true;
+      try {
+        await fetchWithAuth('/api/error-logs/mark-all-seen', {
+          method: 'POST',
+        });
+        window.location.reload();
+      } catch (_) {
+        markAllBtn.disabled = false;
+      }
+    });
+  }
+})();
+</script>
+{% endblock %}

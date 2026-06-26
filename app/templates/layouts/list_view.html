@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{#
+  Universal List View
+  Context required:
+    dt      — doctype config dict (from doctypes.py)
+    rows    — list of dicts (records)
+    perms   — permissions dict
+    user    — current user dict
+    active  — sidebar active key (= dt.resource)
+#}
+{% block title %}{{ dt.title_plural }} — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/docview.css">
+{% endblock %}
+
+{% block content %}
+<div class="dv-page-header">
+  <div>
+    <div class="dv-title">{{ dt.title_plural }}</div>
+    <div class="dv-subtitle">{{ rows | length }} record{{ 's' if rows | length != 1 else '' }}</div>
+  </div>
+  <div class="dv-actions">
+    {% if perms[dt.perm_page].create %}
+    <a href="{{ dt.base_route }}/new" class="dv-btn dv-btn-primary">
+      <i class="ti ti-plus"></i>
+      <span>New {{ dt.title }}</span>
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="dv-toolbar">
+  <div class="dv-search">
+    <i class="dv-search-icon ti ti-search"></i>
+    <input type="text" id="dvSearch" class="dv-search-input" placeholder="Search {{ dt.title_plural | lower }}...">
+  </div>
+  <span class="dv-row-count" id="dvRowCount"></span>
+</div>
+
+<div class="dv-list-card">
+  <div class="dv-list-meta">
+    <div class="dv-list-meta-title">
+      <i class="{{ dt.icon }}"></i> {{ dt.title_plural }}
+    </div>
+    <span class="dv-list-count" id="dvCount">{{ rows | length }} total</span>
+  </div>
+
+  {% if rows %}
+  <table class="dv-table" id="dvTable">
+    <thead>
+      <tr>
+        {% for col in dt.list_columns %}
+        <th>{{ col.label }}</th>
+        {% endfor %}
+        {% if perms[dt.perm_page].write or perms[dt.perm_page].delete %}
+        <th style="width:48px;"></th>
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr data-id="{{ row.id }}" data-search="{{ row | dv_search_text }}"
+          onclick="window.location='{{ dt.base_route }}/{{ row.id }}'">
+        {% for col in dt.list_columns %}
+        <td>
+          {%- set val = row[col.field] -%}
+          {%- if col.type == 'status' -%}
+            {% if val %}
+            <span class="dv-badge dv-badge-green">Active</span>
+            {% else %}
+            <span class="dv-badge dv-badge-red">Inactive</span>
+            {% endif %}
+          {%- elif col.type == 'service_status' -%}
+            {% if val == 'completed' %}
+            <span class="dv-badge dv-badge-green">Completed</span>
+            {% elif val == 'in_progress' %}
+            <span class="dv-badge dv-badge-blue">In Progress</span>
+            {% elif val == 'waiting' %}
+            <span class="dv-badge dv-badge-gray">Waiting</span>
+            {% elif val == 'failed' %}
+            <span class="dv-badge dv-badge-red">Failed</span>
+            {% elif val == 'expired' %}
+            <span class="dv-badge dv-badge-gray">Expired</span>
+            {% else %}
+            <span style="color:var(--subtle)">—</span>
+            {% endif %}
+          {%- elif col.type == 'role_tag' -%}
+            {% if val %}
+            <span class="dv-badge dv-badge-blue">{{ val }}</span>
+            {% else %}
+            <span class="dv-badge dv-badge-gray">No Role</span>
+            {% endif %}
+          {%- elif col.type == 'mono' -%}
+            <span class="cell-mono {% if col.bold %}cell-bold{% endif %}">{{ val or '—' }}</span>
+          {%- else -%}
+            <span class="{% if col.bold %}cell-bold{% endif %}">{{ val or '—' }}</span>
+          {%- endif -%}
+        </td>
+        {% endfor %}
+        {% if perms[dt.perm_page].write or perms[dt.perm_page].delete %}
+        <td onclick="event.stopPropagation();">
+          <a href="{{ dt.base_route }}/{{ row.id }}" class="dv-row-open" title="Open">
+            <i class="ti ti-chevron-right"></i>
+          </a>
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div id="dvNoMatch" class="dv-hidden">
+    <div class="dv-empty">
+      <i class="dv-empty-icon ti ti-search"></i>
+      <div class="dv-empty-text">No records match your search.</div>
+    </div>
+  </div>
+
+  {% else %}
+  <div class="dv-empty">
+    <i class="dv-empty-icon {{ dt.icon }}"></i>
+    <div class="dv-empty-text">No {{ dt.title_plural | lower }} yet.</div>
+    {% if perms[dt.perm_page].create %}
+    <div class="dv-empty-hint">
+      <a href="{{ dt.base_route }}/new">Create the first {{ dt.title | lower }}</a>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  var input = document.getElementById('dvSearch');
+  var count = document.getElementById('dvCount');
+  var noMatch = document.getElementById('dvNoMatch');
+  if (!input) return;
+
+  input.addEventListener('input', function () {
+    var q = input.value.trim().toLowerCase();
+    var rows = document.querySelectorAll('#dvTable tbody tr');
+    var visible = 0;
+    rows.forEach(function (tr) {
+      var text = (tr.dataset.search || '').toLowerCase();
+      var show = !q || text.includes(q);
+      tr.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    if (count) count.textContent = visible + ' total';
+    if (noMatch) noMatch.style.display = (visible === 0 && q) ? 'block' : 'none';
+  });
+})();
+</script>
+{% endblock %}

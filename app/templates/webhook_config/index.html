@@ -1,0 +1,428 @@
+{% extends "base.html" %}
+{% block title %}Webhook Config — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/docview.css">
+<style>
+
+.wc-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 860px) { .wc-layout { grid-template-columns: 1fr; } }
+
+.wc-card {
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.wc-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  background: var(--bg-secondary, #f9fafb);
+}
+.wc-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text, #111);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wc-card-body { padding: 20px; }
+
+/* live state rows */
+.wc-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.wc-row:last-child { margin-bottom: 0; }
+.wc-row-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--subtle, #9ca3af);
+  min-width: 70px;
+  padding-top: 3px;
+  flex-shrink: 0;
+}
+.wc-row-value {
+  font-size: 13px;
+  color: var(--text, #111);
+  font-family: var(--f-mono, monospace);
+  word-break: break-all;
+  flex: 1;
+}
+.wc-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11.5px;
+  font-weight: 700;
+  border: 1px solid;
+}
+.wc-status-badge.active   { background:#f0fdf4;border-color:#bbf7d0;color:#15803d; }
+.wc-status-badge.inactive { background:#fef2f2;border-color:#fecaca;color:#b91c1c; }
+
+/* skeleton */
+.wc-skeleton { display:flex;flex-direction:column;gap:10px; }
+.wc-skeleton-line {
+  height:14px;border-radius:6px;
+  background:linear-gradient(90deg,#f0f0f0 25%,#e0e0e0 50%,#f0f0f0 75%);
+  background-size:200% 100%;
+  animation:wc-shimmer 1.4s infinite;
+}
+@keyframes wc-shimmer { 0%{background-position:200%}100%{background-position:-200%} }
+
+/* form */
+.wc-label {
+  display:block;
+  font-size:11.5px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.04em;
+  color:var(--text,#111);
+  margin-bottom:6px;
+}
+.wc-input {
+  width:100%;box-sizing:border-box;
+  padding:9px 12px;
+  border:1px solid var(--border,#e5e7eb);border-radius:7px;
+  font-size:13px;font-family:var(--f-mono,monospace);
+  background:var(--bg,#fff);color:var(--text,#111);
+  transition:border-color .15s;
+}
+.wc-input:focus { outline:none;border-color:var(--green,#16a34a);box-shadow:0 0 0 2px #d1fae5; }
+.wc-hint { font-size:11px;color:var(--subtle,#9ca3af);margin-top:4px;line-height:1.5; }
+
+/* buttons */
+.wc-btn {
+  display:inline-flex;align-items:center;gap:7px;
+  padding:9px 18px;border-radius:8px;
+  font-size:13px;font-weight:600;border:none;cursor:pointer;
+  transition:opacity .15s,transform .1s;font-family:inherit;
+}
+.wc-btn:disabled { opacity:.45;cursor:not-allowed;transform:none !important; }
+.wc-btn:not(:disabled):hover { opacity:.88; }
+.wc-btn:not(:disabled):active { transform:scale(.97); }
+.wc-btn.primary { background:var(--green,#16a34a);color:#fff; }
+.wc-btn.outline { background:transparent;border:1px solid var(--border,#e5e7eb);color:var(--text,#111); }
+.wc-btn.danger  { background:var(--red,#dc2626);color:#fff; }
+.wc-btn .wc-spin {
+  width:14px;height:14px;border:2px solid rgba(255,255,255,.3);
+  border-top-color:#fff;border-radius:50%;
+  animation:spin .6s linear infinite;display:none;
+}
+.wc-btn.loading .wc-spin    { display:block; }
+.wc-btn.loading .wc-lbl     { display:none; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* feedback */
+.wc-feedback {
+  margin-top:10px;padding:9px 13px;border-radius:7px;
+  font-size:12.5px;font-weight:500;display:none;
+}
+.wc-feedback.success { background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d; }
+.wc-feedback.error   { background:#fef2f2;border:1px solid #fecaca;color:#b91c1c; }
+
+/* danger */
+.wc-danger {
+  margin-top:20px;border:1px solid #fecaca;border-radius:12px;overflow:hidden;
+}
+.wc-danger-header {
+  padding:12px 18px;background:#fef2f2;border-bottom:1px solid #fecaca;
+  font-size:12px;font-weight:700;color:#b91c1c;
+  text-transform:uppercase;letter-spacing:.06em;
+  display:flex;align-items:center;gap:7px;
+}
+.wc-danger-body { padding:16px 18px;background:var(--bg,#fff); }
+.wc-delete-confirm {
+  display:none;align-items:center;gap:10px;flex-wrap:wrap;
+  margin-top:10px;padding:10px 13px;
+  background:#fef2f2;border:1px solid #fecaca;border-radius:7px;
+  font-size:12px;color:#7f1d1d;
+}
+.wc-delete-confirm.visible { display:flex; }
+
+/* not-configured banner */
+.wc-warn {
+  display:flex;align-items:flex-start;gap:10px;
+  background:#fef9c3;border:1px solid #fde047;border-radius:8px;
+  padding:12px 16px;margin-bottom:20px;
+  font-size:13px;color:#78350f;line-height:1.5;
+}
+.wc-warn i { color:#ca8a04;flex-shrink:0;margin-top:1px; }
+
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% set meta_ok = app_id_configured and app_secret_configured %}
+
+<div class="dv-page-header">
+  <div>
+    <div class="dv-title"><i class="ti ti-webhook" style="margin-right:8px;opacity:.7"></i>Webhook Config</div>
+    <div class="dv-subtitle">Manage Meta webhook subscription URL</div>
+  </div>
+  <div class="dv-actions">
+    <button class="wc-btn outline" id="syncBtn" {% if not meta_ok %}disabled{% endif %}>
+      <span class="wc-lbl"><i class="fas fa-sync-alt"></i> Sync</span>
+      <div class="wc-spin"></div>
+    </button>
+  </div>
+</div>
+
+{% if not meta_ok %}
+<div class="wc-warn">
+  <i class="fas fa-exclamation-triangle"></i>
+  <div><strong>Meta App credentials missing.</strong>
+  Set <code>FB_APP_ID</code> and <code>META_APP_SECRET</code> in <code>.env</code> and restart.</div>
+</div>
+{% endif %}
+
+<div class="wc-layout">
+
+  <!-- Current subscription -->
+  <div class="wc-card">
+    <div class="wc-card-header">
+      <div class="wc-card-title"><i class="ti ti-satellite"></i> Current Subscription</div>
+    </div>
+    <div class="wc-card-body">
+
+      <div class="wc-skeleton" id="subSkeleton">
+        <div class="wc-skeleton-line" style="width:40%"></div>
+        <div class="wc-skeleton-line" style="width:85%"></div>
+      </div>
+
+      <div id="subContent" style="display:none">
+        <div id="subEmpty" style="display:none;text-align:center;padding:16px 0;">
+          <div style="font-size:26px;opacity:.25;margin-bottom:6px"><i class="ti ti-webhook-off"></i></div>
+          <div style="font-size:13px;color:var(--subtle)">No active subscription found.</div>
+          <div style="font-size:11.5px;color:var(--subtle);margin-top:3px">Use the form to create one.</div>
+        </div>
+        <div id="subDetails">
+          <div class="wc-row">
+            <div class="wc-row-label">Status</div>
+            <div class="wc-row-value" style="font-family:inherit">
+              <span class="wc-status-badge" id="subStatusBadge"></span>
+            </div>
+          </div>
+          <div class="wc-row">
+            <div class="wc-row-label">URL</div>
+            <div class="wc-row-value" id="subUrl">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="subError" style="display:none;padding:10px 13px;background:#fef2f2;border-radius:7px;font-size:12.5px;color:#b91c1c;margin-top:4px;"></div>
+
+    </div>
+  </div>
+
+  <!-- Update form -->
+  <div class="wc-card">
+    <div class="wc-card-header">
+      <div class="wc-card-title"><i class="ti ti-edit"></i> Update Webhook URL</div>
+    </div>
+    <div class="wc-card-body">
+      <div style="margin-bottom:16px">
+        <label class="wc-label">Callback URL</label>
+        <input type="url" class="wc-input" id="callbackUrlInput"
+               placeholder="https://yourdomain.com/webhook/meta"
+               {% if not meta_ok %}disabled{% endif %}>
+        <div class="wc-hint">Must be HTTPS. Meta will POST all WhatsApp events to this URL.</div>
+      </div>
+
+      <button class="wc-btn primary" id="updateBtn" {% if not meta_ok %}disabled{% endif %}>
+        <span class="wc-lbl"><i class="fas fa-cloud-upload-alt"></i> Update</span>
+        <div class="wc-spin"></div>
+      </button>
+
+      <div class="wc-feedback" id="updateFeedback"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Danger zone -->
+<div class="wc-danger">
+  <div class="wc-danger-header"><i class="fas fa-exclamation-triangle"></i> Danger Zone</div>
+  <div class="wc-danger-body">
+    <div style="font-size:12.5px;color:var(--text);margin-bottom:12px;line-height:1.5">
+      <strong>Delete Subscription</strong> — stops all inbound WhatsApp events for every company
+      until a new subscription is created.
+    </div>
+    <button class="wc-btn danger" id="deleteBtn" {% if not meta_ok %}disabled{% endif %}>
+      <span class="wc-lbl"><i class="fas fa-trash-alt"></i> Delete Subscription</span>
+      <div class="wc-spin"></div>
+    </button>
+    <div class="wc-delete-confirm" id="deleteConfirm">
+      <i class="fas fa-exclamation-circle"></i>
+      <span>This will stop all WhatsApp messages. Confirm?</span>
+      <button class="wc-btn danger" style="padding:5px 14px;font-size:12px" id="confirmDeleteBtn">Yes, delete</button>
+      <button class="wc-btn outline" style="padding:5px 14px;font-size:12px" id="cancelDeleteBtn">Cancel</button>
+    </div>
+    <div class="wc-feedback" id="deleteFeedback"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+
+  function setLoading(btn, on) {
+    btn.disabled = on;
+    btn.classList.toggle('loading', on);
+  }
+
+  function showFeedback(el, type, msg) {
+    el.className = 'wc-feedback ' + type;
+    el.textContent = msg;
+    el.style.display = 'block';
+    if (type === 'success') setTimeout(function () { el.style.display = 'none'; }, 5000);
+  }
+
+  /* ── Load subscription ─────────────────────────────── */
+  function loadSubscription() {
+    var skeleton = document.getElementById('subSkeleton');
+    var content  = document.getElementById('subContent');
+    var errEl    = document.getElementById('subError');
+
+    skeleton.style.display = 'flex';
+    content.style.display  = 'none';
+    errEl.style.display    = 'none';
+
+    fetchWithAuth('/api/webhook-config/status')
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.detail || 'Failed'); });
+        return r.json();
+      })
+      .then(function (data) {
+        skeleton.style.display = 'none';
+        content.style.display  = 'block';
+
+        var sub = data.subscription;
+        var details = document.getElementById('subDetails');
+        var empty   = document.getElementById('subEmpty');
+
+        if (!sub) {
+          details.style.display = 'none';
+          empty.style.display   = 'block';
+          return;
+        }
+
+        details.style.display = 'block';
+        empty.style.display   = 'none';
+
+        var active = sub.active === true;
+        var badge  = document.getElementById('subStatusBadge');
+        badge.className   = 'wc-status-badge ' + (active ? 'active' : 'inactive');
+        badge.innerHTML   = '<i class="fas fa-circle" style="font-size:7px"></i> ' + (active ? 'Active' : 'Inactive');
+
+        var urlEl = document.getElementById('subUrl');
+        urlEl.textContent = sub.callback_url || '—';
+
+        /* Pre-fill update input */
+        var inp = document.getElementById('callbackUrlInput');
+        if (inp && !inp.value && sub.callback_url) inp.value = sub.callback_url;
+      })
+      .catch(function (err) {
+        skeleton.style.display = 'none';
+        errEl.style.display    = 'block';
+        errEl.textContent      = 'Could not load: ' + err.message;
+      });
+  }
+
+  /* ── Sync button ───────────────────────────────────── */
+  var syncBtn = document.getElementById('syncBtn');
+  syncBtn && syncBtn.addEventListener('click', function () {
+    setLoading(syncBtn, true);
+    document.getElementById('callbackUrlInput').value = '';
+    loadSubscription();
+    setTimeout(function () { setLoading(syncBtn, false); }, 800);
+  });
+
+  /* ── Update ────────────────────────────────────────── */
+  var updateBtn      = document.getElementById('updateBtn');
+  var updateFeedback = document.getElementById('updateFeedback');
+
+  updateBtn && updateBtn.addEventListener('click', function () {
+    var url = document.getElementById('callbackUrlInput').value.trim();
+    if (!url) { showFeedback(updateFeedback, 'error', 'Callback URL is required.'); return; }
+    if (!url.startsWith('https://')) { showFeedback(updateFeedback, 'error', 'URL must start with https://'); return; }
+
+    updateFeedback.style.display = 'none';
+    setLoading(updateBtn, true);
+
+    fetchWithAuth('/api/webhook-config/update', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ callback_url: url, fields: ['messages'] }),
+    })
+    .then(function (r) {
+      if (!r.ok) return r.json().then(function (e) { throw new Error(e.detail || 'Update failed'); });
+      return r.json();
+    })
+    .then(function (data) {
+      if (data.success === true) {
+        showFeedback(updateFeedback, 'success', '✓ Webhook URL updated successfully.');
+        loadSubscription();
+      } else {
+        showFeedback(updateFeedback, 'error', JSON.stringify(data));
+      }
+    })
+    .catch(function (err) { showFeedback(updateFeedback, 'error', err.message); })
+    .finally(function () { setLoading(updateBtn, false); });
+  });
+
+  /* ── Delete ────────────────────────────────────────── */
+  var deleteBtn    = document.getElementById('deleteBtn');
+  var deleteConfirm  = document.getElementById('deleteConfirm');
+  var deleteFeedback = document.getElementById('deleteFeedback');
+
+  deleteBtn && deleteBtn.addEventListener('click', function () {
+    deleteConfirm.classList.add('visible');
+    deleteFeedback.style.display = 'none';
+  });
+  document.getElementById('cancelDeleteBtn').addEventListener('click', function () {
+    deleteConfirm.classList.remove('visible');
+  });
+  document.getElementById('confirmDeleteBtn').addEventListener('click', function () {
+    deleteConfirm.classList.remove('visible');
+    setLoading(deleteBtn, true);
+
+    fetchWithAuth('/api/webhook-config/subscription', { method: 'DELETE' })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.detail || 'Delete failed'); });
+        return r.json();
+      })
+      .then(function (data) {
+        if (data.success === true) {
+          showFeedback(deleteFeedback, 'success', '✓ Subscription deleted.');
+          loadSubscription();
+        } else {
+          showFeedback(deleteFeedback, 'error', JSON.stringify(data));
+        }
+      })
+      .catch(function (err) { showFeedback(deleteFeedback, 'error', err.message); })
+      .finally(function () { setLoading(deleteBtn, false); });
+  });
+
+  /* ── Initial load ──────────────────────────────────── */
+  loadSubscription();
+
+})();
+</script>
+{% endblock %}

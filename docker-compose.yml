@@ -1,0 +1,25 @@
+# Dev compose — only PostgreSQL in Docker.
+# Run the app locally: python run.py
+# Start DB: docker compose up -d
+
+services:
+  db:
+    image: postgres:16
+    container_name: sil-wam-db
+    environment:
+      POSTGRES_USER: silwam
+      POSTGRES_PASSWORD: silwam_dev
+      POSTGRES_DB: sil_wam
+    ports:
+      - "5433:5432"
+    volumes:
+      - sil_wam_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U silwam -d sil_wam"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  sil_wam_pgdata:

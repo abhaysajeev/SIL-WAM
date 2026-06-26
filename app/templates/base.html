@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}SIL WhatsApp{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css">
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/docview.css">
+  {% block extra_css %}{% endblock %}
+</head>
+<body>
+
+<div class="dash-layout" id="dashLayout">
+
+  <!-- ── Sidebar ─────────────────────────────────────── -->
+  <aside class="sidebar" id="sidebar">
+
+    <div class="sidebar-logo">
+      <div class="sidebar-brand-icon">
+        <img src="/static/img/sil_logo_new.png" alt="SIL">
+      </div>
+      <div class="sidebar-brand-text">
+        <span class="sidebar-brand-name">SIL WhatsApp</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+
+      <span class="nav-label">Main</span>
+      <a href="/dashboard" class="nav-item {% if active == 'dashboard' %}active{% endif %}">
+        <i class="nav-icon ti ti-layout-grid"></i> Dashboard
+      </a>
+
+      {% if perms.companies.read or perms.users.read or user.role_name == 'super_admin' %}
+      <span class="nav-label">Management</span>
+      {% if perms.companies.read %}
+      <a href="/companies" class="nav-item {% if active == 'companies' %}active{% endif %}">
+        <i class="nav-icon ti ti-building"></i> Companies
+      </a>
+      {% endif %}
+      {% if perms.users.read %}
+      <a href="/users" class="nav-item {% if active == 'users' %}active{% endif %}">
+        <i class="nav-icon ti ti-users"></i> Users
+      </a>
+      {% endif %}
+      {% if user.role_name == 'super_admin' %}
+      <a href="/roles" class="nav-item {% if active == 'roles' %}active{% endif %}">
+        <i class="nav-icon ti ti-shield-lock"></i> Roles
+      </a>
+      <a href="/error-logs" class="nav-item {% if active == 'error-logs' %}active{% endif %}">
+        <i class="nav-icon ti ti-bug"></i> Error Logs
+      </a>
+      <a href="/webhook-config" class="nav-item {% if active == 'webhook_config' %}active{% endif %}">
+        <i class="nav-icon ti ti-webhook"></i> Webhook Config
+      </a>
+      <a href="/demo-messaging" class="nav-item {% if active == 'demo_messaging' %}active{% endif %}">
+        <i class="nav-icon ti ti-brand-whatsapp"></i> Demo Messaging
+      </a>
+      {% endif %}
+      {% endif %}
+
+      {% if perms.services.read or perms.conversations.read or perms.erpnext_configs.read %}
+      <span class="nav-label">Messaging</span>
+      {% if perms.services.read %}
+      <a href="/services" class="nav-item {% if active == 'services' %}active{% endif %}">
+        <i class="nav-icon ti ti-message-bolt"></i> Services
+      </a>
+      {% endif %}
+      {% if perms.conversations.read %}
+      <a href="/conversations" class="nav-item {% if active == 'conversations' %}active{% endif %}">
+        <i class="nav-icon ti ti-messages"></i> Conversations
+      </a>
+      {% endif %}
+      {% if perms.erpnext_configs.read %}
+      <a href="/erpnext-configs" class="nav-item {% if active == 'erpnext_configs' %}active{% endif %}">
+        <i class="nav-icon ti ti-plug-connected"></i> ERPNext Config
+      </a>
+      {% endif %}
+      {% endif %}
+
+      {% if perms.reports.read %}
+      <span class="nav-label">Analytics</span>
+      <a href="/reports" class="nav-item {% if active == 'reports' %}active{% endif %}">
+        <i class="nav-icon ti ti-chart-bar"></i> Reports
+      </a>
+      {% endif %}
+
+    </nav>
+
+    <div class="sidebar-footer">&copy; 2026 SIL WAM</div>
+  </aside>
+
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <!-- ── Main ───────────────────────────────────────── -->
+  <div class="dash-main">
+
+    <header class="dash-header" id="topbar">
+      <div class="header-left">
+        <button class="sidebar-toggle" id="sidebarToggle" title="Menu">
+          <i class="ti ti-menu-2"></i>
+        </button>
+        {% if active %}
+        <span class="page-title">{{ active | replace('-', ' ') | replace('_', ' ') | title }}</span>
+        {% endif %}
+      </div>
+      <div class="header-right">
+        <div class="user-menu-wrap" id="userMenuWrap">
+          <button class="user-menu-btn" id="userMenuBtn">
+            <i class="ti ti-user-circle"></i>
+            <span>{{ user.username }}</span>
+            <i class="ti ti-chevron-down user-menu-caret"></i>
+          </button>
+          <div class="user-menu-dropdown" id="userMenuDropdown">
+            <button class="user-menu-item" id="changePasswordBtn">
+              <i class="ti ti-key"></i> Change Password
+            </button>
+            <div class="user-menu-divider"></div>
+            <button class="user-menu-item user-menu-item--danger" id="signOutBtn">
+              <i class="ti ti-logout"></i> Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div class="dash-content page-enter">
+      {% block content %}{% endblock %}
+    </div>
+
+  </div>
+
+</div>
+
+<!-- Change Password Modal -->
+<div class="modal-backdrop" id="changePasswordBackdrop">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Change Password</span>
+      <button class="modal-close" id="changePasswordClose">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="changePwError" class="dv-inline-error" style="display:none"></div>
+      <div id="changePwSuccess" class="dv-inline-success" style="display:none">Password updated successfully.</div>
+      <label class="dv-label">Current Password</label>
+      <input type="password" id="currentPw" class="dv-input" placeholder="Enter current password">
+      <label class="dv-label" style="margin-top:12px">New Password</label>
+      <input type="password" id="newPw" class="dv-input" placeholder="Min 8 characters">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline btn-sm" id="changePasswordCancel">Cancel</button>
+      <button class="btn btn-sm" id="changePasswordSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/sidebar.js" defer></script>
+<script>
+  /* ── Global auth helpers (available to all pages) ─────── */
+  function getToken() { return localStorage.getItem('wam_access_token'); }
+
+  function showSessionBanner() {
+    if (document.getElementById('wamSessionBanner')) return;
+    var b = document.createElement('div');
+    b.id = 'wamSessionBanner';
+    b.style.cssText = [
+      'position:fixed;top:0;left:0;right:0;z-index:99999',
+      'background:#1d4ed8;color:#fff;padding:12px 20px',
+      'font-size:13px;font-weight:500;font-family:var(--f-ui)',
+      'display:flex;align-items:center;justify-content:space-between;gap:16px',
+    ].join(';');
+    b.innerHTML = '<span><i class="fas fa-lock" style="margin-right:8px"></i>Your session has expired.</span>' +
+      '<a href="/login" style="color:#fff;font-weight:700;text-decoration:underline">Log in again</a>';
+    document.body.prepend(b);
+  }
+
+  // Single in-flight refresh promise — concurrent 401s share one refresh call
+  // instead of each firing their own (which would revoke the token mid-rotation).
+  var _refreshing = null;
+  function _doRefresh() {
+    if (_refreshing) return _refreshing;
+    var rt = localStorage.getItem('wam_refresh_token');
+    if (!rt) return Promise.resolve(false);
+    _refreshing = fetch('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: rt }),
+    }).then(function (rr) {
+      if (!rr.ok) return false;
+      return rr.json().then(function (rd) {
+        localStorage.setItem('wam_access_token', rd.access_token);
+        localStorage.setItem('wam_refresh_token', rd.refresh_token);
+        return true;
+      });
+    }).catch(function () {
+      return false;
+    }).finally(function () {
+      _refreshing = null;
+    });
+    return _refreshing;
+  }
+
+  async function fetchWithAuth(url, options) {
+    options = Object.assign({}, options);
+    options.headers = Object.assign({}, options.headers || {});
+    options.headers['Authorization'] = 'Bearer ' + getToken();
+    var res = await fetch(url, options);
+    if (res.status !== 401) return res;
+    var ok = await _doRefresh();
+    if (!ok) { showSessionBanner(); return res; }
+    options.headers['Authorization'] = 'Bearer ' + getToken();
+    return fetch(url, options);
+  }
+</script>
+<script>
+  (function () {
+    // ── User menu dropdown ──────────────────────────────────────
+    var menuBtn = document.getElementById('userMenuBtn');
+    var dropdown = document.getElementById('userMenuDropdown');
+
+    menuBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      dropdown.classList.toggle('open');
+    });
+    document.addEventListener('click', function () {
+      dropdown.classList.remove('open');
+    });
+
+    // ── Sign out (no confirmation) ──────────────────────────────
+    document.getElementById('signOutBtn').addEventListener('click', function () {
+      document.getElementById('dashLayout').classList.add('signing-out');
+      localStorage.removeItem('wam_access_token');
+      localStorage.removeItem('wam_refresh_token');
+      setTimeout(function () { window.location.href = '/auth/logout'; }, 300);
+    });
+
+    // ── Change password modal ───────────────────────────────────
+    var backdrop = document.getElementById('changePasswordBackdrop');
+    var errorEl  = document.getElementById('changePwError');
+    var successEl = document.getElementById('changePwSuccess');
+
+    function openModal() {
+      dropdown.classList.remove('open');
+      document.getElementById('currentPw').value = '';
+      document.getElementById('newPw').value = '';
+      errorEl.style.display = 'none';
+      successEl.style.display = 'none';
+      backdrop.classList.add('open');
+    }
+    function closeModal() {
+      backdrop.classList.remove('open');
+    }
+
+    document.getElementById('changePasswordBtn').addEventListener('click', openModal);
+    document.getElementById('changePasswordClose').addEventListener('click', closeModal);
+    document.getElementById('changePasswordCancel').addEventListener('click', closeModal);
+    backdrop.addEventListener('click', function (e) {
+      if (e.target === backdrop) closeModal();
+    });
+
+    document.getElementById('changePasswordSave').addEventListener('click', function () {
+      var currentPw = document.getElementById('currentPw').value;
+      var newPw     = document.getElementById('newPw').value;
+      errorEl.style.display = 'none';
+      successEl.style.display = 'none';
+
+      if (!currentPw || !newPw) {
+        errorEl.textContent = 'Both fields are required.';
+        errorEl.style.display = 'block';
+        return;
+      }
+      if (newPw.length < 8) {
+        errorEl.textContent = 'New password must be at least 8 characters.';
+        errorEl.style.display = 'block';
+        return;
+      }
+
+      var saveBtn = document.getElementById('changePasswordSave');
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+
+      fetchWithAuth('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_password: currentPw, new_password: newPw }),
+      })
+      .then(function (res) {
+        if (res.status === 204) {
+          successEl.style.display = 'block';
+          setTimeout(closeModal, 1200);
+        } else {
+          return res.json().then(function (data) {
+            errorEl.textContent = data.detail || 'Something went wrong.';
+            errorEl.style.display = 'block';
+          });
+        }
+      })
+      .catch(function () {
+        errorEl.textContent = 'Network error. Please try again.';
+        errorEl.style.display = 'block';
+      })
+      .finally(function () {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save';
+      });
+    });
+  })();
+</script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

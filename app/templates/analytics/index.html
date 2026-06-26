@@ -1,0 +1,447 @@
+{% extends "base.html" %}
+{% block title %}Reports — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<style>
+  .rp-header { margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .rp-title { font-family: var(--f-disp); font-size: 22px; font-weight: 700; color: var(--black); letter-spacing: -.03em; }
+  .rp-sub { font-size: 13px; color: var(--muted); margin-top: 3px; }
+
+  .rp-range-form { display: flex; align-items: center; gap: 8px; }
+  .rp-range-form input[type="date"] {
+    font-family: var(--f-ui); font-size: 13px; padding: 6px 10px;
+    border: 1.5px solid var(--line); border-radius: 8px;
+    background: var(--surface); color: var(--ink); outline: none;
+  }
+  .rp-range-form input[type="date"]:focus { border-color: var(--accent); }
+  .rp-range-label { font-size: 12px; color: var(--muted); font-family: var(--f-mono); }
+
+  .stat-card { align-items: center; gap: 16px; }
+  .stat-value {
+    font-family: var(--f-disp); font-size: 30px; font-weight: 700;
+    color: var(--black); line-height: 1; letter-spacing: -.03em;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-label {
+    font-family: var(--f-mono); font-size: 9.5px; font-weight: 500;
+    color: var(--muted); text-transform: uppercase; letter-spacing: .14em; margin-top: 6px;
+  }
+
+  .rp-grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-top: 16px; }
+  .rp-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+  @media (max-width: 1100px) { .rp-grid-2 { grid-template-columns: 1fr; } }
+  @media (max-width: 768px)  { .rp-grid-3 { grid-template-columns: 1fr; } }
+
+  .chart-wrap { position: relative; }
+  .chart-wrap canvas { max-height: 260px; }
+  .chart-donut-wrap { position: relative; display: flex; align-items: center; justify-content: center; }
+  .chart-donut-wrap canvas { max-height: 240px; max-width: 240px; }
+
+  .rp-legend { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .rp-legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
+  .rp-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .rp-legend-count { margin-left: auto; font-family: var(--f-mono); font-size: 12px; color: var(--muted); font-weight: 600; }
+
+  .funnel-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  @media (max-width: 900px) { .funnel-cards { grid-template-columns: repeat(2, 1fr); } }
+  .funnel-card {
+    background: var(--surface); border: 1.5px solid var(--line); border-radius: 12px;
+    padding: 16px 20px; text-align: center;
+  }
+  .funnel-card-val {
+    font-family: var(--f-disp); font-size: 26px; font-weight: 700;
+    color: var(--black); letter-spacing: -.03em; font-variant-numeric: tabular-nums;
+  }
+  .funnel-card-label { font-family: var(--f-mono); font-size: 9px; text-transform: uppercase; letter-spacing: .14em; color: var(--muted); margin-top: 4px; }
+  .funnel-card-rate { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .funnel-card--green .funnel-card-val { color: #16a34a; }
+  .funnel-card--blue  .funnel-card-val { color: #2563eb; }
+  .funnel-card--red   .funnel-card-val { color: #dc2626; }
+
+  .loading-overlay {
+    display: flex; align-items: center; justify-content: center;
+    height: 140px; color: var(--muted); font-size: 13px; gap: 8px;
+  }
+  .spin { animation: spin .8s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="rp-header">
+  <div>
+    <div class="rp-title">Reports &amp; Analytics</div>
+    <div class="rp-sub">Message, service, and conversation statistics.</div>
+  </div>
+  <div class="rp-range-form">
+    <span class="rp-range-label">From</span>
+    <input type="date" id="fromDate">
+    <span class="rp-range-label">To</span>
+    <input type="date" id="toDate">
+    <button class="btn btn-sm" onclick="loadAll()">Apply</button>
+  </div>
+</div>
+
+<!-- Top stat cards -->
+<div class="stats-grid" id="topStats">
+  <div class="stat-card">
+    <div><div class="stat-value" id="sTotalMsgs">—</div><div class="stat-label">Total Messages</div></div>
+    <div class="stat-icon blue"><i class="ti ti-message"></i></div>
+  </div>
+  <div class="stat-card">
+    <div><div class="stat-value" id="sTotalSvcs">—</div><div class="stat-label">Services</div></div>
+    <div class="stat-icon green"><i class="ti ti-message-bolt"></i></div>
+  </div>
+  <div class="stat-card">
+    <div><div class="stat-value" id="sTotalConvs">—</div><div class="stat-label">Conversations</div></div>
+    <div class="stat-icon purple"><i class="ti ti-messages"></i></div>
+  </div>
+  <div class="stat-card">
+    <div><div class="stat-value" id="sDeliveryRate">—</div><div class="stat-label">Delivery Rate</div></div>
+    <div class="stat-icon orange"><i class="ti ti-chart-line"></i></div>
+  </div>
+</div>
+
+<!-- Message volume chart + Service donut -->
+<div class="rp-grid-2">
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title"><i class="ti ti-chart-bar"></i> Message Volume</div>
+    </div>
+    <div class="card-body">
+      <div id="volLoading" class="loading-overlay"><span class="spin"><i class="ti ti-loader-2"></i></span> Loading…</div>
+      <div class="chart-wrap" id="volWrap" style="display:none">
+        <canvas id="volChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title"><i class="ti ti-chart-donut"></i> Service Status</div>
+    </div>
+    <div class="card-body">
+      <div id="svcLoading" class="loading-overlay"><span class="spin"><i class="ti ti-loader-2"></i></span> Loading…</div>
+      <div id="svcWrap" style="display:none">
+        <div class="chart-donut-wrap">
+          <canvas id="svcDonut"></canvas>
+        </div>
+        <div class="rp-legend" id="svcLegend"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Delivery funnel -->
+<div class="card" style="margin-top:16px">
+  <div class="card-header">
+    <div class="card-title"><i class="ti ti-filter"></i> Delivery Funnel</div>
+  </div>
+  <div class="card-body">
+    <div id="funnelLoading" class="loading-overlay"><span class="spin"><i class="ti ti-loader-2"></i></span> Loading…</div>
+    <div class="funnel-cards" id="funnelWrap" style="display:none">
+      <div class="funnel-card">
+        <div class="funnel-card-val" id="fSent">—</div>
+        <div class="funnel-card-label">Sent</div>
+        <div class="funnel-card-rate" id="fSentRate"></div>
+      </div>
+      <div class="funnel-card funnel-card--blue">
+        <div class="funnel-card-val" id="fDelivered">—</div>
+        <div class="funnel-card-label">Delivered</div>
+        <div class="funnel-card-rate" id="fDeliveredRate"></div>
+      </div>
+      <div class="funnel-card funnel-card--green">
+        <div class="funnel-card-val" id="fRead">—</div>
+        <div class="funnel-card-label">Read</div>
+        <div class="funnel-card-rate" id="fReadRate"></div>
+      </div>
+      <div class="funnel-card funnel-card--red">
+        <div class="funnel-card-val" id="fFailed">—</div>
+        <div class="funnel-card-label">Failed</div>
+        <div class="funnel-card-rate" id="fFailedRate"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Services trend + conversations -->
+<div class="rp-grid-2" style="margin-top:16px; margin-bottom:24px">
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title"><i class="ti ti-trending-up"></i> Services Created (Daily)</div>
+    </div>
+    <div class="card-body">
+      <div id="svcTrendLoading" class="loading-overlay"><span class="spin"><i class="ti ti-loader-2"></i></span> Loading…</div>
+      <div class="chart-wrap" id="svcTrendWrap" style="display:none">
+        <canvas id="svcTrendChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title"><i class="ti ti-messages"></i> Conversations</div>
+    </div>
+    <div class="card-body">
+      <div id="convLoading" class="loading-overlay"><span class="spin"><i class="ti ti-loader-2"></i></span> Loading…</div>
+      <div id="convWrap" style="display:none">
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; padding:8px 0">
+          <div style="text-align:center">
+            <div style="font-family:var(--f-disp);font-size:28px;font-weight:700;color:var(--black);letter-spacing:-.03em" id="cTotal">—</div>
+            <div style="font-family:var(--f-mono);font-size:9px;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);margin-top:4px">Total</div>
+          </div>
+          <div style="text-align:center">
+            <div style="font-family:var(--f-disp);font-size:28px;font-weight:700;color:#2563eb;letter-spacing:-.03em" id="cActive">—</div>
+            <div style="font-family:var(--f-mono);font-size:9px;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);margin-top:4px">Active (7d)</div>
+          </div>
+          <div style="text-align:center">
+            <div style="font-family:var(--f-disp);font-size:28px;font-weight:700;color:#16a34a;letter-spacing:-.03em" id="cMsgs">—</div>
+            <div style="font-family:var(--f-mono);font-size:9px;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);margin-top:4px">Total Messages</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  // ── Date range init ───────────────────────────────────────────────────
+  var today = new Date();
+  var d30   = new Date(today); d30.setDate(d30.getDate() - 29);
+  function fmt(d) { return d.toISOString().slice(0, 10); }
+
+  var fromEl = document.getElementById('fromDate');
+  var toEl   = document.getElementById('toDate');
+  fromEl.value = fmt(d30);
+  toEl.value   = fmt(today);
+
+  // ── Chart refs ────────────────────────────────────────────────────────
+  var volChartInst     = null;
+  var svcDonutInst     = null;
+  var svcTrendInst     = null;
+
+  // ── Chart.js defaults ─────────────────────────────────────────────────
+  var chartDefaults = {
+    font: { family: "'Inter', sans-serif", size: 11 },
+  };
+
+  // ── Helpers ───────────────────────────────────────────────────────────
+  function pct(a, b) { return b ? Math.round(a / b * 100) + '%' : '—'; }
+  function num(n) { return n.toLocaleString(); }
+  function show(id) { document.getElementById(id).style.display = ''; }
+  function hide(id) { document.getElementById(id).style.display = 'none'; }
+  function setText(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; }
+
+  function fillDailyGaps(rows, fromDate, toDate) {
+    var map = {};
+    rows.forEach(function(r) { map[r.date] = r.count; });
+    var result = [];
+    var cur = new Date(fromDate + 'T00:00:00Z');
+    var end = new Date(toDate   + 'T00:00:00Z');
+    while (cur <= end) {
+      var key = cur.toISOString().slice(0, 10);
+      result.push({ date: key, count: map[key] || 0 });
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    return result;
+  }
+
+  // ── API calls ─────────────────────────────────────────────────────────
+  async function fetchSummary(from, to) {
+    var res = await fetchWithAuth('/api/analytics/summary?from_date=' + from + '&to_date=' + to);
+    return res.ok ? res.json() : null;
+  }
+  async function fetchServices(from, to) {
+    var res = await fetchWithAuth('/api/analytics/services?from_date=' + from + '&to_date=' + to);
+    return res.ok ? res.json() : null;
+  }
+  async function fetchConversations() {
+    var res = await fetchWithAuth('/api/analytics/conversations');
+    return res.ok ? res.json() : null;
+  }
+
+  // ── Renderers ─────────────────────────────────────────────────────────
+  function renderSummary(data) {
+    setText('sTotalMsgs',   num(data.total));
+    setText('sDeliveryRate', data.delivery_rate + '%');
+
+    // Funnel
+    var s = data.sent, d = data.delivered, r = data.read, f = data.failed;
+    setText('fSent',          num(s));
+    setText('fDelivered',     num(d));
+    setText('fRead',          num(r));
+    setText('fFailed',        num(f));
+    setText('fSentRate',      '100%');
+    setText('fDeliveredRate', pct(d, s));
+    setText('fReadRate',      pct(r, s));
+    setText('fFailedRate',    pct(f, s));
+
+    hide('funnelLoading');
+    show('funnelWrap');
+
+    // Message volume bar chart
+    var daily = fillDailyGaps(data.daily, data.from_date, data.to_date);
+    var labels = daily.map(function(r) { return r.date.slice(5); }); // MM-DD
+    var counts = daily.map(function(r) { return r.count; });
+
+    if (volChartInst) volChartInst.destroy();
+    var ctx = document.getElementById('volChart').getContext('2d');
+    volChartInst = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Messages',
+          data: counts,
+          backgroundColor: 'rgba(37,99,235,0.7)',
+          borderRadius: 4,
+          borderSkipped: false,
+        }],
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false }, tooltip: { callbacks: {
+          title: function(items) { return data.from_date.slice(0,4) + '-' + items[0].label; },
+        }}},
+        scales: {
+          x: { grid: { display: false }, ticks: { font: chartDefaults.font, maxRotation: 45 } },
+          y: { beginAtZero: true, ticks: { font: chartDefaults.font, precision: 0 } },
+        },
+      },
+    });
+    hide('volLoading');
+    show('volWrap');
+  }
+
+  function renderServices(data) {
+    setText('sTotalSvcs', num(data.total));
+
+    // Donut
+    var colors = {
+      completed:   '#16a34a',
+      in_progress: '#2563eb',
+      waiting:     '#9ca3af',
+      expired:     '#f59e0b',
+      failed:      '#dc2626',
+    };
+    var labels = ['Completed','In Progress','Waiting','Expired','Failed'];
+    var keys   = ['completed','in_progress','waiting','expired','failed'];
+    var vals   = keys.map(function(k) { return data[k]; });
+
+    if (svcDonutInst) svcDonutInst.destroy();
+    var ctx = document.getElementById('svcDonut').getContext('2d');
+    svcDonutInst = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: labels,
+        datasets: [{ data: vals, backgroundColor: keys.map(function(k){ return colors[k]; }), borderWidth: 0 }],
+      },
+      options: {
+        cutout: '70%',
+        plugins: { legend: { display: false } },
+      },
+    });
+
+    // Custom legend
+    var legendEl = document.getElementById('svcLegend');
+    legendEl.innerHTML = '';
+    keys.forEach(function(k, i) {
+      if (data.total === 0 && vals[i] === 0) return;
+      var pctVal = data.total ? Math.round(vals[i] / data.total * 100) : 0;
+      var item = document.createElement('div');
+      item.className = 'rp-legend-item';
+      item.innerHTML =
+        '<span class="rp-legend-dot" style="background:' + colors[k] + '"></span>' +
+        '<span>' + labels[i] + '</span>' +
+        '<span class="rp-legend-count">' + num(vals[i]) + ' (' + pctVal + '%)</span>';
+      legendEl.appendChild(item);
+    });
+
+    hide('svcLoading');
+    show('svcWrap');
+
+    // Services trend line
+    var daily = fillDailyGaps(data.daily, data.from_date, data.to_date);
+    var tlabels = daily.map(function(r) { return r.date.slice(5); });
+    var tcounts = daily.map(function(r) { return r.count; });
+
+    if (svcTrendInst) svcTrendInst.destroy();
+    var ctx2 = document.getElementById('svcTrendChart').getContext('2d');
+    svcTrendInst = new Chart(ctx2, {
+      type: 'line',
+      data: {
+        labels: tlabels,
+        datasets: [{
+          label: 'Services',
+          data: tcounts,
+          borderColor: '#16a34a',
+          backgroundColor: 'rgba(22,163,74,0.08)',
+          borderWidth: 2,
+          pointRadius: 2,
+          fill: true,
+          tension: 0.3,
+        }],
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: chartDefaults.font, maxRotation: 45 } },
+          y: { beginAtZero: true, ticks: { font: chartDefaults.font, precision: 0 } },
+        },
+      },
+    });
+    hide('svcTrendLoading');
+    show('svcTrendWrap');
+  }
+
+  function renderConversations(data) {
+    setText('sTotalConvs', num(data.total));
+    setText('cTotal',  num(data.total));
+    setText('cActive', num(data.active_7d));
+    setText('cMsgs',   num(data.total_messages));
+    hide('convLoading');
+    show('convWrap');
+  }
+
+  // ── Load everything ───────────────────────────────────────────────────
+  async function loadAll() {
+    var from = fromEl.value;
+    var to   = toEl.value;
+    if (!from || !to || from > to) { alert('Invalid date range.'); return; }
+
+    // Reset loading states
+    show('volLoading'); hide('volWrap');
+    show('svcLoading'); hide('svcWrap');
+    show('funnelLoading'); hide('funnelWrap');
+    show('svcTrendLoading'); hide('svcTrendWrap');
+    show('convLoading'); hide('convWrap');
+    setText('sTotalMsgs', '—');
+    setText('sTotalSvcs', '—');
+    setText('sTotalConvs', '—');
+    setText('sDeliveryRate', '—');
+
+    var [summary, services, conversations] = await Promise.all([
+      fetchSummary(from, to),
+      fetchServices(from, to),
+      fetchConversations(),
+    ]);
+
+    if (summary)       renderSummary(summary);
+    if (services)      renderServices(services);
+    if (conversations) renderConversations(conversations);
+  }
+
+  // Initial load on page ready
+  loadAll();
+})();
+</script>
+
+{% endblock %}

@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% block title %}Error #{{ log.id }} — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<style>
+  .el-back {
+    display:inline-flex;align-items:center;gap:6px;
+    font-size:12px;font-weight:600;color:var(--muted);
+    padding:6px 10px;border:1px solid var(--line-2);background:transparent;
+    cursor:pointer;transition:all .18s;margin-bottom:16px;text-decoration:none;
+  }
+  .el-back:hover { background:var(--bg);color:var(--ink); }
+
+  .el-header {
+    display:flex;align-items:flex-start;justify-content:space-between;
+    margin-bottom:20px;gap:16px;flex-wrap:wrap;
+  }
+  .el-title { font-family:var(--f-disp);font-size:20px;font-weight:700;color:var(--black);letter-spacing:-.03em; }
+  .el-meta { font-size:12px;color:var(--muted);margin-top:4px;display:flex;gap:16px;flex-wrap:wrap; }
+  .el-meta span { display:flex;align-items:center;gap:4px; }
+
+  .el-actions { display:flex;gap:8px;flex-shrink:0; }
+  .el-btn {
+    display:inline-flex;align-items:center;gap:6px;
+    padding:8px 14px;font-size:12px;font-weight:600;letter-spacing:.05em;
+    cursor:pointer;transition:all .2s;border:1px solid transparent;
+  }
+  .el-btn-ghost { background:transparent;color:var(--ink-2);border-color:var(--line-2); }
+  .el-btn-ghost:hover { background:var(--bg); }
+  .el-btn-danger { background:transparent;color:var(--red);border-color:var(--red); }
+  .el-btn-danger:hover { background:var(--red);color:#fff; }
+
+  .el-card {
+    background:var(--bg-card);border:1px solid var(--line);
+    margin-bottom:20px;
+  }
+  .el-card-header {
+    padding:10px 20px;border-bottom:1px solid var(--line);
+    font-size:10px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;
+    color:var(--subtle);
+  }
+  .el-card-body { padding:20px; }
+
+  .el-field { margin-bottom:12px; }
+  .el-field:last-child { margin-bottom:0; }
+  .el-label { font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px; }
+  .el-value { font-size:13px;color:var(--ink); }
+
+  .el-pre {
+    background:var(--bg);border:1px solid var(--line);
+    padding:16px;font-family:var(--f-mono);font-size:12px;
+    white-space:pre-wrap;word-break:break-all;color:var(--ink);
+    max-height:420px;overflow-y:auto;line-height:1.6;
+  }
+
+  .el-badge-seen { color:var(--green);font-weight:600; }
+  .el-badge-unseen { color:var(--red);font-weight:600; }
+
+  .el-delete-confirm {
+    display:none;align-items:center;gap:8px;
+    padding:8px 14px;background:var(--bg);border:1px solid var(--red);
+    font-size:12px;font-weight:600;color:var(--red);
+  }
+  .el-delete-confirm.visible { display:flex; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<a href="/error-logs" class="el-back"><i class="fas fa-arrow-left"></i> Error Logs</a>
+
+<div class="el-header">
+  <div>
+    <div class="el-title">{{ log.title }}</div>
+    <div class="el-meta">
+      <span><i class="fas fa-hashtag"></i> #{{ log.id }}</span>
+      <span><i class="fas fa-code"></i> {{ log.method }}</span>
+      {% if log.user %}<span><i class="fas fa-user"></i> {{ log.user }}</span>{% endif %}
+      {% if log.ip_address %}<span><i class="fas fa-network-wired"></i> {{ log.ip_address }}</span>{% endif %}
+      {% if log.created_at %}<span><i class="fas fa-clock"></i> {{ log.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</span>{% endif %}
+      <span>
+        {% if log.seen %}
+        <span class="el-badge-seen"><i class="fas fa-check-circle"></i> Seen</span>
+        {% else %}
+        <span class="el-badge-unseen"><i class="fas fa-circle"></i> Unseen</span>
+        {% endif %}
+      </span>
+    </div>
+  </div>
+  <div class="el-actions">
+    <div class="el-delete-confirm" id="deleteConfirm">
+      Delete this log?
+      <button class="el-btn el-btn-danger" id="confirmDeleteBtn" style="padding:4px 10px;">Yes, delete</button>
+      <button class="el-btn el-btn-ghost" id="cancelDeleteBtn" style="padding:4px 10px;">Cancel</button>
+    </div>
+    <button class="el-btn el-btn-ghost" id="toggleSeenBtn">
+      {% if log.seen %}
+      <i class="fas fa-eye-slash"></i> Mark Unseen
+      {% else %}
+      <i class="fas fa-eye"></i> Mark Seen
+      {% endif %}
+    </button>
+    <button class="el-btn el-btn-danger" id="deleteBtn">
+      <i class="fas fa-trash"></i>
+    </button>
+  </div>
+</div>
+
+<!-- Error Type -->
+<div class="el-card">
+  <div class="el-card-header">Exception</div>
+  <div class="el-card-body">
+    <span style="font-family:var(--f-mono);font-size:14px;font-weight:600;color:var(--red);">{{ log.error_type }}</span>
+  </div>
+</div>
+
+<!-- Traceback -->
+<div class="el-card">
+  <div class="el-card-header">Traceback</div>
+  <div class="el-card-body" style="padding:0;">
+    <pre class="el-pre">{{ log.traceback }}</pre>
+  </div>
+</div>
+
+<!-- Request Data -->
+{% if req_data_str %}
+<div class="el-card">
+  <div class="el-card-header">Request Data (sanitized)</div>
+  <div class="el-card-body" style="padding:0;">
+    <pre class="el-pre">{{ req_data_str }}</pre>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  var LOG_ID = {{ log.id }};
+  var IS_SEEN = {{ 'true' if log.seen else 'false' }};
+
+  // Toggle seen
+  var toggleBtn = document.getElementById('toggleSeenBtn');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', async function () {
+      toggleBtn.disabled = true;
+      try {
+        var res = await fetchWithAuth('/api/error-logs/' + LOG_ID, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ seen: !IS_SEEN }),
+        });
+        if (res.ok) { window.location.reload(); }
+      } catch (_) { toggleBtn.disabled = false; }
+    });
+  }
+
+  // Delete
+  var deleteBtn = document.getElementById('deleteBtn');
+  var confirmWrap = document.getElementById('deleteConfirm');
+  var confirmBtn = document.getElementById('confirmDeleteBtn');
+  var cancelBtn = document.getElementById('cancelDeleteBtn');
+
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', function () {
+      confirmWrap.classList.add('visible');
+      deleteBtn.style.display = 'none';
+    });
+  }
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', function () {
+      confirmWrap.classList.remove('visible');
+      deleteBtn.style.display = '';
+    });
+  }
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', async function () {
+      confirmBtn.disabled = true;
+      try {
+        var res = await fetchWithAuth('/api/error-logs/' + LOG_ID, {
+          method: 'DELETE',
+        });
+        if (res.ok) { window.location.href = '/error-logs'; }
+        else { confirmBtn.disabled = false; }
+      } catch (_) { confirmBtn.disabled = false; }
+    });
+  }
+})();
+</script>
+{% endblock %}

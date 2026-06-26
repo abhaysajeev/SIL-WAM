@@ -1,0 +1,17 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+*.db
+*.sqlite3
+.git/
+.gitignore
+.pytest_cache/
+tests/
+requirements-dev.txt
+FIXES.md
+CLAUDE.md
+*.md

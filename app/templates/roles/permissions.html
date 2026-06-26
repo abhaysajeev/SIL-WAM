@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+{% block title %}{{ role.display_name }} — Permissions — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { display:flex;align-items:center;gap:12px;margin-bottom:20px; }
+  .page-back {
+    display:inline-flex;align-items:center;gap:6px;
+    font-size:12px;font-weight:600;color:var(--muted);
+    padding:6px 10px;border:1px solid var(--line-2);background:transparent;
+    transition:all .18s; cursor:pointer;
+  }
+  .page-back:hover { background:var(--bg);color:var(--ink); }
+  .page-heading { font-family:var(--f-disp);font-size:20px;font-weight:700;color:var(--black);letter-spacing:-.03em; }
+  .page-sub { font-size:13px;color:var(--muted);margin-top:2px; }
+
+  .perm-card { background:var(--bg-card);border:1px solid var(--line);margin-bottom:20px; }
+  .perm-card-header {
+    display:flex;align-items:center;justify-content:space-between;
+    padding:12px 20px;background:var(--bg);border-bottom:1px solid var(--line);
+  }
+  .module-title {
+    font-family:var(--f-mono);font-size:9px;font-weight:600;
+    letter-spacing:.22em;text-transform:uppercase;color:var(--subtle);
+  }
+  .toggle-all-btn {
+    font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--green);background:none;border:none;cursor:pointer;padding:2px 6px;
+    transition:opacity .15s;
+  }
+  .toggle-all-btn:hover { opacity:.7; }
+
+  .perm-table { width:100%;border-collapse:collapse; }
+  .perm-table th,.perm-table td { padding:10px 20px;text-align:left;font-size:13px;border-bottom:1px solid var(--line); }
+  .perm-table tr:last-child td { border-bottom:none; }
+  .perm-table th {
+    font-size:10px;font-weight:600;text-transform:uppercase;
+    letter-spacing:.08em;color:var(--subtle);
+    text-align:center; width:60px;
+  }
+  .perm-table th:first-child { text-align:left;width:auto; }
+  .perm-table td { text-align:center; }
+  .perm-table td:first-child { text-align:left;font-weight:500; }
+
+  .perm-check {
+    width:16px;height:16px;
+    accent-color:var(--green);cursor:pointer;
+  }
+  .perm-dot { color:var(--subtle);font-size:12px; }
+
+  .system-note {
+    display:flex;align-items:center;gap:10px;
+    padding:12px 20px;background:var(--green-tint);border:1px solid rgba(15,175,88,.2);
+    font-size:13px;color:var(--green-dark);margin-bottom:20px;
+  }
+
+  .action-bar {
+    display:flex;align-items:center;justify-content:flex-end;gap:10px;
+    padding:16px 0;
+  }
+  .btn { display:inline-flex;align-items:center;gap:6px;padding:10px 20px;font-size:12px;font-weight:600;letter-spacing:.05em;cursor:pointer;transition:all .2s;border:1px solid transparent; }
+  .btn-primary { background:var(--green);color:#fff;border-color:var(--green); }
+  .btn-primary:hover { background:var(--green-dark); }
+  .btn-primary:disabled { opacity:.5;pointer-events:none; }
+  .btn-ghost { background:transparent;color:var(--ink-2);border-color:var(--line-2); }
+  .btn-ghost:hover { background:var(--bg); }
+
+  .save-status {
+    font-size:12px;font-weight:600;padding:6px 12px;
+    display:none;align-items:center;gap:6px;
+  }
+  .save-status.success { color:var(--green);display:flex; }
+  .save-status.error   { color:var(--red);display:flex; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+  <a href="/roles" class="page-back"><i class="fas fa-arrow-left"></i> Roles</a>
+  <div>
+    <div class="page-heading">{{ role.display_name }}</div>
+    <div class="page-sub">
+      Configure what users with this role can access and do.
+      {% if perm_readonly %}<strong>System role — read only.</strong>{% endif %}
+    </div>
+  </div>
+</div>
+
+{% if perm_readonly %}
+<div class="system-note">
+  <i class="fas fa-shield-alt"></i>
+  <span>Super admin always has full access to everything. Its permissions are enforced in code and cannot be configured here.</span>
+</div>
+{% endif %}
+
+<form id="permForm">
+{% for group in resources %}
+<div class="perm-card">
+  <div class="perm-card-header">
+    <span class="module-title">{{ group['module'] }}</span>
+    {% if not perm_readonly %}
+    <button type="button" class="toggle-all-btn" data-module="{{ group['module'] }}">Toggle all</button>
+    {% endif %}
+  </div>
+  <table class="perm-table">
+    <thead>
+      <tr>
+        <th>Resource</th>
+        <th>Read</th>
+        <th>Create</th>
+        <th>Write</th>
+        <th>Delete</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in group['items'] %}
+      {% set prow = perm_rows.get(item.name) %}
+      <tr data-module="{{ group['module'] }}">
+        <td>{{ item.label }}</td>
+
+        <!-- Read -->
+        <td>
+          {% if 'read' in item.actions %}
+          <input type="checkbox" class="perm-check" name="{{ item.name }}__read"
+                 data-page="{{ item.name }}" data-action="read"
+                 {% if prow and prow.can_read %}checked{% endif %}
+                 {% if perm_readonly %}disabled{% endif %}>
+          {% else %}
+          <span class="perm-dot" title="Not applicable">·</span>
+          {% endif %}
+        </td>
+
+        <!-- Create -->
+        <td>
+          {% if 'create' in item.actions %}
+          <input type="checkbox" class="perm-check" name="{{ item.name }}__create"
+                 data-page="{{ item.name }}" data-action="create"
+                 {% if prow and prow.can_create %}checked{% endif %}
+                 {% if perm_readonly %}disabled{% endif %}>
+          {% else %}
+          <span class="perm-dot" title="Not applicable">·</span>
+          {% endif %}
+        </td>
+
+        <!-- Write -->
+        <td>
+          {% if 'write' in item.actions %}
+          <input type="checkbox" class="perm-check" name="{{ item.name }}__write"
+                 data-page="{{ item.name }}" data-action="write"
+                 {% if prow and prow.can_write %}checked{% endif %}
+                 {% if perm_readonly %}disabled{% endif %}>
+          {% else %}
+          <span class="perm-dot" title="Not applicable">·</span>
+          {% endif %}
+        </td>
+
+        <!-- Delete -->
+        <td>
+          {% if 'delete' in item.actions %}
+          <input type="checkbox" class="perm-check" name="{{ item.name }}__delete"
+                 data-page="{{ item.name }}" data-action="delete"
+                 {% if prow and prow.can_delete %}checked{% endif %}
+                 {% if perm_readonly %}disabled{% endif %}>
+          {% else %}
+          <span class="perm-dot" title="Not applicable">·</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+
+{% if not perm_readonly %}
+<div class="action-bar">
+  <span class="save-status" id="saveStatus"></span>
+  <a href="/roles" class="btn btn-ghost">Cancel</a>
+  <button type="button" class="btn btn-primary" id="saveBtn">
+    <i class="fas fa-save"></i> Save Permissions
+  </button>
+</div>
+{% endif %}
+
+</form>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  var ROLE_ID = '{{ role.id }}';
+
+  // ── Auto-check read when create/write/delete is checked ──
+  document.querySelectorAll('.perm-check').forEach(function (cb) {
+    cb.addEventListener('change', function () {
+      var page = cb.dataset.page;
+      var action = cb.dataset.action;
+      var readCb = document.querySelector('[data-page="' + page + '"][data-action="read"]');
+
+      if (action !== 'read' && cb.checked && readCb) {
+        readCb.checked = true;
+      }
+      if (action === 'read' && !cb.checked) {
+        ['create','write','delete'].forEach(function (a) {
+          var dep = document.querySelector('[data-page="' + page + '"][data-action="' + a + '"]');
+          if (dep) dep.checked = false;
+        });
+      }
+    });
+  });
+
+  // ── Toggle all per module ──
+  document.querySelectorAll('.toggle-all-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var module = btn.dataset.module;
+      var boxes = document.querySelectorAll('tr[data-module="' + module + '"] .perm-check');
+      var anyUnchecked = Array.from(boxes).some(function (c) { return !c.checked && !c.disabled; });
+      boxes.forEach(function (c) { if (!c.disabled) c.checked = anyUnchecked; });
+    });
+  });
+
+  // ── Save ──
+  var saveBtn = document.getElementById('saveBtn');
+  var statusEl = document.getElementById('saveStatus');
+  if (!saveBtn) return;
+
+  saveBtn.addEventListener('click', async function () {
+    saveBtn.disabled = true;
+    statusEl.className = 'save-status';
+
+    // Collect all checked permissions grouped by page
+    var pageMap = {};
+    document.querySelectorAll('.perm-check').forEach(function (cb) {
+      var page = cb.dataset.page;
+      var action = cb.dataset.action;
+      if (!pageMap[page]) pageMap[page] = { page_name: page, can_read: false, can_create: false, can_write: false, can_delete: false };
+      pageMap[page]['can_' + action] = cb.checked;
+    });
+
+    var permissions = Object.values(pageMap);
+
+    try {
+      var res = await fetchWithAuth('/api/roles/' + ROLE_ID + '/permissions', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permissions: permissions })
+      });
+
+      if (res.ok) {
+        statusEl.innerHTML = '<i class="fas fa-check-circle"></i> Saved successfully';
+        statusEl.className = 'save-status success';
+        setTimeout(function () { statusEl.className = 'save-status'; }, 3000);
+      } else {
+        var data = await res.json().catch(function () { return {}; });
+        statusEl.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + (data.detail || 'Save failed');
+        statusEl.className = 'save-status error';
+      }
+    } catch (_) {
+      statusEl.innerHTML = '<i class="fas fa-exclamation-circle"></i> Network error';
+      statusEl.className = 'save-status error';
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+})();
+</script>
+{% endblock %}

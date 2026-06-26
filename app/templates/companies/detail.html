@@ -1,0 +1,2772 @@
+{% extends "base.html" %}
+{#
+  Company Detail — tabbed view
+  Context:
+    dt              — COMPANIES_DOCTYPE
+    record          — company dict
+    record_id       — UUID string
+    perms           — permissions dict
+    user            — current user dict
+    whatsapp_account — WhatsApp account dict or None
+    active          — sidebar active key
+#}
+{% block title %}{{ record[dt.title_field] }} — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/docview.css">
+<link rel="stylesheet" href="/static/css/whatsapp.css">
+<link rel="stylesheet" href="/static/css/templates.css">
+<style>
+
+/* ── Right-panel tab switcher inside template modal ─ */
+.tvr-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  background: var(--bg-secondary, #f8f9fa);
+  flex-shrink: 0;
+}
+.tvr-tab {
+  flex: 1;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--subtle, #9ca3af);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  transition: color .15s, border-color .15s;
+}
+.tvr-tab:hover { color: var(--text); }
+.tvr-tab.active {
+  color: var(--green, #16a34a);
+  border-bottom-color: var(--green, #16a34a);
+  background: var(--bg, #fff);
+}
+.tvr-panel { flex: 1; min-height: 0; }
+
+/* ── Mapper inside template view modal (Param Mapping tab) ── */
+.tv-mapper-hint {
+  font-size: 11px;
+  color: var(--subtle, #9ca3af);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.tv-mapper-hint code {
+  background: var(--bg-secondary, #f8f9fa);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 10.5px;
+  font-family: monospace;
+}
+.tv-mapper-group-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--subtle, #9ca3af);
+  margin-bottom: 7px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.tv-mapper-rows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+
+/* Card-style row: left=context, right=input */
+.tv-mapper-card {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--bg, #fff);
+}
+.tv-mapper-card-left {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--bg-secondary, #f8f9fa);
+  border-right: 1px solid var(--border, #e5e7eb);
+  min-width: 0;
+  flex: 1;
+}
+.tv-mapper-badge {
+  display: inline-block;
+  font-family: monospace;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #16a34a;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 4px;
+  padding: 2px 7px;
+  align-self: flex-start;
+}
+.tv-mapper-badge-url {
+  color: #2563eb;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+.tv-mapper-snippet {
+  font-size: 11px;
+  color: var(--text-muted, #555);
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tv-mapper-snippet-url {
+  font-weight: 600;
+  color: var(--text);
+}
+.tv-mapper-mark {
+  background: #fef08a;
+  color: #713f12;
+  border-radius: 2px;
+  padding: 0 2px;
+  font-family: monospace;
+  font-size: 10.5px;
+  font-style: normal;
+}
+.tv-mapper-card-right {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: 8px 10px;
+  flex: 1.1;
+  min-width: 0;
+}
+.tv-mapper-input-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--subtle, #9ca3af);
+}
+.tv-mapper-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--text);
+  background: var(--bg);
+  outline: none;
+}
+.tv-mapper-input:focus { border-color: var(--green, #16a34a); }
+.tv-mapper-empty { font-size: 12px; color: var(--subtle, #9ca3af); padding: 4px 0 12px; }
+.tv-mapper-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+.tv-mapper-status { font-size: 12px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="cd-wrap">
+
+  <!-- Breadcrumb + title -->
+  <div class="cd-header">
+    <div class="cd-breadcrumb">
+      <a href="{{ dt.base_route }}">{{ dt.title_plural }}</a>
+      <span class="sep">/</span>
+      <span>{{ record[dt.title_field] }}</span>
+    </div>
+    <div class="cd-title">{{ record[dt.title_field] }}</div>
+  </div>
+
+  <!-- Tab bar -->
+  <div class="cd-tabs" id="cdTabs">
+    <button class="cd-tab" data-panel="details">
+      <i class="fas fa-building"></i> Company Details
+    </button>
+    <button class="cd-tab" data-panel="whatsapp">
+      <i class="fab fa-whatsapp"></i> WhatsApp Business
+    </button>
+    <button class="cd-tab" data-panel="templates">
+      <i class="fas fa-file-alt"></i> Templates
+    </button>
+    {% if perms[dt.perm_page].write %}
+    <button class="cd-tab" data-panel="api_keys">
+      <i class="fas fa-key"></i> API Keys
+    </button>
+    {% endif %}
+  </div>
+
+  <!-- ── Panel: Company Details ─────────────────────────── -->
+  <div class="cd-panel" id="panel-details">
+
+    <!-- Sticky toolbar -->
+    <div class="dv-form-toolbar">
+      <div class="dv-form-doc-title">{{ record[dt.title_field] }}</div>
+      <div class="dv-form-doc-status">
+        <span class="dv-save-status" id="saveStatus"></span>
+        {% if perms[dt.perm_page].delete %}
+        <div class="dv-delete-confirm" id="deleteConfirm">
+          Delete this company?
+          <button class="dv-btn dv-btn-danger" id="confirmDeleteBtn" style="padding:5px 12px;font-size:11px;">
+            <span class="btn-label">Yes, delete</span>
+            <div class="btn-spinner"></div>
+          </button>
+          <button class="dv-btn dv-btn-ghost" id="cancelDeleteBtn" style="padding:5px 12px;font-size:11px;">Cancel</button>
+        </div>
+        <button class="dv-btn dv-btn-danger" id="deleteBtn" style="padding:7px 14px;font-size:11px;">
+          <i class="fas fa-trash"></i>
+        </button>
+        {% endif %}
+        {% if perms[dt.perm_page].write %}
+        <button class="dv-btn dv-btn-ghost" onclick="window.location='{{ dt.base_route }}'">Cancel</button>
+        <button class="dv-btn dv-btn-primary" id="saveBtn">
+          <span class="btn-label"><i class="fas fa-save"></i> Save</span>
+          <div class="btn-spinner"></div>
+        </button>
+        {% else %}
+        <a href="{{ dt.base_route }}" class="dv-btn dv-btn-ghost">Back</a>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Error banner -->
+    <div class="dv-form-error" id="formError">
+      <i class="fas fa-exclamation-circle"></i>
+      <span id="formErrorText"></span>
+    </div>
+
+    <!-- Sections -->
+    {% for section in dt.form_sections %}
+    <div class="dv-section">
+      <div class="dv-section-header">
+        <span class="dv-section-label">{{ section.label }}</span>
+      </div>
+      <div class="dv-section-body">
+        {% for field in section.fields %}
+        {%- set fval = record[field.name] if record and record[field.name] is not none else '' -%}
+        {%- set is_readonly = field.get('create_only') -%}
+        <div class="dv-field {% if field.get('cols') == 2 %}col-2{% endif %}">
+          <label class="dv-label" for="f_{{ field.name }}">
+            {{ field.label }}
+            {% if field.get('required') and not is_readonly %}<span class="req">*</span>{% endif %}
+          </label>
+          {% if is_readonly %}
+            <div class="dv-field-static">{{ fval or '—' }}</div>
+          {% elif field.type == 'checkbox' %}
+            <div class="dv-toggle-wrap">
+              <label class="dv-toggle">
+                <input type="checkbox" id="f_{{ field.name }}" name="{{ field.name }}"
+                       {% if record and record[field.name] %}checked{% endif %}>
+                <span class="dv-toggle-track"></span>
+              </label>
+              <span class="dv-toggle-label">{{ 'Enabled' if record and record[field.name] else 'Disabled' }}</span>
+            </div>
+          {% else %}
+            <input type="{{ 'tel' if field.type == 'phone' else 'text' }}"
+                   id="f_{{ field.name }}" name="{{ field.name }}"
+                   class="dv-input {% if field.type == 'code' %}mono{% endif %}"
+                   value="{{ fval }}"
+                   {% if field.get('placeholder') %}placeholder="{{ field.placeholder }}"{% endif %}
+                   {% if field.get('maxlength') %}maxlength="{{ field.maxlength }}"{% endif %}
+                   {% if field.type == 'code' %}oninput="this.value=this.value.toUpperCase()"{% endif %}>
+          {% endif %}
+          {% if field.get('hint') %}
+          <div class="dv-hint">{{ field.hint }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+
+  </div><!-- /panel-details -->
+
+  <!-- ── Panel: WhatsApp Business ───────────────────────── -->
+  <div class="cd-panel" id="panel-whatsapp">
+
+    {% if whatsapp_account and whatsapp_account.connection_status in ('active', 'error') %}
+    <!-- Connected state -->
+    <div class="wa-connected-card" id="waConnectedCard">
+      <div class="wa-connected-header">
+        <div class="wa-connected-title">
+          <i class="fab fa-whatsapp"></i>
+          <h3>{{ whatsapp_account.business_name or 'WhatsApp Business' }}</h3>
+        </div>
+        <div class="wa-connected-actions">
+          {% if perms[dt.perm_page].write %}
+          <button class="wa-action-btn" id="waRefreshBtn">
+            <i class="fas fa-sync-alt"></i> Refresh Status
+          </button>
+          <button class="wa-action-btn danger" id="waDisconnectBtn">
+            <i class="fas fa-unlink"></i> Disconnect
+          </button>
+          {% endif %}
+        </div>
+      </div>
+      <div class="wa-info-grid">
+        <div class="wa-info-item">
+          <div class="wa-info-label">Business Name</div>
+          <div class="wa-info-value">{{ whatsapp_account.business_name or '—' }}</div>
+        </div>
+        <div class="wa-info-item">
+          <div class="wa-info-label">Display Phone Number</div>
+          <div class="wa-info-value">{{ whatsapp_account.display_phone_number or '—' }}</div>
+        </div>
+        <div class="wa-info-item">
+          <div class="wa-info-label">WABA ID</div>
+          <div class="wa-info-value mono">{{ whatsapp_account.waba_id or '—' }}</div>
+        </div>
+        <div class="wa-info-item">
+          <div class="wa-info-label">Phone Number ID</div>
+          <div class="wa-info-value mono">{{ whatsapp_account.phone_number_id or '—' }}</div>
+        </div>
+        <div class="wa-info-item">
+          <div class="wa-info-label">Connection Status</div>
+          <div class="wa-info-value">
+            <span class="wa-status-badge wa-status-{{ whatsapp_account.connection_status }}">
+              <i class="fas fa-circle" style="font-size:7px;"></i>
+              {{ whatsapp_account.connection_status | title }}
+            </span>
+          </div>
+        </div>
+        <div class="wa-info-item">
+          <div class="wa-info-label">Last Sync</div>
+          <div class="wa-info-value">{{ whatsapp_account.last_sync_at or '—' }}</div>
+        </div>
+      </div>
+      {% if perms[dt.perm_page].write %}
+      <div class="wa-disconnect-confirm" id="waDisconnectConfirm">
+        <i class="fas fa-exclamation-triangle"></i>
+        Disconnect WhatsApp? This will remove all credentials for this company.
+        <button class="wa-action-btn danger" id="waDisconnectConfirmBtn">Yes, disconnect</button>
+        <button class="wa-action-btn" id="waDisconnectCancelBtn">Cancel</button>
+      </div>
+      {% endif %}
+    </div>
+
+    {% else %}
+    <!-- Not connected state -->
+    {% if perms[dt.perm_page].write %}
+
+    <!-- Manual credentials form -->
+    <div class="wa-manual-card">
+      <div class="wa-manual-card-header">
+        <div class="wa-manual-icon"><i class="fas fa-key"></i></div>
+        <div>
+          <div class="wa-manual-card-title">WhatsApp Configuration</div>
+          <div class="wa-manual-card-sub">Enter your credentials from Meta Business Manager to connect this company's WhatsApp Business Account.</div>
+        </div>
+      </div>
+
+      <div class="wa-manual-form">
+
+        <div class="wa-mf-field">
+          <label class="wa-mf-label" for="msAccessToken">
+            Access Token <span class="req">*</span>
+          </label>
+          <div class="wa-mf-token-wrap">
+            <input type="password" id="msAccessToken" class="wa-mf-input wa-mf-mono"
+                   placeholder="EAAxxxxxxx…" autocomplete="off">
+            <button type="button" class="wa-mf-eye" id="msTokenEye" title="Show / hide token">
+              <i class="fas fa-eye" id="msEyeIcon"></i>
+            </button>
+          </div>
+          <div class="wa-mf-hint">
+            From <strong>Meta Business Manager → Settings → Business Integrations</strong>, or via
+            <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener">Graph API Explorer</a>.
+            Must have <code>whatsapp_business_management</code> permission.
+          </div>
+        </div>
+
+        <div class="wa-mf-row">
+          <div class="wa-mf-field">
+            <label class="wa-mf-label" for="msWabaId">WABA ID <span class="req">*</span></label>
+            <input type="text" id="msWabaId" class="wa-mf-input wa-mf-mono"
+                   placeholder="123456789012345">
+            <div class="wa-mf-hint">WhatsApp Business Account ID — from <strong>WhatsApp Manager</strong> in Meta Business Suite.</div>
+          </div>
+          <div class="wa-mf-field">
+            <label class="wa-mf-label" for="msPhoneId">Phone Number ID</label>
+            <input type="text" id="msPhoneId" class="wa-mf-input wa-mf-mono"
+                   placeholder="987654321098765">
+            <div class="wa-mf-hint">
+              Phone Number ID (not the phone number itself) — from <strong>WhatsApp Manager → Phone Numbers</strong>.
+              Needed for status refresh and sending messages.
+            </div>
+          </div>
+        </div>
+
+        <div class="wa-mf-row">
+          <div class="wa-mf-field">
+            <label class="wa-mf-label" for="msBusinessName">Business Name</label>
+            <input type="text" id="msBusinessName" class="wa-mf-input"
+                   placeholder="Auto-fetched from Meta">
+            <div class="wa-mf-hint">Leave blank — populated automatically from Meta.</div>
+          </div>
+          <div class="wa-mf-field">
+            <label class="wa-mf-label" for="msDisplayPhone">Display Phone Number</label>
+            <input type="text" id="msDisplayPhone" class="wa-mf-input"
+                   placeholder="+91 98765 43210">
+            <div class="wa-mf-hint">Auto-populated from Meta if Phone Number ID is provided.</div>
+          </div>
+        </div>
+
+        <div class="wa-mf-error" id="msError"></div>
+
+        <div class="wa-mf-actions">
+          <button class="wa-mf-btn" id="msSaveBtn">
+            <span class="wa-mf-btn-label"><i class="fas fa-check-circle"></i> Verify &amp; Connect</span>
+            <div class="wa-mf-spinner"></div>
+          </button>
+        </div>
+
+      </div><!-- /wa-manual-form -->
+    </div><!-- /wa-manual-card -->
+
+    <!-- EBS — coming soon -->
+    <div class="wa-or-divider"><span>or connect via Meta Embedded Signup</span></div>
+    <div class="wa-ebs-zone">
+      <div class="wa-logo-circle" style="opacity:.5;"><i class="fab fa-whatsapp"></i></div>
+      <div class="wa-nc-title" style="font-size:16px;">Meta Embedded Signup</div>
+      <div class="wa-nc-desc">Guided setup through Facebook — Business Manager, WABA creation, and phone verification in one flow.</div>
+      <button class="wa-connect-btn" id="waOpenModalBtn">
+        <i class="fab fa-facebook"></i> Connect via Meta
+      </button>
+    </div>
+
+    {% else %}
+    <div class="wa-not-connected">
+      <div class="wa-logo-circle"><i class="fab fa-whatsapp"></i></div>
+      <div class="wa-nc-title">WhatsApp Not Configured</div>
+      <div class="wa-nc-desc">You don't have permission to configure WhatsApp for this company.</div>
+    </div>
+    {% endif %}
+
+    {% endif %}
+
+  </div><!-- /panel-whatsapp -->
+
+  <!-- ── Panel: Templates ───────────────────────────────── -->
+  <div class="cd-panel" id="panel-templates">
+
+    {% if not whatsapp_account or whatsapp_account.connection_status not in ('active', 'error') %}
+    <!-- Not connected -->
+    <div class="tpl-no-waba">
+      <div class="tpl-no-waba-icon"><i class="fas fa-file-alt"></i></div>
+      <h3>WhatsApp Not Connected</h3>
+      <p>Connect your WhatsApp Business Account first to manage message templates.</p>
+    </div>
+
+    {% else %}
+    <!-- Connected — full template management -->
+    <div class="tpl-toolbar">
+      <div class="tpl-search">
+        <i class="fas fa-search tpl-search-icon"></i>
+        <input type="text" id="tplSearch" class="tpl-search-input" placeholder="Search templates…">
+      </div>
+      <select id="tplStatusFilter" class="tpl-filter">
+        <option value="">All statuses</option>
+        <option value="APPROVED">Approved</option>
+        <option value="PENDING">Pending</option>
+        <option value="REJECTED">Rejected</option>
+        <option value="PAUSED">Paused</option>
+      </select>
+      <button class="tpl-btn tpl-btn-ghost" id="tplSyncBtn">
+        <span class="tpl-btn-label"><i class="fas fa-sync-alt"></i> Sync</span>
+        <div class="tpl-btn-spinner"></div>
+      </button>
+      {% if perms[dt.perm_page].write %}
+      <button class="tpl-btn tpl-btn-primary" id="tplNewBtn">
+        <span class="tpl-btn-label"><i class="fas fa-plus"></i> New Template</span>
+      </button>
+      {% endif %}
+    </div>
+
+    {% if templates_data %}
+    <div class="tpl-table-wrap" id="tplTableWrap">
+      <table class="tpl-table" id="tplTable">
+        <thead>
+          <tr>
+            <th>Template Name</th>
+            <th>Category</th>
+            <th>Language</th>
+            <th>Status</th>
+            <th>Last Synced</th>
+            {% if perms[dt.perm_page].write %}<th></th>{% endif %}
+          </tr>
+        </thead>
+        <tbody id="tplTbody">
+          {% for t in templates_data %}
+          <tr data-name="{{ t.name }}" data-status="{{ t.status }}"
+              data-search="{{ t.name }} {{ t.category }} {{ t.language }} {{ t.status }}"
+              data-tpl-id="{{ t.id }}"
+              onclick="handleRowClick(event, this)" style="cursor:pointer;">
+            <td>
+              <div class="tpl-name" style="color:var(--green);text-decoration:underline;text-underline-offset:2px;">{{ t.name }}</div>
+              {% if t.rejection_reason %}
+              <div class="tpl-rejection"><i class="fas fa-exclamation-circle"></i> {{ t.rejection_reason }}</div>
+              {% endif %}
+            </td>
+            <td>
+              <span class="tpl-cat tpl-cat-{{ t.category | lower }}">{{ t.category }}</span>
+            </td>
+            <td><span class="tpl-lang">{{ t.language }}</span></td>
+            <td>
+              {% set sl = t.status | lower %}
+              <span class="tpl-badge tpl-badge-{{ sl }}">
+                <i class="fas fa-circle"></i>
+                {{ t.status | replace('_', ' ') | title }}
+              </span>
+            </td>
+            <td style="font-size:11px;color:var(--subtle);">
+              {% if t.synced_at %}{{ t.synced_at[:10] }}{% else %}—{% endif %}
+            </td>
+            {% if perms[dt.perm_page].write %}
+            <td>
+              <div style="display:flex;align-items:center;gap:6px;" onclick="event.stopPropagation()">
+                <div class="tpl-delete-confirm" id="del-confirm-{{ t.name }}">
+                  <span style="font-size:11px;">Delete?</span>
+                  <button class="tpl-btn tpl-btn-danger" style="padding:3px 8px;font-size:10px;" onclick="confirmDeleteTemplate('{{ t.name }}')">Yes</button>
+                  <button class="tpl-btn tpl-btn-ghost" style="padding:3px 8px;font-size:10px;" onclick="cancelDeleteTemplate('{{ t.name }}')">No</button>
+                </div>
+                <button class="tpl-btn tpl-btn-ghost" style="padding:4px 8px;font-size:11px;"
+                        title="Param Mapping"
+                        onclick="openMapperModal('{{ t.id }}')">
+                  <i class="fas fa-sliders-h"></i>
+                </button>
+                <button class="tpl-btn tpl-btn-ghost" style="padding:4px 8px;font-size:11px;"
+                        title="Edit template"
+                        onclick="openEditBuilderById('{{ t.id }}')">
+                  <i class="fas fa-edit"></i>
+                </button>
+                <button class="tpl-btn tpl-btn-danger" style="padding:4px 8px;font-size:11px;" onclick="askDeleteTemplate('{{ t.name }}')">
+                  <i class="fas fa-trash"></i>
+                </button>
+              </div>
+            </td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="tpl-empty" id="tplEmpty">
+      <div class="tpl-empty-icon"><i class="fas fa-file-alt"></i></div>
+      <p>No templates yet. Click <strong>Sync</strong> to import from Meta or <strong>New Template</strong> to create one.</p>
+    </div>
+    {% endif %}
+
+    {% endif %}{# end connected check #}
+
+  </div><!-- /panel-templates -->
+
+  <!-- ── Template Builder Modal ─────────────────────────── -->
+  <div class="tpl-modal-overlay" id="tplModalOverlay">
+    <div class="tpl-modal">
+
+      <div class="tpl-modal-header">
+        <div class="tpl-modal-title" id="tplModalTitle"><i class="fas fa-file-alt" style="color:var(--green);margin-right:8px;"></i>New Message Template</div>
+        <button class="tpl-modal-close" id="tplModalClose"><i class="fas fa-times"></i></button>
+      </div>
+
+      <div class="tpl-modal-body">
+
+        <!-- Left: Form -->
+        <div class="tpl-form-col">
+
+          <!-- Section 1: Info -->
+          <div class="tpl-section">
+            <div class="tpl-section-header">
+              <span class="tpl-section-title">Template Info</span>
+            </div>
+            <div class="tpl-field">
+              <label class="tpl-label" for="tplName">Name <span class="req">*</span></label>
+              <input type="text" id="tplName" class="tpl-input mono"
+                     placeholder="e.g. order_confirmed"
+                     maxlength="512"
+                     oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9_]/g,'')">
+              <div class="tpl-hint">Lowercase letters, numbers, underscores only.</div>
+            </div>
+            <div class="tpl-row-2">
+              <div class="tpl-field">
+                <label class="tpl-label" for="tplCategory">Category <span class="req">*</span></label>
+                <select id="tplCategory" class="tpl-select">
+                  <option value="MARKETING">Marketing</option>
+                  <option value="UTILITY" selected>Utility</option>
+                  <option value="AUTHENTICATION">Authentication</option>
+                </select>
+              </div>
+              <div class="tpl-field">
+                <label class="tpl-label" for="tplLanguage">Language <span class="req">*</span></label>
+                <select id="tplLanguage" class="tpl-select">
+                  <option value="en_US" selected>English (US)</option>
+                  <option value="en">English</option>
+                  <option value="es">Spanish</option>
+                  <option value="fr">French</option>
+                  <option value="de">German</option>
+                  <option value="pt_BR">Portuguese (BR)</option>
+                  <option value="hi">Hindi</option>
+                  <option value="ar">Arabic</option>
+                  <option value="id">Indonesian</option>
+                  <option value="it">Italian</option>
+                  <option value="ja">Japanese</option>
+                  <option value="ko">Korean</option>
+                  <option value="ru">Russian</option>
+                  <option value="th">Thai</option>
+                  <option value="vi">Vietnamese</option>
+                  <option value="zh_CN">Chinese (Simplified)</option>
+                  <option value="zh_TW">Chinese (Traditional)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 2: Header (optional) -->
+          <div class="tpl-section">
+            <div class="tpl-section-header">
+              <span class="tpl-section-title">Header</span>
+              <button class="tpl-toggle-link" id="tplHeaderToggle" type="button">+ Add Header</button>
+            </div>
+            <div id="tplHeaderFields" style="display:none;">
+              <div class="tpl-field">
+                <label class="tpl-label" for="tplHeaderText">
+                  Header Text
+                  <span class="tpl-char-count" id="tplHeaderCount">0/60</span>
+                </label>
+                <input type="text" id="tplHeaderText" class="tpl-input"
+                       placeholder="Short header line…" maxlength="60"
+                       oninput="updateHeaderCount();updatePreview();">
+                <div class="tpl-hint">No variables allowed. Max 60 characters.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 3: Body -->
+          <div class="tpl-section">
+            <div class="tpl-section-header">
+              <span class="tpl-section-title">Body <span style="color:var(--red)">*</span></span>
+            </div>
+            <div class="tpl-field">
+              <label class="tpl-label" for="tplBodyText">
+                Message Body
+                <span class="tpl-char-count" id="tplBodyCount">0/1024</span>
+              </label>
+              <textarea id="tplBodyText" class="tpl-textarea"
+                        placeholder="Hi {{ '{{' }}1{{ '}}' }}, your order #{{ '{{' }}2{{ '}}' }} has been confirmed."
+                        maxlength="1024"
+                        oninput="updateBodyCount();updatePreview();"
+                        rows="5"></textarea>
+              <button type="button" class="tpl-var-btn" id="tplAddVarBtn" onclick="insertVariable()">
+                <i class="fas fa-plus-circle"></i> Insert Variable {{ '{{' }}<span id="tplVarIdx">1</span>{{ '}}' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Section 4: Footer (optional) -->
+          <div class="tpl-section">
+            <div class="tpl-section-header">
+              <span class="tpl-section-title">Footer</span>
+              <button class="tpl-toggle-link" id="tplFooterToggle" type="button">+ Add Footer</button>
+            </div>
+            <div id="tplFooterFields" style="display:none;">
+              <div class="tpl-field">
+                <label class="tpl-label" for="tplFooterText">
+                  Footer Text
+                  <span class="tpl-char-count" id="tplFooterCount">0/60</span>
+                </label>
+                <input type="text" id="tplFooterText" class="tpl-input"
+                       placeholder="Visit us at example.com" maxlength="60"
+                       oninput="updateFooterCount();updatePreview();">
+                <div class="tpl-hint">No variables allowed. Max 60 characters.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 5: Buttons (optional) -->
+          <div class="tpl-section">
+            <div class="tpl-section-header">
+              <span class="tpl-section-title">Buttons</span>
+              <button class="tpl-toggle-link" id="tplBtnsToggle" type="button">+ Add Buttons</button>
+            </div>
+            <div id="tplBtnsFields" style="display:none;">
+              <div class="tpl-btn-rows" id="tplBtnRows"></div>
+              <button type="button" class="tpl-add-btn-link" id="tplAddBtnLink" onclick="addButtonRow()">
+                <i class="fas fa-plus"></i> Add Button
+              </button>
+              <div class="tpl-hint" style="margin-top:6px;">Maximum 3 buttons.</div>
+            </div>
+          </div>
+
+        </div><!-- /tpl-form-col -->
+
+        <!-- Right: Preview -->
+        <div class="tpl-preview-col">
+          <div class="tpl-preview-label"><i class="fab fa-whatsapp" style="color:#25D366;margin-right:5px;"></i>Live Preview</div>
+          <div class="tpl-preview-phone">
+            <div id="tplPreviewEmpty" class="tpl-preview-empty">Start typing to see preview…</div>
+            <div id="tplPreviewBubble" class="tpl-preview-bubble" style="display:none;">
+              <div id="tplPrevHeader" class="tpl-preview-header" style="display:none;"></div>
+              <div id="tplPrevBody"   class="tpl-preview-body"></div>
+              <div id="tplPrevFooter" class="tpl-preview-footer" style="display:none;"></div>
+            </div>
+            <div id="tplPreviewBtns" class="tpl-preview-btns"></div>
+          </div>
+        </div>
+
+      </div><!-- /tpl-modal-body -->
+
+      <div class="tpl-modal-footer">
+        <div id="tplModalMsg"></div>
+        <div style="display:flex;gap:8px;">
+          <button class="tpl-btn tpl-btn-ghost" id="tplCancelBtn">Cancel</button>
+          <button class="tpl-btn tpl-btn-primary" id="tplSubmitBtn">
+            <span class="tpl-btn-label"><i class="fas fa-paper-plane"></i> Submit Template</span>
+            <div class="tpl-btn-spinner"></div>
+          </button>
+        </div>
+      </div>
+
+    </div><!-- /tpl-modal -->
+  </div><!-- /tpl-modal-overlay -->
+
+  <!-- ── Panel: Parameter Mapper ───────────────────────── -->
+  <!-- ── Panel: API Keys ──────────────────────────────── -->
+  {% if perms[dt.perm_page].write %}
+  <div class="cd-panel" id="panel-api_keys">
+
+    <div class="ak-panel-hd">
+      <div>
+        <div class="ak-panel-title">API Keys</div>
+        <div class="ak-panel-desc">Keys authenticate external systems that push data to this company's account.</div>
+      </div>
+      <button class="dv-btn dv-btn-primary" id="akGenerateBtn">
+        <span class="btn-label"><i class="fas fa-plus"></i> Generate New Key</span>
+        <div class="btn-spinner"></div>
+      </button>
+    </div>
+
+    <div id="akError" class="dv-form-error">
+      <i class="fas fa-exclamation-circle"></i>
+      <span id="akErrorText"></span>
+    </div>
+
+    <!-- Keys table -->
+    <div id="akTableWrap">
+      <table class="tpl-table" id="akTable" style="display:none;">
+        <thead>
+          <tr>
+            <th>Label</th>
+            <th>Key</th>
+            <th>Notify URL</th>
+            <th>Status</th>
+            <th>Last Used</th>
+            <th>Created</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="akTbody"></tbody>
+      </table>
+      <div id="akEmpty" class="ak-empty" style="display:none;">
+        <div class="ak-empty-icon"><i class="fas fa-key"></i></div>
+        <div class="ak-empty-text">No API keys yet. Generate one to allow external systems to connect.</div>
+      </div>
+    </div>
+
+  </div>
+  {% endif %}
+
+</div><!-- /cd-wrap -->
+
+<!-- Generate Key Modal -->
+{% if perms[dt.perm_page].write %}
+<div class="ak-modal-overlay" id="akModalBackdrop">
+  <div class="ak-modal">
+    <div class="ak-modal-header">
+      <div class="ak-modal-title">
+        <i class="fas fa-key"></i>
+        Generate API Key
+      </div>
+      <button class="ak-modal-close" id="akModalClose"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="ak-modal-body">
+      <div id="akModalError" class="dv-inline-error" style="display:none;"></div>
+
+      <!-- Form state -->
+      <div id="akFormState">
+        <div class="ak-form-field">
+          <label class="dv-label">Label <span class="dv-label-opt">(optional)</span></label>
+          <input type="text" id="akLabel" class="dv-input" placeholder="e.g. dotnet-prod" maxlength="100">
+        </div>
+        <div class="ak-form-field">
+          <label class="dv-label">Notify URL <span class="dv-label-opt">(optional)</span></label>
+          <input type="text" id="akNotifyUrl" class="dv-input" placeholder="https://your-server.com/notify" maxlength="500">
+          <div class="dv-hint">Webhook URL to receive template change notifications.</div>
+        </div>
+      </div>
+
+      <!-- Success state — key shown once -->
+      <div id="akSuccessState" style="display:none;">
+        <div class="ak-success-box">
+          <div class="ak-success-box-title">
+            <i class="fas fa-check-circle"></i> Key generated — copy it now
+          </div>
+          <div class="ak-success-box-desc">
+            This key will <strong>not</strong> be shown again after you close this dialog.
+          </div>
+          <div class="ak-key-copy-row">
+            <input type="text" id="akNewKeyDisplay" class="dv-input" readonly>
+            <button class="dv-btn dv-btn-ghost" id="akCopyBtn" title="Copy to clipboard" style="padding:9px 12px;flex-shrink:0;">
+              <i class="fas fa-copy"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="ak-modal-footer">
+      <button class="dv-btn dv-btn-ghost" id="akModalCancel">Cancel</button>
+      <button class="dv-btn dv-btn-primary" id="akModalSave">
+        <span class="btn-label"><i class="fas fa-magic"></i> Generate</span>
+        <div class="btn-spinner"></div>
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Edit Key Modal -->
+{% if perms[dt.perm_page].write %}
+<div class="ak-modal-overlay" id="akEditModalBackdrop">
+  <div class="ak-modal">
+    <div class="ak-modal-header">
+      <div class="ak-modal-title">
+        <i class="fas fa-edit"></i>
+        Edit API Key
+      </div>
+      <button class="ak-modal-close" id="akEditModalClose"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="ak-modal-body">
+      <div id="akEditError" class="dv-inline-error" style="display:none;"></div>
+
+      <div class="ak-form-field">
+        <label class="dv-label">Masked Key</label>
+        <div id="akEditMaskedKey" class="ak-key-mono" style="padding:8px 10px;display:inline-block;"></div>
+      </div>
+      <div class="ak-form-field">
+        <label class="dv-label">Label <span class="dv-label-opt">(optional)</span></label>
+        <input type="text" id="akEditLabel" class="dv-input" placeholder="e.g. dotnet-prod" maxlength="100">
+      </div>
+      <div class="ak-form-field">
+        <label class="dv-label">Notify URL <span class="dv-label-opt">(optional)</span></label>
+        <input type="text" id="akEditNotifyUrl" class="dv-input" placeholder="https://your-server.com/notify" maxlength="500">
+        <div class="dv-hint">Webhook URL to receive template change notifications.</div>
+      </div>
+
+      <!-- Delete confirm inline -->
+      <div id="akDeleteConfirm" class="ak-delete-confirm" style="display:none;">
+        <i class="fas fa-exclamation-triangle"></i>
+        Permanently delete this key? This cannot be undone.
+        <button class="dv-btn dv-btn-danger" id="akDeleteConfirmBtn" style="padding:5px 12px;font-size:11px;">
+          <span class="btn-label">Yes, delete</span>
+          <div class="btn-spinner"></div>
+        </button>
+        <button class="dv-btn dv-btn-ghost" id="akDeleteCancelBtn" style="padding:5px 12px;font-size:11px;">Cancel</button>
+      </div>
+    </div>
+    <div class="ak-modal-footer" style="justify-content:space-between;">
+      <button class="dv-btn dv-btn-danger" id="akEditDeleteBtn">
+        <i class="fas fa-trash"></i> Delete
+      </button>
+      <div style="display:flex;gap:8px;">
+        <button class="dv-btn dv-btn-ghost" id="akEditCancel">Cancel</button>
+        <button class="dv-btn dv-btn-primary" id="akEditSave">
+          <span class="btn-label"><i class="fas fa-save"></i> Save</span>
+          <div class="btn-spinner"></div>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Template View Modal -->
+<!-- Template View + Param Mapper — single unified modal -->
+<div class="tpl-view-overlay" id="tplViewOverlay">
+  <div class="tpl-view-modal">
+
+    <!-- Header -->
+    <div class="tpl-view-header">
+      <div>
+        <div class="tpl-view-name" id="tvName"></div>
+        <div class="tpl-view-meta" id="tvMeta"></div>
+      </div>
+      <button class="tpl-modal-close" id="tplViewClose"><i class="fas fa-times"></i></button>
+    </div>
+
+    <!-- Body: left = phone preview, right = tabbed panel -->
+    <div class="tpl-view-body">
+
+      <!-- Left: phone preview (always visible) -->
+      <div class="tpl-view-phone">
+        <div id="tvBubble" class="tpl-view-bubble">
+          <div id="tvHeader" class="tpl-view-header-txt" style="display:none;"></div>
+          <div id="tvBody"   class="tpl-view-body-txt"></div>
+          <div id="tvFooter" class="tpl-view-footer-txt" style="display:none;"></div>
+        </div>
+        <div id="tvBtns" class="tpl-preview-btns"></div>
+      </div>
+
+      <!-- Right: tab-switched panel -->
+      <div class="tpl-view-info" style="display:flex;flex-direction:column;gap:0;padding:0;">
+
+        <!-- Tab bar -->
+        <div class="tvr-tabs">
+          <button class="tvr-tab" id="tvrTabInfo" onclick="switchViewTab('info')">
+            <i class="fas fa-info-circle"></i> Details
+          </button>
+          {% if perms[dt.perm_page].write %}
+          <button class="tvr-tab" id="tvrTabMapper" onclick="switchViewTab('mapper')">
+            <i class="fas fa-sliders-h"></i> Param Mapping
+          </button>
+          {% endif %}
+        </div>
+
+        <!-- ── Panel: Details ─────────────────────────── -->
+        <div id="tvrInfoPanel" class="tvr-panel" style="padding:16px;overflow-y:auto;">
+          <div class="tpl-view-info-row"><span>Status</span><span id="tvStatus"></span></div>
+          <div class="tpl-view-info-row"><span>Category</span><span id="tvCategory"></span></div>
+          <div class="tpl-view-info-row"><span>Language</span><span id="tvLanguage"></span></div>
+          <div class="tpl-view-info-row"><span>Last Synced</span><span id="tvSynced"></span></div>
+          <div id="tvRejectRow" class="tpl-view-info-row" style="display:none;">
+            <span>Rejection Reason</span><span id="tvReject" style="color:var(--red-dark);"></span>
+          </div>
+          <div id="tvEditNote" class="tpl-view-note" style="display:none;">
+            <i class="fas fa-info-circle"></i>
+            <span id="tvEditNoteText"></span>
+          </div>
+          {% if perms[dt.perm_page].write %}
+          <div style="margin-top:16px;">
+            <button id="tvEditBtn" class="tpl-btn tpl-btn-primary" style="width:100%;justify-content:center;">
+              <i class="fas fa-edit"></i> Edit &amp; Resubmit
+            </button>
+          </div>
+          {% endif %}
+        </div>
+
+        <!-- ── Panel: Param Mapping ───────────────────── -->
+        {% if perms[dt.perm_page].write %}
+        <div id="tvrMapperPanel" class="tvr-panel" style="display:none;padding:16px;overflow-y:auto;flex:1;">
+          <div class="tv-mapper-hint" style="margin-bottom:12px;">
+            Enter the dot-path to each value in the client payload. e.g. <code>data.customer_name</code>, <code>data.order.amount</code>
+          </div>
+          <div id="tvMapperRows" class="tv-mapper-rows"></div>
+          <div id="tvMapperEmpty" class="tv-mapper-empty" style="display:none;">
+            No variables or URL buttons in this template.
+          </div>
+          <div class="tv-mapper-actions" id="tvMapperActions" style="display:none;margin-top:12px;">
+            <div class="tv-mapper-status" id="tvMapperStatus"></div>
+            <button class="tpl-btn tpl-btn-primary" id="tvMapperSaveBtn" style="padding:7px 16px;font-size:12px;">
+              <span id="tvMapperSaveLabel"><i class="fas fa-save"></i> Save Mapping</span>
+              <div class="tpl-btn-spinner" id="tvMapperSpinner" style="display:none;"></div>
+            </button>
+          </div>
+        </div>
+        {% endif %}
+
+      </div><!-- /tpl-view-info -->
+    </div><!-- /tpl-view-body -->
+  </div><!-- /tpl-view-modal -->
+</div>
+
+<!-- WhatsApp Embedded Signup Modal -->
+<div class="wa-modal-overlay" id="waModalOverlay">
+  <div class="wa-modal" id="waModal">
+
+    <!-- Exit confirmation overlay -->
+    <div class="wa-exit-confirm" id="waExitConfirm">
+      <div class="wa-exit-dialog">
+        <i class="fas fa-exclamation-circle"></i>
+        <h4>Exit Setup?</h4>
+        <p>Progress is saved. You can resume anytime.</p>
+        <div class="wa-exit-dialog-btns">
+          <button class="wa-btn wa-btn-ghost" id="waExitCancelBtn">Continue</button>
+          <button class="wa-btn wa-btn-primary" id="waExitConfirmBtn" style="background:var(--red);border-color:var(--red);">Exit</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Header -->
+    <div class="wa-modal-header">
+      <div class="wa-modal-header-left">
+        <i class="fab fa-whatsapp"></i>
+        <div class="wa-modal-title">Connect WhatsApp Business</div>
+      </div>
+      <button class="wa-modal-close" id="waModalCloseBtn" title="Close">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+
+    <!-- Step progress -->
+    <div class="wa-progress">
+      <div class="wa-prog-bar">
+        <div class="wa-prog-seg" id="seg-1"></div>
+        <div class="wa-prog-seg" id="seg-2"></div>
+        <div class="wa-prog-seg" id="seg-3"></div>
+      </div>
+      <div class="wa-prog-meta">
+        <span class="wa-prog-counter" id="wa-prog-counter">Step 1 of 3</span>
+        <span class="wa-prog-name" id="wa-prog-name">Meta Login</span>
+      </div>
+    </div>
+
+    <!-- Body -->
+    <div class="wa-modal-body">
+
+      <!-- Step 1: Meta Login -->
+      <div class="wa-step-content" id="step-1">
+        <div class="wa-step-heading-row">
+          <div class="wa-step-icon blue" style="width:40px;height:40px;font-size:18px;flex-shrink:0;margin:0;">
+            <i class="fab fa-facebook"></i>
+          </div>
+          <div class="wa-step-heading" style="margin:0;">Sign in with Meta</div>
+        </div>
+        <div class="wa-step-desc">A secure Meta popup will open. It handles everything — business setup, phone number, and verification.</div>
+        <div class="wa-meta-box">
+          <div class="wa-meta-steps">
+            <div class="wa-meta-step"><div class="wa-meta-step-num">1</div>Log in to Facebook / Meta</div>
+            <div class="wa-meta-step"><div class="wa-meta-step-num">2</div>Select or create a Business Manager</div>
+            <div class="wa-meta-step"><div class="wa-meta-step-num">3</div>Create or select a WhatsApp Business Account</div>
+            <div class="wa-meta-step"><div class="wa-meta-step-num">4</div>Add &amp; verify your phone number (OTP)</div>
+          </div>
+        </div>
+        <div class="wa-step-error" id="step1Error">
+          <i class="fas fa-exclamation-circle"></i>
+          <span id="step1ErrorText"></span>
+        </div>
+        <div class="wa-step-actions">
+          <button class="wa-btn wa-btn-meta" id="waLaunchMetaBtn">
+            <span class="wa-btn-label"><i class="fab fa-facebook"></i> Launch Meta Signup</span>
+            <div class="wa-btn-spinner"></div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 2: Connecting -->
+      <div class="wa-step-content" id="step-2">
+        <div class="wa-step-icon blue"><i class="fas fa-link"></i></div>
+        <div class="wa-step-heading">Connecting…</div>
+        <div class="wa-step-desc">Saving your account details.</div>
+        <div class="wa-status-row" id="statusRow1">
+          <div class="wa-spinner" id="spinner1"></div>
+          <span id="status1Text">Exchanging authorization code…</span>
+        </div>
+        <div class="wa-status-row" id="statusRow2" style="opacity:.4;">
+          <i class="fas fa-circle-notch" id="icon2" style="color:var(--subtle);font-size:14px;"></i>
+          <span id="status2Text">Fetching account details…</span>
+        </div>
+        <div class="wa-status-row" id="statusRow3" style="opacity:.4;">
+          <i class="fas fa-circle-notch" id="icon3" style="color:var(--subtle);font-size:14px;"></i>
+          <span id="status3Text">Finalising connection…</span>
+        </div>
+        <div class="wa-step-error" id="step2Error">
+          <i class="fas fa-exclamation-circle"></i>
+          <span id="step2ErrorText"></span>
+        </div>
+        <div class="wa-step-actions" id="step2Actions" style="display:none;">
+          <button class="wa-btn wa-btn-ghost" id="waTryAgainBtn">
+            <span class="wa-btn-label"><i class="fas fa-redo"></i> Try Again</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 3: Complete -->
+      <div class="wa-step-content" id="step-3">
+        <div class="wa-step-icon success"><i class="fas fa-check"></i></div>
+        <div class="wa-step-heading">Connected</div>
+        <div class="wa-success-summary" id="waSummary">
+          <div class="wa-sum-item">
+            <div class="wa-sum-label">Business Name</div>
+            <div class="wa-sum-value" id="sumBusinessName">—</div>
+          </div>
+          <div class="wa-sum-item">
+            <div class="wa-sum-label">Phone Number</div>
+            <div class="wa-sum-value" id="sumPhone">—</div>
+          </div>
+          <div class="wa-sum-item">
+            <div class="wa-sum-label">WABA ID</div>
+            <div class="wa-sum-value mono" id="sumWabaId">—</div>
+          </div>
+          <div class="wa-sum-item">
+            <div class="wa-sum-label">Status</div>
+            <div class="wa-sum-value">
+              <span class="wa-status-badge wa-status-active">
+                <i class="fas fa-circle" style="font-size:7px;"></i> Active
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="wa-step-actions">
+          <button class="wa-btn wa-btn-primary" id="waFinishBtn">
+            <span class="wa-btn-label"><i class="fas fa-check"></i> Finish</span>
+          </button>
+        </div>
+      </div>
+
+    </div><!-- /wa-modal-body -->
+
+  </div><!-- /wa-modal -->
+</div><!-- /wa-modal-overlay -->
+
+{% endblock %}
+
+{% block extra_js %}
+<script async defer crossorigin="anonymous"
+  src="https://connect.facebook.net/en_US/sdk.js"></script>
+
+<script>
+(function () {
+  'use strict';
+
+  var COMPANY_ID     = '{{ record_id }}';
+  var RECORD_ID      = '{{ record_id }}';
+  var API_PREFIX     = '{{ dt.api_prefix }}';
+  var BASE_ROUTE     = '{{ dt.base_route }}';
+  var FB_APP_ID      = '{{ fb_app_id }}';
+  var META_CONFIG_ID = '{{ meta_config_id }}';
+  var TEMPLATES_DATA = {{ templates_data | tojson }};
+
+  /* ── Tab switching ────────────────────────────────────── */
+  function getActiveTab() {
+    var hash = window.location.hash.replace('#', '') || 'details';
+    return ['details', 'whatsapp', 'templates', 'api_keys'].includes(hash) ? hash : 'details';
+  }
+
+  function switchTab(name) {
+    document.querySelectorAll('.cd-tab').forEach(function (t) {
+      t.classList.toggle('active', t.dataset.panel === name);
+    });
+    document.querySelectorAll('.cd-panel').forEach(function (p) {
+      p.classList.toggle('active', p.id === 'panel-' + name);
+    });
+    history.replaceState(null, '', '#' + name);
+  }
+
+  document.querySelectorAll('.cd-tab').forEach(function (tab) {
+    tab.addEventListener('click', function () { switchTab(tab.dataset.panel); });
+  });
+  switchTab(getActiveTab());
+
+  /* ── Company Details form ─────────────────────────────── */
+  document.querySelectorAll('.dv-toggle input').forEach(function (cb) {
+    cb.addEventListener('change', function () {
+      cb.closest('.dv-toggle-wrap').querySelector('.dv-toggle-label').textContent =
+        cb.checked ? 'Enabled' : 'Disabled';
+    });
+  });
+
+  /* getToken / showSessionBanner / fetchWithAuth are global — defined in base.html */
+
+  var saveBtn    = document.getElementById('saveBtn');
+  var statusEl   = document.getElementById('saveStatus');
+  var errorEl    = document.getElementById('formError');
+  var errorText  = document.getElementById('formErrorText');
+
+  function showFormError(msg) {
+    errorText.textContent = msg;
+    errorEl.classList.add('visible');
+    window.scrollTo({top: 0, behavior: 'smooth'});
+  }
+  function clearFormError() { errorEl && errorEl.classList.remove('visible'); }
+
+  function collectPayload() {
+    var payload = {};
+    document.querySelectorAll('.dv-input, .dv-select').forEach(function (el) {
+      if (!el.name) return;
+      payload[el.name] = el.value.trim() === '' ? null : el.value.trim();
+    });
+    document.querySelectorAll('.dv-toggle input[type=checkbox]').forEach(function (cb) {
+      if (cb.name) payload[cb.name] = cb.checked;
+    });
+    return payload;
+  }
+
+  if (saveBtn) {
+    saveBtn.addEventListener('click', async function () {
+      clearFormError();
+      var payload = collectPayload();
+      saveBtn.classList.add('loading');
+      saveBtn.disabled = true;
+      var token = sessionStorage.getItem('wam_access_token');
+      try {
+        var res = await fetchWithAuth(API_PREFIX + '/' + RECORD_ID, {
+          method:  'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body:    JSON.stringify(payload),
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (res.ok) {
+          statusEl.innerHTML = '<i class="fas fa-check-circle"></i> Saved';
+          statusEl.className = 'dv-save-status success';
+          setTimeout(function () { statusEl.className = 'dv-save-status'; }, 3000);
+        } else {
+          showFormError(data.detail || 'Save failed. Please try again.');
+        }
+      } catch (_) {
+        showFormError('Network error. Please check your connection.');
+      } finally {
+        saveBtn.classList.remove('loading');
+        saveBtn.disabled = false;
+      }
+    });
+  }
+
+  var deleteBtn   = document.getElementById('deleteBtn');
+  var confirmWrap = document.getElementById('deleteConfirm');
+  var confirmBtn  = document.getElementById('confirmDeleteBtn');
+  var cancelBtn   = document.getElementById('cancelDeleteBtn');
+
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', function () {
+      deleteBtn.style.display = 'none';
+      confirmWrap.classList.add('visible');
+    });
+    cancelBtn && cancelBtn.addEventListener('click', function () {
+      confirmWrap.classList.remove('visible');
+      deleteBtn.style.display = '';
+    });
+    confirmBtn && confirmBtn.addEventListener('click', async function () {
+      confirmBtn.classList.add('loading');
+      confirmBtn.disabled = true;
+      var token = sessionStorage.getItem('wam_access_token');
+      try {
+        var res = await fetchWithAuth(API_PREFIX + '/' + RECORD_ID, {
+          method: 'DELETE',
+          headers: { 'Authorization': 'Bearer ' + token },
+        });
+        if (res.ok) {
+          window.location.href = BASE_ROUTE;
+        } else {
+          var d = await res.json().catch(function () { return {}; });
+          showFormError(d.detail || 'Delete failed.');
+          confirmWrap.classList.remove('visible');
+          deleteBtn.style.display = '';
+        }
+      } catch (_) {
+        showFormError('Network error.');
+      } finally {
+        confirmBtn.classList.remove('loading');
+        confirmBtn.disabled = false;
+      }
+    });
+  }
+
+  /* ── WhatsApp — connected card actions ───────────────── */
+  var waRefreshBtn         = document.getElementById('waRefreshBtn');
+  var waDisconnectBtn      = document.getElementById('waDisconnectBtn');
+  var waDisconnectConfirm  = document.getElementById('waDisconnectConfirm');
+  var waDisconnectConfirmBtn = document.getElementById('waDisconnectConfirmBtn');
+  var waDisconnectCancelBtn  = document.getElementById('waDisconnectCancelBtn');
+
+  if (waRefreshBtn) {
+    waRefreshBtn.addEventListener('click', async function () {
+      waRefreshBtn.disabled = true;
+      waRefreshBtn.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i> Refreshing…';
+      try {
+        var res = await fetchWithAuth('/api/whatsapp/' + COMPANY_ID + '/refresh', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + getToken() },
+        });
+        if (res.ok) { window.location.reload(); }
+        else { alert('Refresh failed. Please try again.'); }
+      } catch (_) { alert('Network error.'); }
+      finally {
+        waRefreshBtn.disabled = false;
+        waRefreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Status';
+      }
+    });
+  }
+
+
+  if (waDisconnectBtn) {
+    waDisconnectBtn.addEventListener('click', function () {
+      waDisconnectConfirm && waDisconnectConfirm.classList.add('visible');
+    });
+  }
+  if (waDisconnectCancelBtn) {
+    waDisconnectCancelBtn.addEventListener('click', function () {
+      waDisconnectConfirm.classList.remove('visible');
+    });
+  }
+  if (waDisconnectConfirmBtn) {
+    waDisconnectConfirmBtn.addEventListener('click', async function () {
+      waDisconnectConfirmBtn.disabled = true;
+      waDisconnectConfirmBtn.textContent = 'Disconnecting…';
+      try {
+        var res = await fetchWithAuth('/api/whatsapp/' + COMPANY_ID + '/disconnect', {
+          method: 'DELETE',
+          headers: { 'Authorization': 'Bearer ' + getToken() },
+        });
+        if (res.ok) { window.location.reload(); }
+        else { alert('Disconnect failed.'); }
+      } catch (_) { alert('Network error.'); }
+      finally {
+        waDisconnectConfirmBtn.disabled = false;
+        waDisconnectConfirmBtn.textContent = 'Yes, disconnect';
+      }
+    });
+  }
+
+  /* ── Manual Setup Form ───────────────────────────────── */
+  (function () {
+    var saveBtn    = document.getElementById('msSaveBtn');
+    if (!saveBtn) return; // only present when not connected + write perm
+
+    var tokenInput = document.getElementById('msAccessToken');
+    var tokenEye   = document.getElementById('msTokenEye');
+    var eyeIcon    = document.getElementById('msEyeIcon');
+    var errorEl    = document.getElementById('msError');
+
+    // Toggle token visibility
+    tokenEye && tokenEye.addEventListener('click', function () {
+      var show = tokenInput.type === 'password';
+      tokenInput.type = show ? 'text' : 'password';
+      eyeIcon.className = show ? 'fas fa-eye-slash' : 'fas fa-eye';
+    });
+
+    function showMsError(msg) {
+      errorEl.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + msg;
+      errorEl.classList.add('visible');
+    }
+    function clearMsError() { errorEl.classList.remove('visible'); }
+
+    saveBtn.addEventListener('click', async function () {
+      clearMsError();
+
+      var accessToken  = (tokenInput.value || '').trim();
+      var wabaId       = (document.getElementById('msWabaId').value       || '').trim();
+      var phoneId      = (document.getElementById('msPhoneId').value      || '').trim();
+      var businessName = (document.getElementById('msBusinessName').value || '').trim();
+      var displayPhone = (document.getElementById('msDisplayPhone').value || '').trim();
+
+      if (!accessToken) { showMsError('Access token is required.'); return; }
+      if (!wabaId)      { showMsError('WABA ID is required.'); return; }
+
+      saveBtn.classList.add('loading');
+      saveBtn.disabled = true;
+
+      try {
+        var payload = { access_token: accessToken, waba_id: wabaId };
+        if (phoneId)      payload.phone_number_id      = phoneId;
+        if (businessName) payload.business_name        = businessName;
+        if (displayPhone) payload.display_phone_number = displayPhone;
+
+        var res = await fetchWithAuth('/api/whatsapp/' + COMPANY_ID + '/manual-setup', {
+          method:  'POST',
+          headers: {
+            'Content-Type':  'application/json',
+            'Authorization': 'Bearer ' + getToken(),
+          },
+          body: JSON.stringify(payload),
+        });
+        var data = await res.json().catch(function () { return {}; });
+
+        if (res.ok) {
+          window.location.hash = '#whatsapp';
+          window.location.reload();
+        } else {
+          showMsError(data.detail || 'Could not connect. Check your credentials and try again.');
+        }
+      } catch (_) {
+        showMsError('Network error. Check your connection and try again.');
+      } finally {
+        saveBtn.classList.remove('loading');
+        saveBtn.disabled = false;
+      }
+    });
+  })();
+
+  /* ── WhatsApp Wizard (3 steps) ────────────────────────── */
+  var LS_KEY         = 'wam_wa_' + COMPANY_ID;
+  var overlay        = document.getElementById('waModalOverlay');
+  var openModalBtn   = document.getElementById('waOpenModalBtn');
+  var closeBtn       = document.getElementById('waModalCloseBtn');
+  var exitConfirm    = document.getElementById('waExitConfirm');
+  var exitCancel     = document.getElementById('waExitCancelBtn');
+  var exitConfirmBtn = document.getElementById('waExitConfirmBtn');
+  var launchMetaBtn  = document.getElementById('waLaunchMetaBtn');
+  var tryAgainBtn    = document.getElementById('waTryAgainBtn');
+  var step2Actions   = document.getElementById('step2Actions');
+  var finishBtn      = document.getElementById('waFinishBtn');
+
+  var currentStep  = 1;
+  var isOnboarding = false;
+
+  function showStepError(stepNum, msg) {
+    var el  = document.getElementById('step' + stepNum + 'Error');
+    var txt = document.getElementById('step' + stepNum + 'ErrorText');
+    if (el && txt) { txt.textContent = msg; el.classList.add('visible'); }
+  }
+  function clearStepError(stepNum) {
+    var el = document.getElementById('step' + stepNum + 'Error');
+    if (el) el.classList.remove('visible');
+  }
+
+  var _stepNames = ['', 'Meta Login', 'Connecting', 'Done'];
+
+  function updateProgress(step) {
+    for (var i = 1; i <= 3; i++) {
+      var seg = document.getElementById('seg-' + i);
+      if (!seg) continue;
+      seg.classList.remove('active', 'done');
+      if (i < step)  seg.classList.add('done');
+      if (i === step) seg.classList.add('active');
+    }
+    var counter = document.getElementById('wa-prog-counter');
+    var name    = document.getElementById('wa-prog-name');
+    if (counter) counter.textContent = 'Step ' + step + ' of 3';
+    if (name)    name.textContent    = _stepNames[step] || '';
+  }
+
+  function showStep(step) {
+    for (var i = 1; i <= 3; i++) {
+      var el = document.getElementById('step-' + i);
+      if (el) el.classList.toggle('active', i === step);
+    }
+    updateProgress(step);
+    currentStep = step;
+    if (step2Actions) step2Actions.style.display = 'none';
+  }
+
+  function saveLocal(step, status) {
+    try { sessionStorage.setItem(LS_KEY, JSON.stringify({ step: step, status: status || 'in_progress' })); } catch (_) {}
+  }
+  function clearLocal() { try { sessionStorage.removeItem(LS_KEY); } catch (_) {} }
+  function getLocal()   { try { return JSON.parse(sessionStorage.getItem(LS_KEY) || 'null'); } catch (_) { return null; } }
+
+  async function apiStartSession() {
+    var res = await fetchWithAuth('/api/whatsapp/' + COMPANY_ID + '/onboarding/session', {
+      method: 'POST', headers: { 'Authorization': 'Bearer ' + getToken() },
+    });
+    if (!res.ok) throw new Error();
+    return res.json();
+  }
+  async function apiUpdateStep(step) {
+    await fetchWithAuth('/api/whatsapp/' + COMPANY_ID + '/onboarding/session', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify({ step: step }),
+    });
+  }
+  async function apiCallback(code, wabaId, phoneNumberId) {
+    var body = { code: code };
+    if (wabaId)        body.waba_id        = wabaId;
+    if (phoneNumberId) body.phone_number_id = phoneNumberId;
+    var res = await fetchWithAuth('/api/whatsapp/' + COMPANY_ID + '/callback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+      body: JSON.stringify(body),
+    });
+    var data = await res.json().catch(function () { return {}; });
+    if (!res.ok) throw new Error(data.detail || 'Connection failed. Please try again.');
+    return data;
+  }
+
+  function animateConnecting(resolve) {
+    var rows  = [document.getElementById('statusRow1'), document.getElementById('statusRow2'), document.getElementById('statusRow3')];
+    var icons = [document.getElementById('spinner1'),   document.getElementById('icon2'),      document.getElementById('icon3')];
+    var texts = [document.getElementById('status1Text'),document.getElementById('status2Text'),document.getElementById('status3Text')];
+    var labels = ['Authorization complete', 'Account details retrieved', 'Connection finalised'];
+
+    rows.forEach(function (r, i) { r.style.opacity = i === 0 ? '1' : '.4'; });
+    icons[0].style.display = 'block';
+    icons[1].style.cssText = 'color:var(--subtle);font-size:14px;'; icons[1].style.animation = '';
+    icons[2].style.cssText = 'color:var(--subtle);font-size:14px;'; icons[2].style.animation = '';
+
+    function tick(i, cb) {
+      setTimeout(function () {
+        if (i === 0) {
+          icons[0].style.display = 'none';
+          var chk = document.createElement('i'); chk.className = 'fas fa-check-circle done';
+          rows[0].insertBefore(chk, rows[0].firstChild);
+        } else {
+          icons[i].className = 'fas fa-check-circle done'; icons[i].style.animation = '';
+        }
+        texts[i].textContent = labels[i];
+        if (i + 1 < rows.length) {
+          rows[i+1].style.opacity = '1';
+          icons[i+1].style.animation = 'wa-spin .7s linear infinite';
+          icons[i+1].style.color = 'var(--blue)';
+        }
+        cb && cb();
+      }, i === 0 ? 350 : 550);
+    }
+    tick(0, function () { tick(1, function () { tick(2, resolve); }); });
+  }
+
+  /* ── Open / close ─────────────────────────────────────── */
+  async function openModal() {
+    isOnboarding = true;
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    overlay.classList.add('open');
+    clearStepError(1); clearStepError(2);
+    try { await apiStartSession(); } catch (_) {}
+    showStep(1);
+    saveLocal(1);
+  }
+
+  function closeModal(force) {
+    if (!force && currentStep < 3) {
+      exitConfirm.classList.add('visible');
+      return;
+    }
+    overlay.classList.remove('open');
+    isOnboarding = false;
+    exitConfirm.classList.remove('visible');
+    clearLocal();
+  }
+
+  openModalBtn   && openModalBtn.addEventListener('click', function () { openModal(); });
+  closeBtn       && closeBtn.addEventListener('click', function () { closeModal(false); });
+  exitCancel     && exitCancel.addEventListener('click', function () { exitConfirm.classList.remove('visible'); });
+  exitConfirmBtn && exitConfirmBtn.addEventListener('click', function () { closeModal(true); });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && overlay && overlay.classList.contains('open')) {
+      e.preventDefault(); closeModal(false);
+    }
+  });
+  overlay && overlay.addEventListener('click', function (e) {
+    if (e.target === overlay) closeModal(false);
+  });
+  window.addEventListener('beforeunload', function (e) {
+    if (isOnboarding && currentStep < 3) { e.preventDefault(); e.returnValue = ''; }
+  });
+
+  /* ── Try again ────────────────────────────────────────── */
+  tryAgainBtn && tryAgainBtn.addEventListener('click', function () {
+    clearStepError(1); clearStepError(2);
+    showStep(1);
+  });
+
+  /* ── Meta Embedded Signup ─────────────────────────────── */
+  function initFB() {
+    if (typeof FB === 'undefined') return;
+    FB.init({ appId: FB_APP_ID, cookie: true, xfbml: true, version: 'v22.0' });
+  }
+  window.fbAsyncInit = initFB;
+
+  /* Helper — advance to connecting step and call backend */
+  function handleMetaCode(code, wabaId, phoneNumberId) {
+    clearStepError(1); clearStepError(2);
+    showStep(2);
+    apiUpdateStep(2);
+    saveLocal(2);
+
+    var result = null, err = null;
+    apiCallback(code, wabaId, phoneNumberId)
+      .then(function (r) { result = r; })
+      .catch(function (e) { err = e.message || 'Connection failed. Please try again.'; })
+      .finally(function () {
+        animateConnecting(function () {
+          if (err) {
+            showStepError(2, err);
+            if (step2Actions) step2Actions.style.display = '';
+            return;
+          }
+          var acct = result && result.account;
+          if (acct) {
+            document.getElementById('sumBusinessName').textContent = acct.business_name || '—';
+            document.getElementById('sumPhone').textContent        = acct.display_phone_number || '—';
+            document.getElementById('sumWabaId').textContent       = acct.waba_id || '—';
+          }
+          setTimeout(function () { showStep(3); saveLocal(3, 'completed'); }, 400);
+        });
+      });
+  }
+
+  /* Message listener — EBS full flow sends WABA ID + phone ID + code */
+  window.addEventListener('message', function (event) {
+    // Accept both www.facebook.com and facebook.com origins
+    if (!event.origin.includes('facebook.com')) return;
+    var d = event.data;
+    if (!d || d.type !== 'WA_EMBEDDED_SIGNUP') return;
+
+    if (d.event === 'FINISH' || d.event === 'FINISH_ONLY_WABA') {
+      launchMetaBtn && launchMetaBtn.classList.remove('loading');
+      launchMetaBtn && (launchMetaBtn.disabled = false);
+      handleMetaCode(d.code, d.data && d.data.waba_id, d.data && d.data.phone_number_id);
+    }
+    if (d.event === 'CANCEL') {
+      launchMetaBtn && launchMetaBtn.classList.remove('loading');
+      launchMetaBtn && (launchMetaBtn.disabled = false);
+      showStepError(1, 'Setup was cancelled. You can try again.');
+    }
+    if (d.event === 'ERROR') {
+      launchMetaBtn && launchMetaBtn.classList.remove('loading');
+      launchMetaBtn && (launchMetaBtn.disabled = false);
+      showStepError(1, d.error_message || 'An error occurred. Please try again.');
+    }
+  });
+
+  /* Launch button */
+  launchMetaBtn && launchMetaBtn.addEventListener('click', function () {
+    if (typeof FB === 'undefined') {
+      showStepError(1, 'Meta SDK not loaded. Check your connection and try again.');
+      return;
+    }
+    clearStepError(1);
+    launchMetaBtn.classList.add('loading');
+    launchMetaBtn.disabled = true;
+
+    // Timeout safety net — if popup closes without any message, unblock after 60s
+    var loginTimeout = setTimeout(function () {
+      if (launchMetaBtn.classList.contains('loading')) {
+        launchMetaBtn.classList.remove('loading');
+        launchMetaBtn.disabled = false;
+        showStepError(1, 'The Meta popup closed without completing. Please try again.');
+      }
+    }, 60000);
+
+    FB.login(function (response) {
+      clearTimeout(loginTimeout);
+      // Fallback: if EBS message event didn't fire but FB login returned a code
+      if (response.authResponse && response.authResponse.code) {
+        launchMetaBtn.classList.remove('loading');
+        launchMetaBtn.disabled = false;
+        handleMetaCode(response.authResponse.code, null, null);
+      } else if (!response.authResponse) {
+        // User cancelled or popup blocked
+        launchMetaBtn.classList.remove('loading');
+        launchMetaBtn.disabled = false;
+        if (response.status !== 'connected') {
+          showStepError(1, 'Login was cancelled or not completed. Please try again.');
+        }
+      }
+      // If authResponse exists but no code: EBS message event will handle it
+    }, {
+      config_id:                      META_CONFIG_ID,
+      response_type:                  'code',
+      override_default_response_type: true,
+      extras:                         { sessionInfoVersion: 3 },
+    });
+  });
+
+  /* ── Finish ───────────────────────────────────────────── */
+  finishBtn && finishBtn.addEventListener('click', function () {
+    isOnboarding = false;
+    clearLocal();
+    overlay.classList.remove('open');
+    window.location.hash = '#whatsapp';
+    window.location.reload();
+  });
+
+  /* Clear any stale sessionStorage on load — no auto-resume for step 1 */
+  (function () { var s = getLocal(); if (!s || s.step <= 1) clearLocal(); })();
+
+  if (typeof FB !== 'undefined') { initFB(); }
+
+  /* ══════════════════════════════════════════════════════
+     Template Management
+  ══════════════════════════════════════════════════════ */
+  (function () {
+
+    var tplOverlay   = document.getElementById('tplModalOverlay');
+    var tplNewBtn    = document.getElementById('tplNewBtn');
+    var tplCloseBtn  = document.getElementById('tplModalClose');
+    var tplCancelBtn = document.getElementById('tplCancelBtn');
+    var tplSubmitBtn = document.getElementById('tplSubmitBtn');
+    var tplSyncBtn   = document.getElementById('tplSyncBtn');
+    var tplSearch    = document.getElementById('tplSearch');
+    var tplFilter    = document.getElementById('tplStatusFilter');
+    var tplMsgEl     = document.getElementById('tplModalMsg');
+    var tplModalTitle = document.getElementById('tplModalTitle');
+
+    /* Edit-mode state — null = creating new, string UUID = editing existing */
+    var currentEditingId = null;
+
+    /* ── Open / close builder ───────────────────────────── */
+    function openBuilder(editData) {
+      resetForm();
+      if (editData) {
+        currentEditingId = editData.id;
+        populateFromComponents(editData);
+        tplModalTitle.innerHTML = '<i class="fas fa-edit" style="color:var(--green);margin-right:8px;"></i>Edit Template';
+        var lbl = tplSubmitBtn && tplSubmitBtn.querySelector('.tpl-btn-label');
+        if (lbl) lbl.innerHTML = '<i class="fas fa-paper-plane"></i> Update &amp; Resubmit';
+        document.getElementById('tplName').disabled     = true;
+        document.getElementById('tplLanguage').disabled = true;
+      } else {
+        currentEditingId = null;
+        tplModalTitle.innerHTML = '<i class="fas fa-file-alt" style="color:var(--green);margin-right:8px;"></i>New Message Template';
+        var lbl = tplSubmitBtn && tplSubmitBtn.querySelector('.tpl-btn-label');
+        if (lbl) lbl.innerHTML = '<i class="fas fa-paper-plane"></i> Submit Template';
+        document.getElementById('tplName').disabled     = false;
+        document.getElementById('tplLanguage').disabled = false;
+      }
+      tplOverlay.classList.add('open');
+    }
+    function closeBuilder() {
+      tplOverlay.classList.remove('open');
+      currentEditingId = null;
+    }
+
+    tplNewBtn    && tplNewBtn.addEventListener('click', function () { openBuilder(null); });
+    tplCloseBtn  && tplCloseBtn.addEventListener('click', closeBuilder);
+    tplCancelBtn && tplCancelBtn.addEventListener('click', closeBuilder);
+    tplOverlay   && tplOverlay.addEventListener('click', function (e) {
+      if (e.target === tplOverlay) closeBuilder();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && tplOverlay && tplOverlay.classList.contains('open')) closeBuilder();
+    });
+
+    /* ── Lookup template from in-page data ─────────────── */
+    function getTemplateById(id) {
+      for (var i = 0; i < TEMPLATES_DATA.length; i++) {
+        if (TEMPLATES_DATA[i].id === id) return TEMPLATES_DATA[i];
+      }
+      return null;
+    }
+
+    /* ── Row click → view modal ─────────────────────────── */
+    window.handleRowClick = function (event, row) {
+      if (event.target.closest('button') || event.target.closest('.tpl-delete-confirm')) return;
+      var t = getTemplateById(row.dataset.tplId);
+      if (t) viewTemplate(t);
+    };
+
+    /* ── Edit by template UUID ──────────────────────────── */
+    window.openEditBuilderById = function (id) {
+      var t = getTemplateById(id);
+      if (t) openBuilder(t);
+    };
+
+    /* ── Populate builder from template components ──────── */
+    var tplHeaderToggle = document.getElementById('tplHeaderToggle');
+    var tplHeaderFields = document.getElementById('tplHeaderFields');
+    var headerVisible   = false;
+    var tplFooterToggle = document.getElementById('tplFooterToggle');
+    var tplFooterFields = document.getElementById('tplFooterFields');
+    var footerVisible   = false;
+    var tplBtnsToggle   = document.getElementById('tplBtnsToggle');
+    var tplBtnsFields   = document.getElementById('tplBtnsFields');
+    var btnsVisible     = false;
+    var btnRowCount     = 0;
+
+    function populateFromComponents(tplData) {
+      document.getElementById('tplName').value     = tplData.name     || '';
+      document.getElementById('tplCategory').value = tplData.category || 'UTILITY';
+      document.getElementById('tplLanguage').value = tplData.language || 'en_US';
+
+      var comps = tplData.components || [];
+      var header = null, body = '', footer = null, btns = [];
+      comps.forEach(function (c) {
+        var type = (c.type || '').toUpperCase();
+        if (type === 'HEADER' && c.format === 'TEXT') header = c.text || '';
+        if (type === 'BODY')    body   = c.text || '';
+        if (type === 'FOOTER')  footer = c.text || '';
+        if (type === 'BUTTONS') btns   = c.buttons || [];
+      });
+
+      document.getElementById('tplBodyText').value = body;
+
+      if (header !== null) {
+        headerVisible = true;
+        tplHeaderFields.style.display = 'block';
+        tplHeaderToggle.textContent   = '− Remove Header';
+        document.getElementById('tplHeaderText').value = header;
+      }
+      if (footer !== null) {
+        footerVisible = true;
+        tplFooterFields.style.display = 'block';
+        tplFooterToggle.textContent   = '− Remove Footer';
+        document.getElementById('tplFooterText').value = footer;
+      }
+      if (btns.length > 0) {
+        btnsVisible = true;
+        tplBtnsFields.style.display = 'block';
+        tplBtnsToggle.textContent   = '− Remove Buttons';
+        btns.forEach(function (b) { addButtonRowWithData(b); });
+      }
+
+      updateBodyCount(); updateHeaderCount(); updateFooterCount(); updatePreview();
+    }
+
+    function addButtonRowWithData(btn) {
+      if (btnRowCount >= 3) return;
+      btnRowCount++;
+      var rowId = 'btnRow_' + btnRowCount;
+      var type  = (btn.type || 'QUICK_REPLY').toUpperCase();
+      var html  = '<div class="tpl-btn-row" id="' + rowId + '">' +
+        '<select class="tpl-select btn-type-sel" onchange="onBtnTypeChange(\'' + rowId + '\');updatePreview();">' +
+          '<option value="QUICK_REPLY">Quick Reply</option>' +
+          '<option value="URL">URL</option>' +
+          '<option value="PHONE_NUMBER">Phone</option>' +
+        '</select>' +
+        '<input type="text" class="tpl-input btn-text-inp" placeholder="Button label" maxlength="25" oninput="updatePreview();">' +
+        '<button type="button" class="tpl-btn-remove" onclick="removeBtnRow(\'' + rowId + '\')"><i class="fas fa-times"></i></button>' +
+        '<div class="tpl-btn-url-field" style="display:none;" id="' + rowId + '_url">' +
+          '<input type="text" class="tpl-input btn-url-inp" placeholder="https://example.com" oninput="updatePreview();">' +
+        '</div>' +
+        '<div class="tpl-btn-phone-field" style="display:none;" id="' + rowId + '_phone">' +
+          '<input type="tel" class="tpl-input btn-phone-inp" placeholder="+1234567890" oninput="updatePreview();">' +
+        '</div>' +
+      '</div>';
+      document.getElementById('tplBtnRows').insertAdjacentHTML('beforeend', html);
+      var row = document.getElementById(rowId);
+      row.querySelector('.btn-type-sel').value = type;
+      row.querySelector('.btn-text-inp').value  = btn.text || '';
+      onBtnTypeChange(rowId);
+      if (type === 'URL') {
+        var ui = row.querySelector('.btn-url-inp');
+        if (ui) ui.value = btn.url || '';
+      }
+      if (type === 'PHONE_NUMBER') {
+        var pi = row.querySelector('.btn-phone-inp');
+        if (pi) pi.value = btn.phone_number || '';
+      }
+      var addLink = document.getElementById('tplAddBtnLink');
+      if (addLink) addLink.disabled = btnRowCount >= 3;
+      updatePreview();
+    }
+
+    /* ── Header toggle ──────────────────────────────────── */
+    tplHeaderToggle && tplHeaderToggle.addEventListener('click', function () {
+      headerVisible = !headerVisible;
+      tplHeaderFields.style.display = headerVisible ? 'block' : 'none';
+      tplHeaderToggle.textContent   = headerVisible ? '− Remove Header' : '+ Add Header';
+      if (!headerVisible) { document.getElementById('tplHeaderText').value = ''; updatePreview(); }
+    });
+
+    /* ── Footer toggle ──────────────────────────────────── */
+    tplFooterToggle && tplFooterToggle.addEventListener('click', function () {
+      footerVisible = !footerVisible;
+      tplFooterFields.style.display = footerVisible ? 'block' : 'none';
+      tplFooterToggle.textContent   = footerVisible ? '− Remove Footer' : '+ Add Footer';
+      if (!footerVisible) { document.getElementById('tplFooterText').value = ''; updatePreview(); }
+    });
+
+    /* ── Buttons toggle ─────────────────────────────────── */
+    tplBtnsToggle && tplBtnsToggle.addEventListener('click', function () {
+      btnsVisible = !btnsVisible;
+      tplBtnsFields.style.display = btnsVisible ? 'block' : 'none';
+      tplBtnsToggle.textContent   = btnsVisible ? '− Remove Buttons' : '+ Add Buttons';
+      if (!btnsVisible) { document.getElementById('tplBtnRows').innerHTML = ''; btnRowCount = 0; updatePreview(); }
+    });
+
+    /* ── Char counters ──────────────────────────────────── */
+    window.updateHeaderCount = function () {
+      var v = (document.getElementById('tplHeaderText').value || '').length;
+      var el = document.getElementById('tplHeaderCount');
+      el.textContent = v + '/60';
+      el.classList.toggle('over', v >= 60);
+    };
+    window.updateBodyCount = function () {
+      var v = (document.getElementById('tplBodyText').value || '').length;
+      var el = document.getElementById('tplBodyCount');
+      el.textContent = v + '/1024';
+      el.classList.toggle('over', v >= 1024);
+      updateVarIndex();
+    };
+    window.updateFooterCount = function () {
+      var v = (document.getElementById('tplFooterText').value || '').length;
+      var el = document.getElementById('tplFooterCount');
+      el.textContent = v + '/60';
+      el.classList.toggle('over', v >= 60);
+    };
+
+    /* ── Variable insertion ─────────────────────────────── */
+    function updateVarIndex() {
+      var body = document.getElementById('tplBodyText').value || '';
+      var matches = body.match(/\{\{\d+\}\}/g) || [];
+      var max = 0;
+      matches.forEach(function (m) {
+        var n = parseInt(m.replace(/[{}]/g, ''), 10);
+        if (n > max) max = n;
+      });
+      var idx = document.getElementById('tplVarIdx');
+      if (idx) idx.textContent = max + 1;
+    }
+    window.insertVariable = function () {
+      var ta = document.getElementById('tplBodyText');
+      var body = ta.value || '';
+      var matches = body.match(/\{\{\d+\}\}/g) || [];
+      var max = 0;
+      matches.forEach(function (m) { var n = parseInt(m.replace(/[{}]/g,''),10); if(n>max) max=n; });
+      var next = '{' + '{' + (max + 1) + '}' + '}';
+      var start = ta.selectionStart, end = ta.selectionEnd;
+      ta.value = body.substring(0, start) + next + body.substring(end);
+      ta.selectionStart = ta.selectionEnd = start + next.length;
+      ta.focus();
+      updateBodyCount(); updatePreview();
+    };
+
+    /* ── Button rows ────────────────────────────────────── */
+    window.addButtonRow = function () {
+      if (btnRowCount >= 3) return;
+      addButtonRowWithData({ type: 'QUICK_REPLY', text: '' });
+    };
+    window.removeBtnRow = function (rowId) {
+      var el = document.getElementById(rowId);
+      if (el) { el.remove(); btnRowCount = document.querySelectorAll('#tplBtnRows .tpl-btn-row').length; }
+      var addLink = document.getElementById('tplAddBtnLink');
+      if (addLink) addLink.disabled = btnRowCount >= 3;
+      updatePreview();
+    };
+    window.onBtnTypeChange = function (rowId) {
+      var row    = document.getElementById(rowId);
+      var type   = row.querySelector('.btn-type-sel').value;
+      var urlF   = document.getElementById(rowId + '_url');
+      var phoneF = document.getElementById(rowId + '_phone');
+      urlF   && (urlF.style.display   = type === 'URL'          ? '' : 'none');
+      phoneF && (phoneF.style.display = type === 'PHONE_NUMBER' ? '' : 'none');
+    };
+
+    /* ── Live preview ───────────────────────────────────── */
+    window.updatePreview = function () {
+      var header = (document.getElementById('tplHeaderText') && headerVisible)
+        ? (document.getElementById('tplHeaderText').value || '') : '';
+      var body   = document.getElementById('tplBodyText').value || '';
+      var footer = (document.getElementById('tplFooterText') && footerVisible)
+        ? (document.getElementById('tplFooterText').value || '') : '';
+
+      var bubble  = document.getElementById('tplPreviewBubble');
+      var emptyEl = document.getElementById('tplPreviewEmpty');
+
+      if (!body.trim()) {
+        bubble.style.display  = 'none';
+        emptyEl.style.display = 'block';
+        document.getElementById('tplPreviewBtns').innerHTML = '';
+        return;
+      }
+      bubble.style.display  = 'block';
+      emptyEl.style.display = 'none';
+
+      var prevHeader = document.getElementById('tplPrevHeader');
+      prevHeader.style.display = header ? '' : 'none';
+      prevHeader.textContent   = header;
+
+      var prevBody = document.getElementById('tplPrevBody');
+      var escaped  = body.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+      prevBody.innerHTML = escaped.replace(/\{\{(\d+)\}\}/g,
+        '<span class="tpl-preview-var">' + '{' + '{$1}' + '}' + '</span>');
+
+      var prevFooter = document.getElementById('tplPrevFooter');
+      prevFooter.style.display = footer ? '' : 'none';
+      prevFooter.textContent   = footer;
+
+      var btnsEl = document.getElementById('tplPreviewBtns');
+      var rows   = document.querySelectorAll('#tplBtnRows .tpl-btn-row');
+      btnsEl.innerHTML = '';
+      rows.forEach(function (row) {
+        var type = row.querySelector('.btn-type-sel').value;
+        var text = row.querySelector('.btn-text-inp').value || '';
+        if (!text) return;
+        var icon = type === 'URL' ? 'fa-external-link-alt' : type === 'PHONE_NUMBER' ? 'fa-phone' : 'fa-reply';
+        btnsEl.innerHTML += '<div class="tpl-preview-btn"><i class="fas ' + icon + '"></i>' + text + '</div>';
+      });
+    };
+
+    /* ── Reset form ─────────────────────────────────────── */
+    function resetForm() {
+      document.getElementById('tplName').value     = '';
+      document.getElementById('tplBodyText').value  = '';
+      document.getElementById('tplCategory').value  = 'UTILITY';
+      document.getElementById('tplLanguage').value  = 'en_US';
+      if (document.getElementById('tplHeaderText')) document.getElementById('tplHeaderText').value = '';
+      if (document.getElementById('tplFooterText')) document.getElementById('tplFooterText').value = '';
+      document.getElementById('tplBtnRows').innerHTML = '';
+      btnRowCount = 0;
+      headerVisible = false; footerVisible = false; btnsVisible = false;
+      tplHeaderFields.style.display = 'none'; tplHeaderToggle.textContent = '+ Add Header';
+      tplFooterFields.style.display = 'none'; tplFooterToggle.textContent = '+ Add Footer';
+      tplBtnsFields.style.display   = 'none'; tplBtnsToggle.textContent   = '+ Add Buttons';
+      tplMsgEl.innerHTML = '';
+      updateBodyCount(); updatePreview();
+      var addLink = document.getElementById('tplAddBtnLink');
+      if (addLink) addLink.disabled = false;
+    }
+
+    /* ── Collect form → payload ─────────────────────────── */
+    function collectPayload() {
+      var buttons = [];
+      document.querySelectorAll('#tplBtnRows .tpl-btn-row').forEach(function (row) {
+        var type  = row.querySelector('.btn-type-sel').value;
+        var text  = row.querySelector('.btn-text-inp').value.trim();
+        if (!text) return;
+        var btn = { type: type, text: text };
+        var urlEl   = row.querySelector('.btn-url-inp');
+        var phoneEl = row.querySelector('.btn-phone-inp');
+        if (type === 'URL'          && urlEl)   btn.url          = urlEl.value.trim();
+        if (type === 'PHONE_NUMBER' && phoneEl) btn.phone_number = phoneEl.value.trim();
+        buttons.push(btn);
+      });
+      return {
+        name:        document.getElementById('tplName').value.trim(),
+        category:    document.getElementById('tplCategory').value,
+        language:    document.getElementById('tplLanguage').value,
+        header_text: (headerVisible && document.getElementById('tplHeaderText').value.trim()) || null,
+        body_text:   document.getElementById('tplBodyText').value.trim(),
+        footer_text: (footerVisible && document.getElementById('tplFooterText').value.trim()) || null,
+        buttons:     buttons.length ? buttons : null,
+      };
+    }
+
+    /* ── Submit / update template ───────────────────────── */
+    tplSubmitBtn && tplSubmitBtn.addEventListener('click', async function () {
+      tplMsgEl.innerHTML = '';
+      var payload = collectPayload();
+      var isEdit  = !!currentEditingId;
+
+      if (!isEdit && !payload.name) {
+        tplMsgEl.innerHTML = '<span class="tpl-modal-error"><i class="fas fa-exclamation-circle"></i> Template name is required.</span>';
+        return;
+      }
+      if (!payload.body_text) {
+        tplMsgEl.innerHTML = '<span class="tpl-modal-error"><i class="fas fa-exclamation-circle"></i> Body text is required.</span>';
+        return;
+      }
+
+      tplSubmitBtn.classList.add('loading');
+      tplSubmitBtn.disabled = true;
+
+      var url    = isEdit
+        ? '/api/whatsapp/' + COMPANY_ID + '/templates/' + currentEditingId
+        : '/api/whatsapp/' + COMPANY_ID + '/templates';
+      var method = isEdit ? 'PUT' : 'POST';
+
+      try {
+        var res = await fetchWithAuth(url, {
+          method:  method,
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+          body:    JSON.stringify(payload),
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (res.ok) {
+          var msg = isEdit
+            ? 'Updated! Template re-submitted to Meta for review.'
+            : 'Submitted! Template sent to Meta — status: PENDING REVIEW.';
+          tplMsgEl.innerHTML = '<span class="tpl-modal-success"><i class="fas fa-check-circle"></i> ' + msg + '</span>';
+          setTimeout(function () { closeBuilder(); window.location.reload(); }, 1800);
+        } else {
+          tplMsgEl.innerHTML = '<span class="tpl-modal-error"><i class="fas fa-exclamation-circle"></i> ' + (data.detail || 'Submission failed.') + '</span>';
+        }
+      } catch (_) {
+        tplMsgEl.innerHTML = '<span class="tpl-modal-error"><i class="fas fa-exclamation-circle"></i> Network error.</span>';
+      } finally {
+        tplSubmitBtn.classList.remove('loading');
+        tplSubmitBtn.disabled = false;
+      }
+    });
+
+    /* ── Sync ───────────────────────────────────────────── */
+    tplSyncBtn && tplSyncBtn.addEventListener('click', async function () {
+      tplSyncBtn.classList.add('loading');
+      tplSyncBtn.disabled = true;
+      try {
+        var res = await fetchWithAuth('/api/whatsapp/' + COMPANY_ID + '/templates/sync', {
+          method: 'POST', headers: { 'Authorization': 'Bearer ' + getToken() },
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (res.ok) {
+          var parts = [];
+          if (data.created)  parts.push(data.created  + ' new');
+          if (data.updated)  parts.push(data.updated  + ' updated');
+          if (data.deleted)  parts.push(data.deleted  + ' removed');
+          if (!parts.length) parts.push('already up to date');
+          showToast('Sync complete — ' + parts.join(', ') + '.', 'success');
+          setTimeout(function () { window.location.reload(); }, 1800);
+        } else {
+          showToast(data.detail || 'Sync failed.', 'error');
+        }
+      } catch (_) { showToast('Network error. Try again.', 'error'); }
+      finally { tplSyncBtn.classList.remove('loading'); tplSyncBtn.disabled = false; }
+    });
+
+    /* ── Delete ─────────────────────────────────────────── */
+    window.askDeleteTemplate = function (name) {
+      document.querySelectorAll('.tpl-delete-confirm').forEach(function (el) { el.classList.remove('visible'); });
+      var el = document.getElementById('del-confirm-' + name);
+      if (el) el.classList.add('visible');
+    };
+    window.cancelDeleteTemplate = function (name) {
+      var el = document.getElementById('del-confirm-' + name);
+      if (el) el.classList.remove('visible');
+    };
+    window.confirmDeleteTemplate = async function (name) {
+      try {
+        var res = await fetchWithAuth('/api/whatsapp/' + COMPANY_ID + '/templates/' + encodeURIComponent(name), {
+          method: 'DELETE', headers: { 'Authorization': 'Bearer ' + getToken() },
+        });
+        if (res.ok) {
+          var row = document.querySelector('tr[data-name="' + name + '"]');
+          if (row) row.remove();
+        } else {
+          var d = await res.json().catch(function () { return {}; });
+          alert(d.detail || 'Delete failed.');
+          cancelDeleteTemplate(name);
+        }
+      } catch (_) { alert('Network error.'); cancelDeleteTemplate(name); }
+    };
+
+    /* ── Search / filter ────────────────────────────────── */
+    function filterTable() {
+      var q      = (tplSearch ? tplSearch.value.toLowerCase() : '');
+      var status = (tplFilter ? tplFilter.value.toUpperCase() : '');
+      var rows   = document.querySelectorAll('#tplTbody tr');
+      var visible = 0;
+      rows.forEach(function (row) {
+        var matchQ = !q      || row.dataset.search.includes(q);
+        var matchS = !status || row.dataset.status === status;
+        var show   = matchQ && matchS;
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+      });
+      var empty = document.getElementById('tplEmpty');
+      if (empty) empty.style.display = (visible === 0) ? 'block' : 'none';
+      var wrap = document.getElementById('tplTableWrap');
+      if (wrap) wrap.style.display = (visible === 0) ? 'none' : '';
+    }
+    tplSearch && tplSearch.addEventListener('input', filterTable);
+    tplFilter && tplFilter.addEventListener('change', filterTable);
+
+    /* ── Template View Modal ─────────────────────────────── */
+    var tplViewOverlay   = document.getElementById('tplViewOverlay');
+    var tplViewClose     = document.getElementById('tplViewClose');
+    var tvEditBtn        = document.getElementById('tvEditBtn');
+    var currentViewTpl   = null;
+
+    function openViewModal()  { tplViewOverlay.classList.add('open'); }
+    function closeViewModal() { tplViewOverlay.classList.remove('open'); currentViewTpl = null; }
+
+    window.switchViewTab = function (tab) {
+      var info      = document.getElementById('tvrInfoPanel');
+      var mapper    = document.getElementById('tvrMapperPanel');
+      var tabInfo   = document.getElementById('tvrTabInfo');
+      var tabMapper = document.getElementById('tvrTabMapper');
+      if (info)      info.style.display   = tab === 'info'   ? 'block' : 'none';
+      if (mapper)    mapper.style.display  = tab === 'mapper' ? 'block' : 'none';
+      if (tabInfo)   tabInfo.classList.toggle('active',   tab === 'info');
+      if (tabMapper) tabMapper.classList.toggle('active', tab === 'mapper');
+    };
+
+    tplViewClose  && tplViewClose.addEventListener('click', closeViewModal);
+    tplViewOverlay && tplViewOverlay.addEventListener('click', function (e) {
+      if (e.target === tplViewOverlay) closeViewModal();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && tplViewOverlay && tplViewOverlay.classList.contains('open'))
+        closeViewModal();
+    });
+
+    tvEditBtn && tvEditBtn.addEventListener('click', function () {
+      if (!currentViewTpl) return;
+      var tplToEdit = currentViewTpl;
+      closeViewModal();
+      openBuilder(tplToEdit);
+    });
+
+    window.viewTemplate = function (t) {
+      currentViewTpl = t;
+
+      document.getElementById('tvName').textContent = t.name;
+      var sl = t.status ? t.status.toLowerCase() : 'pending';
+      document.getElementById('tvStatus').innerHTML =
+        '<span class="tpl-badge tpl-badge-' + sl + '" style="font-size:11px;"><i class="fas fa-circle"></i> ' +
+        (t.status || '').replace(/_/g, ' ') + '</span>';
+      document.getElementById('tvCategory').textContent = t.category || '—';
+      document.getElementById('tvLanguage').textContent = t.language || '—';
+      document.getElementById('tvSynced').textContent   = t.synced_at ? t.synced_at.slice(0, 10) : '—';
+      document.getElementById('tvMeta').textContent     = (t.category || '') + ' · ' + (t.language || '');
+
+      var rejectRow = document.getElementById('tvRejectRow');
+      if (t.rejection_reason) {
+        document.getElementById('tvReject').textContent = t.rejection_reason;
+        rejectRow.style.display = '';
+      } else {
+        rejectRow.style.display = 'none';
+      }
+
+      /* Status-aware edit note */
+      var noteEl     = document.getElementById('tvEditNote');
+      var noteTextEl = document.getElementById('tvEditNoteText');
+      if (noteEl && noteTextEl) {
+        var st = (t.status || '').toUpperCase();
+        if (st === 'APPROVED') {
+          noteTextEl.textContent = 'Editing an approved template will resubmit it for Meta review. It stays live until a decision is made.';
+          noteEl.style.display = '';
+        } else if (st === 'REJECTED') {
+          noteTextEl.textContent = 'Fix the issues flagged below and resubmit. Meta will re-review the updated template.';
+          noteEl.style.display = '';
+        } else {
+          noteEl.style.display = 'none';
+        }
+      }
+
+      var comps = t.components || [];
+      var header = '', body = '', footer = '', btns = [];
+      comps.forEach(function (c) {
+        var type = (c.type || '').toUpperCase();
+        if (type === 'HEADER' && c.format === 'TEXT') header = c.text || '';
+        if (type === 'BODY')    body   = c.text || '';
+        if (type === 'FOOTER')  footer = c.text || '';
+        if (type === 'BUTTONS') btns   = c.buttons || [];
+      });
+
+      var tvHeader = document.getElementById('tvHeader');
+      tvHeader.textContent   = header;
+      tvHeader.style.display = header ? '' : 'none';
+
+      var tvBody   = document.getElementById('tvBody');
+      var escaped  = body.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+      tvBody.innerHTML = escaped.replace(/\{\{(\d+)\}\}/g,
+        '<span class="tpl-preview-var">' + '{' + '{$1}' + '}' + '</span>');
+
+      var tvFooter = document.getElementById('tvFooter');
+      tvFooter.textContent   = footer;
+      tvFooter.style.display = footer ? '' : 'none';
+
+      var tvBtnsEl = document.getElementById('tvBtns');
+      tvBtnsEl.innerHTML = '';
+      btns.forEach(function (b) {
+        var type = (b.type || '').toUpperCase();
+        var icon = type === 'URL' ? 'fa-external-link-alt' : type === 'PHONE_NUMBER' ? 'fa-phone' : 'fa-reply';
+        tvBtnsEl.innerHTML += '<div class="tpl-preview-btn"><i class="fas ' + icon + '"></i> ' + (b.text || '') + '</div>';
+      });
+
+      /* ── Populate mapper tab ─────────────────────────── */
+      _buildMapperRows(t, body, header, btns);
+      var mapperStatus = document.getElementById('tvMapperStatus');
+      if (mapperStatus) mapperStatus.textContent = '';
+
+      openViewModal();
+      switchViewTab('info');
+    };
+
+    /* ── Open by template ID, jump to Param Mapping tab ── */
+    window.openMapperModal = function (tplId) {
+      var tpl = null;
+      for (var i = 0; i < TEMPLATES_DATA.length; i++) {
+        if (TEMPLATES_DATA[i].id === tplId) { tpl = TEMPLATES_DATA[i]; break; }
+      }
+      if (!tpl) return;
+      window.viewTemplate(tpl);
+      switchViewTab('mapper');
+    };
+
+    /* ── Mapper helpers ─────────────────────────────────── */
+    function _extractVarIndices(text) {
+      var matches = (text || '').match(/\{\{(\d+)\}\}/g) || [];
+      var indices = [];
+      matches.forEach(function (m) {
+        var n = parseInt(m.replace(/[{}]/g, ''), 10);
+        if (indices.indexOf(n) === -1) indices.push(n);
+      });
+      indices.sort(function (a, b) { return a - b; });
+      return indices;
+    }
+
+    /* Extract a short context snippet showing where {{n}} sits in the text */
+    function _varSnippet(text, n) {
+      var token = '{{' + n + '}}';
+      var pos   = (text || '').indexOf(token);
+      if (pos === -1) return null;
+      var BEFORE = 22, AFTER = 22;
+      var start  = Math.max(0, pos - BEFORE);
+      var end    = Math.min(text.length, pos + token.length + AFTER);
+      var pre    = (start > 0 ? '…' : '') + text.slice(start, pos);
+      var post   = text.slice(pos + token.length, end) + (end < text.length ? '…' : '');
+      return { pre: pre, post: post };
+    }
+
+    function _buildMapperRows(t, body, header, btns) {
+      var rowsEl    = document.getElementById('tvMapperRows');
+      var emptyEl   = document.getElementById('tvMapperEmpty');
+      var actionsEl = document.getElementById('tvMapperActions');
+      if (!rowsEl) return;
+      rowsEl.innerHTML = '';
+
+      var pm = t.param_mapping  || {};
+      var cm = t.cta_mapping    || {};
+      var mm = t.mobile_mapping || '';
+
+      var fullText = (header ? header + '\n' : '') + (body || '');
+      var indices  = _extractVarIndices(fullText);
+      var urlBtns  = [];
+      btns.forEach(function (b, i) {
+        if ((b.type || '').toUpperCase() === 'URL') urlBtns.push({ idx: i, text: b.text || ('Button ' + (i + 1)), url: b.url || '' });
+      });
+
+      var hasContent = indices.length > 0 || urlBtns.length > 0;
+      rowsEl.style.display    = '';
+      emptyEl.style.display   = 'none';
+      if (actionsEl) actionsEl.style.display = '';
+
+      /* ── Phone Number row — always shown ── */
+      var phoneHdr = document.createElement('div');
+      phoneHdr.className = 'tv-mapper-group-label';
+      phoneHdr.innerHTML = '<i class="fas fa-phone"></i> Phone Number';
+      rowsEl.appendChild(phoneHdr);
+
+      var phoneRow = document.createElement('div');
+      phoneRow.className = 'tv-mapper-card';
+      phoneRow.innerHTML =
+        '<div class="tv-mapper-card-left">' +
+          '<div class="tv-mapper-badge" style="background:var(--blue-tint,#eff6ff);color:var(--blue,#2563eb);"><i class="fas fa-mobile-alt"></i></div>' +
+          '<div class="tv-mapper-snippet">Phone number field path</div>' +
+        '</div>' +
+        '<div class="tv-mapper-card-right">' +
+          '<div class="tv-mapper-input-label">data key</div>' +
+          '<input type="text" class="tv-mapper-input" data-type="mobile" data-key="mobile"' +
+          '       placeholder="" value="' + _esc(mm) + '">' +
+        '</div>';
+      rowsEl.appendChild(phoneRow);
+
+      if (!hasContent) return;
+
+      if (indices.length > 0) {
+        var hdr = document.createElement('div');
+        hdr.className = 'tv-mapper-group-label';
+        hdr.innerHTML = '<i class="fas fa-font"></i> Message Variables';
+        rowsEl.appendChild(hdr);
+      }
+
+      indices.forEach(function (n) {
+        var snippet = _varSnippet(fullText, n);
+        var row = document.createElement('div');
+        row.className = 'tv-mapper-card';
+
+        /* Context snippet — shows surrounding text with the var highlighted */
+        var snippetHtml = '';
+        if (snippet) {
+          snippetHtml =
+            '<div class="tv-mapper-snippet">' +
+              _esc(snippet.pre) +
+              '<mark class="tv-mapper-mark">&#123;&#123;' + n + '&#125;&#125;</mark>' +
+              _esc(snippet.post) +
+            '</div>';
+        }
+
+        row.innerHTML =
+          '<div class="tv-mapper-card-left">' +
+            '<div class="tv-mapper-badge">&#123;&#123;' + n + '&#125;&#125;</div>' +
+            snippetHtml +
+          '</div>' +
+          '<div class="tv-mapper-card-right">' +
+            '<div class="tv-mapper-input-label">data key</div>' +
+            '<input type="text" class="tv-mapper-input" data-type="param" data-key="' + n + '"' +
+            '       placeholder="" value="' + _esc(pm[String(n)] || '') + '">' +
+          '</div>';
+        rowsEl.appendChild(row);
+      });
+
+      if (urlBtns.length > 0) {
+        var hdr2 = document.createElement('div');
+        hdr2.className = 'tv-mapper-group-label';
+        hdr2.style.marginTop = '14px';
+        hdr2.innerHTML = '<i class="fas fa-link"></i> URL Button Overrides';
+        rowsEl.appendChild(hdr2);
+
+        urlBtns.forEach(function (b) {
+          var row = document.createElement('div');
+          row.className = 'tv-mapper-card';
+          row.innerHTML =
+            '<div class="tv-mapper-card-left">' +
+              '<div class="tv-mapper-badge tv-mapper-badge-url"><i class="fas fa-external-link-alt"></i></div>' +
+              '<div class="tv-mapper-snippet tv-mapper-snippet-url">' + _esc(b.text) + '</div>' +
+            '</div>' +
+            '<div class="tv-mapper-card-right">' +
+              '<div class="tv-mapper-input-label">data key for URL</div>' +
+              '<input type="text" class="tv-mapper-input" data-type="cta" data-key="' + b.idx + '"' +
+              '       placeholder="" value="' + _esc(cm[String(b.idx)] || '') + '">' +
+            '</div>';
+          rowsEl.appendChild(row);
+        });
+      }
+    }
+
+    function _esc(s) {
+      return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    /* ── Mapper save button ─────────────────────────────── */
+    var tvMapperSaveBtn = document.getElementById('tvMapperSaveBtn');
+    tvMapperSaveBtn && tvMapperSaveBtn.addEventListener('click', async function () {
+      if (!currentViewTpl) return;
+      var statusEl  = document.getElementById('tvMapperStatus');
+      var spinner   = document.getElementById('tvMapperSpinner');
+      var label     = document.getElementById('tvMapperSaveLabel');
+      var paramMap = {}, ctaMap = {}, mobileMap = '';
+
+      document.querySelectorAll('#tvMapperRows .tv-mapper-input').forEach(function (inp) {
+        var val = inp.value.trim();
+        if (inp.dataset.type === 'mobile') { mobileMap = val; return; }
+        if (!val) return;
+        if (inp.dataset.type === 'param') paramMap[inp.dataset.key] = val;
+        if (inp.dataset.type === 'cta')   ctaMap[inp.dataset.key]   = val;
+      });
+
+      label.style.display   = 'none';
+      spinner.style.display = '';
+      statusEl.textContent  = '';
+
+      try {
+        var res = await fetchWithAuth(
+          '/api/whatsapp/' + COMPANY_ID + '/templates/' + currentViewTpl.id + '/mapping',
+          {
+            method:  'PATCH',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+            body:    JSON.stringify({ param_mapping: paramMap, cta_mapping: ctaMap, mobile_mapping: mobileMap }),
+          }
+        );
+        var data = await res.json().catch(function () { return {}; });
+        if (res.ok) {
+          /* Update in-memory TEMPLATES_DATA so mapper reflects saved state */
+          for (var i = 0; i < TEMPLATES_DATA.length; i++) {
+            if (TEMPLATES_DATA[i].id === currentViewTpl.id) {
+              TEMPLATES_DATA[i].param_mapping  = paramMap;
+              TEMPLATES_DATA[i].cta_mapping    = ctaMap;
+              TEMPLATES_DATA[i].mobile_mapping = mobileMap;
+              currentViewTpl = TEMPLATES_DATA[i];
+              break;
+            }
+          }
+          statusEl.innerHTML = '<span style="color:var(--green);"><i class="fas fa-check-circle"></i> Saved</span>';
+          setTimeout(function () { statusEl.textContent = ''; }, 3000);
+        } else {
+          statusEl.innerHTML = '<span style="color:var(--red-dark);">' + (data.detail || 'Save failed') + '</span>';
+        }
+      } catch (_) {
+        statusEl.innerHTML = '<span style="color:var(--red-dark);">Network error</span>';
+      } finally {
+        label.style.display   = '';
+        spinner.style.display = 'none';
+      }
+    });
+
+  })(); // end template IIFE
+
+  /* ══════════════════════════════════════════════════════
+     API Key Management
+  ══════════════════════════════════════════════════════ */
+  (function () {
+    var akGenerateBtn   = document.getElementById('akGenerateBtn');
+    if (!akGenerateBtn) return;  // panel hidden for non-write users
+
+    var akModalBackdrop = document.getElementById('akModalBackdrop');
+    var akModalClose    = document.getElementById('akModalClose');
+    var akModalCancel   = document.getElementById('akModalCancel');
+    var akModalSave     = document.getElementById('akModalSave');
+    var akModalError    = document.getElementById('akModalError');
+    var akFormState     = document.getElementById('akFormState');
+    var akSuccessState  = document.getElementById('akSuccessState');
+    var akCopyBtn       = document.getElementById('akCopyBtn');
+    var akNewKeyDisplay = document.getElementById('akNewKeyDisplay');
+    var akTbody         = document.getElementById('akTbody');
+    var akTable         = document.getElementById('akTable');
+    var akEmpty         = document.getElementById('akEmpty');
+    var akErrorBanner   = document.getElementById('akError');
+    var akErrorText     = document.getElementById('akErrorText');
+
+    function showBannerError(msg) {
+      akErrorText.textContent = msg;
+      akErrorBanner.classList.add('visible');
+    }
+    function clearBannerError() {
+      akErrorBanner.classList.remove('visible');
+    }
+
+    function formatDate(iso) {
+      if (!iso) return '—';
+      return iso.slice(0, 16).replace('T', ' ');
+    }
+
+    function esc(str) {
+      return String(str || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function renderKeys(keys) {
+      akTbody.innerHTML = '';
+      if (!keys || keys.length === 0) {
+        akTable.style.display = 'none';
+        akEmpty.style.display = '';
+        return;
+      }
+      akTable.style.display = '';
+      akEmpty.style.display = 'none';
+      keys.forEach(function (k) {
+        var statusBadge = k.is_active
+          ? '<span class="tpl-badge tpl-badge-approved"><i class="fas fa-circle"></i> Active</span>'
+          : '<span class="tpl-badge tpl-badge-disabled"><i class="fas fa-circle"></i> Revoked</span>';
+        var actions = '<div style="display:flex;align-items:center;gap:6px;" onclick="event.stopPropagation();">';
+        if (k.is_active) {
+          actions += '<button class="tpl-btn tpl-btn-danger" style="padding:4px 10px;" onclick="akRevoke(\'' + k.id + '\')">Revoke</button>';
+        }
+        actions += '<button class="tpl-btn tpl-btn-ghost" style="padding:4px 8px;" onclick="akOpenEdit(' + JSON.stringify(k) + ')" title="Edit"><i class="fas fa-edit"></i></button>';
+        actions += '</div>';
+        var labelCell = k.label
+          ? '<span style="font-size:13px;font-weight:500;color:var(--ink);">' + esc(k.label) + '</span>'
+          : '<span style="color:var(--subtle);">—</span>';
+        var notifyCell = k.notify_url
+          ? '<span class="ak-url-cell" title="' + esc(k.notify_url) + '">' + esc(k.notify_url) + '</span>'
+          : '<span style="color:var(--subtle);">—</span>';
+        var tr = document.createElement('tr');
+        tr.className = 'ak-row-clickable';
+        tr.dataset.keyId = k.id;
+        tr.innerHTML =
+          '<td>' + labelCell + '</td>' +
+          '<td><span class="ak-key-mono">' + esc(k.masked_key) + '</span></td>' +
+          '<td>' + notifyCell + '</td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td class="ak-date-cell">' + formatDate(k.last_used_at) + '</td>' +
+          '<td class="ak-date-cell">' + formatDate(k.created_at) + '</td>' +
+          '<td>' + actions + '</td>';
+        tr.addEventListener('click', function (e) {
+          if (e.target.closest('button')) return;
+          akOpenEdit(k);
+        });
+        akTbody.appendChild(tr);
+      });
+    }
+
+    async function loadApiKeys() {
+      clearBannerError();
+      try {
+        var res = await fetchWithAuth('/api/company-api-keys/?company_id=' + COMPANY_ID, {
+          method: 'GET',
+          headers: {},
+        });
+        if (!res.ok) { showBannerError('Failed to load API keys.'); return; }
+        var keys = await res.json();
+        renderKeys(keys);
+      } catch (_) {
+        showBannerError('Network error loading API keys.');
+      }
+    }
+
+    window.akRevoke = async function (keyId) {
+      if (!confirm('Revoke this API key? External systems using it will lose access immediately.')) return;
+      clearBannerError();
+      try {
+        var res = await fetchWithAuth('/api/company-api-keys/' + keyId, {
+          method: 'DELETE',
+          headers: {},
+        });
+        if (res.ok || res.status === 204) {
+          loadApiKeys();
+        } else {
+          showBannerError('Failed to revoke key.');
+        }
+      } catch (_) {
+        showBannerError('Network error revoking key.');
+      }
+    };
+
+    /* ── Modal open / close ─────────────────────────── */
+    function openModal() {
+      document.getElementById('akLabel').value = '';
+      document.getElementById('akNotifyUrl').value = '';
+      akModalError.style.display = 'none';
+      akFormState.style.display = '';
+      akSuccessState.style.display = 'none';
+      var lbl = akModalSave.querySelector('.btn-label');
+      if (lbl) lbl.innerHTML = '<i class="fas fa-magic"></i> Generate';
+      akModalSave.style.display = '';
+      akModalCancel.textContent = 'Cancel';
+      akModalBackdrop.classList.add('open');
+    }
+    function closeModal() {
+      akModalBackdrop.classList.remove('open');
+      loadApiKeys();   // refresh table after close (in case a key was generated)
+    }
+
+    akGenerateBtn.addEventListener('click', openModal);
+    akModalClose.addEventListener('click', closeModal);
+    akModalCancel.addEventListener('click', closeModal);
+    akModalBackdrop.addEventListener('click', function (e) {
+      if (e.target === akModalBackdrop) closeModal();
+    });
+
+    /* ── Generate ───────────────────────────────────── */
+    akModalSave.addEventListener('click', async function () {
+      akModalError.style.display = 'none';
+      var label     = (document.getElementById('akLabel').value     || '').trim() || null;
+      var notifyUrl = (document.getElementById('akNotifyUrl').value || '').trim() || null;
+
+      akModalSave.classList.add('loading');
+      akModalSave.disabled = true;
+      try {
+        var res = await fetchWithAuth('/api/company-api-keys/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ company_id: COMPANY_ID, label: label, notify_url: notifyUrl }),
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (!res.ok) {
+          akModalError.textContent = data.detail || 'Failed to generate key.';
+          akModalError.style.display = 'block';
+          return;
+        }
+        // Show copy-once success state
+        akNewKeyDisplay.value = data.api_key || '';
+        akFormState.style.display = 'none';
+        akSuccessState.style.display = '';
+        akModalSave.style.display = 'none';
+        akModalCancel.textContent = 'Close';
+      } catch (_) {
+        akModalError.textContent = 'Network error. Please try again.';
+        akModalError.style.display = 'block';
+      } finally {
+        akModalSave.classList.remove('loading');
+        akModalSave.disabled = false;
+      }
+    });
+
+    /* ── Copy to clipboard ──────────────────────────── */
+    akCopyBtn && akCopyBtn.addEventListener('click', function () {
+      if (!akNewKeyDisplay.value) return;
+      navigator.clipboard.writeText(akNewKeyDisplay.value).then(function () {
+        akCopyBtn.innerHTML = '<i class="fas fa-check"></i>';
+        setTimeout(function () { akCopyBtn.innerHTML = '<i class="fas fa-copy"></i>'; }, 1500);
+      }).catch(function () {
+        akNewKeyDisplay.select();
+        document.execCommand('copy');
+        akCopyBtn.innerHTML = '<i class="fas fa-check"></i>';
+        setTimeout(function () { akCopyBtn.innerHTML = '<i class="fas fa-copy"></i>'; }, 1500);
+      });
+    });
+
+    /* ── Edit key modal ─────────────────────────────── */
+    var akEditBackdrop    = document.getElementById('akEditModalBackdrop');
+    var akEditModalClose  = document.getElementById('akEditModalClose');
+    var akEditCancel      = document.getElementById('akEditCancel');
+    var akEditSave        = document.getElementById('akEditSave');
+    var akEditDeleteBtn   = document.getElementById('akEditDeleteBtn');
+    var akDeleteConfirm   = document.getElementById('akDeleteConfirm');
+    var akDeleteConfirmBtn= document.getElementById('akDeleteConfirmBtn');
+    var akDeleteCancelBtn = document.getElementById('akDeleteCancelBtn');
+    var akEditError       = document.getElementById('akEditError');
+    var akEditMaskedKey   = document.getElementById('akEditMaskedKey');
+    var akEditLabelEl     = document.getElementById('akEditLabel');
+    var akEditNotifyEl    = document.getElementById('akEditNotifyUrl');
+    var currentEditKey    = null;
+
+    function akShowEditError(msg) {
+      akEditError.textContent = msg;
+      akEditError.style.display = '';
+    }
+    function akClearEditError() { akEditError.style.display = 'none'; }
+
+    window.akOpenEdit = function (k) {
+      currentEditKey = k;
+      akClearEditError();
+      akDeleteConfirm.style.display = 'none';
+      akEditMaskedKey.textContent = k.masked_key;
+      akEditLabelEl.value    = k.label     || '';
+      akEditNotifyEl.value   = k.notify_url || '';
+      var lbl = akEditSave.querySelector('.btn-label');
+      if (lbl) lbl.innerHTML = '<i class="fas fa-save"></i> Save';
+      akEditSave.style.display = '';
+      akEditBackdrop.classList.add('open');
+    };
+
+    function closeEditModal() {
+      akEditBackdrop.classList.remove('open');
+      currentEditKey = null;
+      akDeleteConfirm.style.display = 'none';
+    }
+
+    akEditModalClose && akEditModalClose.addEventListener('click', closeEditModal);
+    akEditCancel     && akEditCancel.addEventListener('click', closeEditModal);
+    akEditBackdrop   && akEditBackdrop.addEventListener('click', function (e) {
+      if (e.target === akEditBackdrop) closeEditModal();
+    });
+
+    akEditSave && akEditSave.addEventListener('click', async function () {
+      if (!currentEditKey) return;
+      akClearEditError();
+      akEditSave.classList.add('loading');
+      akEditSave.disabled = true;
+      try {
+        var res = await fetchWithAuth('/api/company-api-keys/' + currentEditKey.id, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            label:      akEditLabelEl.value.trim() || null,
+            notify_url: akEditNotifyEl.value.trim() || null,
+          }),
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (res.ok) {
+          closeEditModal();
+          loadApiKeys();
+        } else {
+          akShowEditError(data.detail || 'Save failed. Please try again.');
+        }
+      } catch (_) {
+        akShowEditError('Network error. Please try again.');
+      } finally {
+        akEditSave.classList.remove('loading');
+        akEditSave.disabled = false;
+      }
+    });
+
+    /* Delete — show inline confirm first */
+    akEditDeleteBtn && akEditDeleteBtn.addEventListener('click', function () {
+      akDeleteConfirm.style.display = '';
+    });
+    akDeleteCancelBtn && akDeleteCancelBtn.addEventListener('click', function () {
+      akDeleteConfirm.style.display = 'none';
+    });
+    akDeleteConfirmBtn && akDeleteConfirmBtn.addEventListener('click', async function () {
+      if (!currentEditKey) return;
+      akDeleteConfirmBtn.classList.add('loading');
+      akDeleteConfirmBtn.disabled = true;
+      try {
+        var res = await fetchWithAuth('/api/company-api-keys/' + currentEditKey.id + '/purge', {
+          method: 'DELETE',
+          headers: {},
+        });
+        if (res.ok || res.status === 204) {
+          closeEditModal();
+          loadApiKeys();
+        } else {
+          var d = await res.json().catch(function () { return {}; });
+          akShowEditError(d.detail || 'Delete failed.');
+          akDeleteConfirm.style.display = 'none';
+        }
+      } catch (_) {
+        akShowEditError('Network error.');
+        akDeleteConfirm.style.display = 'none';
+      } finally {
+        akDeleteConfirmBtn.classList.remove('loading');
+        akDeleteConfirmBtn.disabled = false;
+      }
+    });
+
+    /* ── Load keys when tab is activated ───────────── */
+    document.querySelectorAll('.cd-tab').forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        if (tab.dataset.panel === 'api_keys') loadApiKeys();
+      });
+    });
+
+    // Load immediately if tab is active on page load
+    if (window.location.hash === '#api_keys') loadApiKeys();
+
+  })(); // end API keys IIFE
+
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* page-specific only — cards/stats/badges come from base.css */
+  .dash-welcome { margin-bottom: 24px; }
+  .dash-welcome-title {
+    font-family: var(--f-disp);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--black);
+    letter-spacing: -.03em;
+  }
+  .dash-welcome-sub {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 3px;
+  }
+
+  .stat-card { align-items: center; gap: 16px; }
+  .stat-value {
+    font-family: var(--f-disp);
+    font-size: 30px;
+    font-weight: 700;
+    color: var(--black);
+    line-height: 1;
+    letter-spacing: -.03em;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-label {
+    font-family: var(--f-mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .14em;
+    margin-top: 6px;
+  }
+
+  .dash-cols {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 16px;
+  }
+  .dash-card-fit { height: fit-content; }
+  @media (max-width: 1024px) { .dash-cols { grid-template-columns: 1fr; } }
+
+  .info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .info-item { display: flex; flex-direction: column; gap: 4px; }
+  .info-key {
+    font-family: var(--f-mono);
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--subtle);
+    text-transform: uppercase;
+    letter-spacing: .14em;
+  }
+  .info-val { font-size: 14px; font-weight: 500; color: var(--ink); }
+
+  .placeholder-table { width: 100%; border-collapse: collapse; }
+  .placeholder-table th, .placeholder-table td {
+    padding: 10px 20px;
+    text-align: left;
+    font-size: 13px;
+    border-bottom: 1px solid var(--line);
+  }
+  .placeholder-table th {
+    font-family: var(--f-mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: .14em;
+    color: var(--muted);
+    background: var(--bg);
+  }
+  .placeholder-table td { color: var(--ink-2); }
+  .empty-row td {
+    text-align: center;
+    color: var(--subtle);
+    padding: 36px 20px;
+    font-size: 13px;
+  }
+  .empty-row-icon {
+    font-size: 22px;
+    display: block;
+    margin-bottom: 8px;
+    color: var(--subtle);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Welcome bar -->
+<div class="dash-welcome">
+  <div class="dash-welcome-title">Welcome back</div>
+  <div class="dash-welcome-sub">Here's an overview of your WhatsApp messaging activity.</div>
+</div>
+
+<!-- Stats -->
+<div class="stats-grid">
+  <div class="stat-card">
+    <div>
+      <div class="stat-value">0</div>
+      <div class="stat-label">Messages Sent</div>
+    </div>
+    <div class="stat-icon green"><i class="ti ti-brand-whatsapp"></i></div>
+  </div>
+  <div class="stat-card">
+    <div>
+      <div class="stat-value">0</div>
+      <div class="stat-label">Delivered</div>
+    </div>
+    <div class="stat-icon blue"><i class="ti ti-checks"></i></div>
+  </div>
+  <div class="stat-card">
+    <div>
+      <div class="stat-value">0</div>
+      <div class="stat-label">Pending</div>
+    </div>
+    <div class="stat-icon orange"><i class="ti ti-clock"></i></div>
+  </div>
+  <div class="stat-card">
+    <div>
+      <div class="stat-value">0</div>
+      <div class="stat-label">Failed</div>
+    </div>
+    <div class="stat-icon red"><i class="ti ti-circle-x"></i></div>
+  </div>
+</div>
+
+<!-- Account info + recent activity -->
+<div class="dash-cols">
+
+  <div class="card dash-card-fit">
+    <div class="card-header">
+      <div class="card-title"><i class="ti ti-user-circle"></i> Your Account</div>
+    </div>
+    <div class="card-body">
+      <div class="info-grid">
+        <div class="info-item">
+          <span class="info-key">Role</span>
+          <span class="info-val">
+            <span class="badge {% if user.role_name == 'super_admin' %}green{% elif user.role_name == 'admin' %}blue{% else %}gray{% endif %}">
+              {{ user.role_name | replace('_', ' ') | title }}
+            </span>
+          </span>
+        </div>
+        <div class="info-item">
+          <span class="info-key">Company scope</span>
+          <span class="info-val">
+            {% if user.company_id %}
+              <span class="badge gray">Your Company</span>
+            {% else %}
+              <span class="badge green">All Companies</span>
+            {% endif %}
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title"><i class="ti ti-history"></i> Recent Activity</div>
+    </div>
+    <div class="card-body p-0">
+      <table class="placeholder-table">
+        <thead>
+          <tr>
+            <th>Phone</th>
+            <th>Template</th>
+            <th>Company</th>
+            <th>Status</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="empty-row">
+            <td colspan="5">
+              <i class="ti ti-inbox empty-row-icon"></i>
+              No messages yet. Activity will appear here once campaigns are sent.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}

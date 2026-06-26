@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign In &mdash; SIL Whatsapp</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <link rel="stylesheet" href="/static/css/login.css">
+</head>
+<body>
+
+<div class="login-card">
+
+  <!-- ── LEFT ───────────────────────────────────────────── -->
+  <div class="card-left">
+    <img src="/static/img/sil_logo_new.png" alt="SIL Whatsapp" class="brand-logo">
+    <div class="brand-title">SIL WhatsApp</div>
+    <div class="brand-rule"></div>
+    <div class="brand-sub">Business Messaging<br>Manager</div>
+  </div>
+
+  <!-- ── RIGHT ──────────────────────────────────────────── -->
+  <div class="card-right">
+
+    <span class="form-eyebrow">Platform Access</span>
+    <h1 class="form-headline">Welcome back</h1>
+    <p class="form-sub">Sign in to manage your WhatsApp Business messages.</p>
+
+    <div class="divider"></div>
+
+    <div id="errorContainer"></div>
+
+    <form id="loginForm" class="form" novalidate>
+      <div class="field">
+        <label class="label" for="username">Username</label>
+        <div class="input-wrap">
+          <i class="fas fa-user input-prefix-icon"></i>
+          <input type="text" id="username" name="username" class="input input-with-icon"
+                 placeholder="Enter your username"
+                 required autofocus autocomplete="username">
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="label" for="password">Password</label>
+        <div class="input-wrap">
+          <i class="fas fa-lock input-prefix-icon"></i>
+          <input type="password" id="password" name="password" class="input input-with-icon"
+                 placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
+                 required autocomplete="current-password">
+          <button type="button" class="input-suffix-btn" id="pwdToggle" tabindex="-1"
+                  aria-label="Toggle password visibility">
+            <i class="fas fa-eye" id="pwdIcon"></i>
+          </button>
+        </div>
+      </div>
+
+      <button type="submit" class="btn-submit" id="loginBtn">
+        <span class="btn-label">Sign In</span>
+        <span class="btn-arrow">&rarr;</span>
+        <div class="btn-spinner"></div>
+      </button>
+    </form>
+
+    <div class="card-footer">
+      <span class="footer-note">SIL WAM &middot; 2026</span>
+      <span class="footer-dot"></span>
+    </div>
+
+  </div>
+
+</div><!-- /.login-card -->
+
+<script>
+  (function () {
+    var pwdInput  = document.getElementById('password');
+    var pwdToggle = document.getElementById('pwdToggle');
+    var pwdIcon   = document.getElementById('pwdIcon');
+
+    pwdToggle.addEventListener('click', function () {
+      var show = pwdInput.type === 'password';
+      pwdInput.type = show ? 'text' : 'password';
+      pwdIcon.className = show ? 'fas fa-eye-slash' : 'fas fa-eye';
+    });
+
+    function showError(msg) {
+      document.getElementById('errorContainer').innerHTML =
+        '<div class="error-msg"><i class="fas fa-exclamation-circle"></i> ' + msg + '</div>';
+    }
+
+    document.getElementById('loginForm').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      document.getElementById('errorContainer').innerHTML = '';
+
+      var btn = document.getElementById('loginBtn');
+      btn.classList.add('loading');
+
+      var username = document.getElementById('username').value.trim();
+      var password = document.getElementById('password').value;
+
+      try {
+        var res = await fetch('/api/auth/login', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ username: username, password: password })
+        });
+
+        if (res.ok) {
+          var data = await res.json();
+          localStorage.setItem('wam_access_token',  data.access_token);
+          localStorage.setItem('wam_refresh_token', data.refresh_token);
+          window.location.href = '/dashboard';
+        } else {
+          var err = await res.json().catch(function () { return {}; });
+          showError(res.status === 403
+            ? 'Your account is disabled. Contact your administrator.'
+            : (err.detail || 'Invalid username or password.'));
+          btn.classList.remove('loading');
+        }
+      } catch (_) {
+        showError('Unable to reach the server. Please check your connection.');
+        btn.classList.remove('loading');
+      }
+    });
+  })();
+</script>
+
+</body>
+</html>

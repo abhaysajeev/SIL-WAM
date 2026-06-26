@@ -1,0 +1,65 @@
+/* ============================================================
+   SIL WAM · Design Tokens
+   Load this file first — before login.css and base.css.
+   ============================================================ */
+
+:root {
+  /* Brand green */
+  --g-start:    #17B85C;
+  --g-mid:      #0FAF58;
+  --g-end:      #089A4D;
+
+  --green-gradient:          linear-gradient(to right,  var(--g-start) 0%, var(--g-mid) 50%, var(--g-end) 100%);
+  --green-gradient-diagonal: linear-gradient(135deg,    var(--g-start) 0%, var(--g-mid) 50%, var(--g-end) 100%);
+  --green-gradient-vertical: linear-gradient(to bottom, var(--g-start) 0%, var(--g-end) 100%);
+
+  --green:       #0FAF58;
+  --green-dark:  #089A4D;
+  --green-light: #17B85C;
+  --green-tint:  #E6F9EE;
+
+  /* Backgrounds */
+  --bg:       #F0F4F0;
+  --bg-card:  #FFFFFF;
+
+  /* Borders */
+  --line:   rgba(0,0,0,.09);
+  --line-2: rgba(0,0,0,.15);
+
+  /* Text */
+  --black:  #0A0A0A;
+  --ink:    #111827;
+  --ink-2:  #374151;
+  --muted:  #6B7280;
+  --subtle: #9CA3AF;
+
+  /* Status */
+  --red:         #DC2626;
+  --red-dark:    #B91C1C;
+  --red-tint:    #FEF2F2;
+  --orange:      #f97316;
+  --orange-tint: #fff7ed;
+  --blue:        #3b82f6;
+  --blue-tint:   #eff6ff;
+
+  /* Motion */
+  --ease: cubic-bezier(.2,.7,.2,1);
+
+  /* Typography */
+  --f-ui:   'Inter', 'Helvetica Neue', Arial, sans-serif;
+  --f-disp: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
+  --f-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* Layout */
+  --sidebar-w: 196px;
+  --topbar-h:  46px;
+
+  /* Shadows */
+  --shadow-green: 0 4px 24px rgba(8,154,77,.3), 0 1px 4px rgba(0,0,0,.1);
+  --shadow-card:  0 1px 3px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.04);
+  --shadow-lift:  0 2px 6px rgba(0,0,0,.07), 0 8px 24px rgba(0,0,0,.07);
+  --shadow-pop:   0 4px 16px rgba(0,0,0,.10), 0 24px 64px rgba(0,0,0,.18);
+
+  /* Focus ring — square, green */
+  --ring: 0 0 0 3px rgba(15,175,88,.15);
+}

@@ -1,0 +1,341 @@
+{% extends "base.html" %}
+{#
+  Universal Form View
+  Context required:
+    dt        — doctype config dict
+    record    — dict of existing record fields, or None for new
+    record_id — UUID string, or None for new
+    roles     — list of Role objects (for select_role fields)
+    companies — list of Company objects (for select_company fields)
+    perms     — permissions dict
+    user      — current user dict
+    active    — sidebar active key
+#}
+{% block title %}
+  {% if record %}{{ record[dt.title_field] }} — {% endif %}{{ dt.title }} — SIL WhatsApp
+{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/docview.css">
+{% endblock %}
+
+{% block content %}
+<div class="dv-form-wrap">
+
+  <!-- Breadcrumb -->
+  <div class="dv-breadcrumb">
+    <a href="{{ dt.base_route }}">{{ dt.title_plural }}</a>
+    <span class="sep">/</span>
+    <span>{% if record %}{{ record[dt.title_field] }}{% else %}New {{ dt.title }}{% endif %}</span>
+  </div>
+
+  <!-- Sticky toolbar -->
+  <div class="dv-form-toolbar">
+    <div class="dv-form-doc-title">
+      {% if record %}{{ record[dt.title_field] }}{% else %}New {{ dt.title }}{% endif %}
+    </div>
+    <div class="dv-form-doc-status">
+      <span class="dv-save-status" id="saveStatus"></span>
+      {% if record and (perms[dt.perm_page].delete) %}
+      <div class="dv-delete-confirm" id="deleteConfirm">
+        Delete this {{ dt.title | lower }}?
+        <button class="dv-btn dv-btn-danger dv-btn-xs" id="confirmDeleteBtn">
+          <span class="btn-label">Yes, delete</span>
+          <div class="btn-spinner"></div>
+        </button>
+        <button class="dv-btn dv-btn-ghost dv-btn-xs" id="cancelDeleteBtn">Cancel</button>
+      </div>
+      <button class="dv-btn dv-btn-danger dv-btn-xs" id="deleteBtn" title="Delete">
+        <i class="ti ti-trash"></i>
+      </button>
+      {% endif %}
+      {% if (record and perms[dt.perm_page].write) or (not record and perms[dt.perm_page].create) %}
+      <button class="dv-btn dv-btn-ghost" onclick="window.location='{{ dt.base_route }}'">Cancel</button>
+      <button class="dv-btn dv-btn-primary" id="saveBtn">
+        <span class="btn-label"><i class="ti ti-device-floppy"></i> Save</span>
+        <div class="btn-spinner"></div>
+      </button>
+      {% else %}
+      <a href="{{ dt.base_route }}" class="dv-btn dv-btn-ghost">Back</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Error banner -->
+  <div class="dv-form-error" id="formError">
+    <i class="fas fa-exclamation-circle"></i>
+    <span id="formErrorText"></span>
+  </div>
+
+  <!-- Sections -->
+  {% for section in dt.form_sections %}
+  {% if not section.get('create_only') or not record %}
+  <div class="dv-section">
+    <div class="dv-section-header">
+      <span class="dv-section-label">{{ section.label }}</span>
+    </div>
+    <div class="dv-section-body">
+
+      {% for field in section.fields %}
+
+      {%- set fval = record[field.name] if record and record[field.name] is not none else '' -%}
+      {%- set is_readonly = record and field.get('create_only') -%}
+
+      <div class="dv-field {% if field.get('cols') == 2 %}col-2{% endif %}">
+        <label class="dv-label" for="f_{{ field.name }}">
+          {{ field.label }}
+          {% if field.get('required') and not is_readonly %}<span class="req">*</span>{% endif %}
+        </label>
+
+        {% if is_readonly %}
+          {# create_only field on edit → show as static text #}
+          <div class="dv-field-static">{{ fval or '—' }}</div>
+
+        {% elif field.type == 'checkbox' %}
+          <div class="dv-toggle-wrap">
+            <label class="dv-toggle">
+              <input type="checkbox" id="f_{{ field.name }}" name="{{ field.name }}"
+                     {% if record and record[field.name] %}checked{% elif not record and field.name == 'is_active' %}checked{% elif not record and field.name == 'must_change_password' %}checked{% endif %}>
+              <span class="dv-toggle-track"></span>
+            </label>
+            <span class="dv-toggle-label">{{ 'Enabled' if (record and record[field.name]) or (not record and field.name in ['is_active','must_change_password']) else 'Disabled' }}</span>
+          </div>
+
+        {% elif field.type == 'select_role' %}
+          <select id="f_{{ field.name }}" name="{{ field.name }}" class="dv-select">
+            <option value="">— No role —</option>
+            {% for r in roles %}
+            <option value="{{ r.id }}"
+              {% if record and record[field.name] and record[field.name]|string == r.id|string %}selected{% endif %}>
+              {{ r.display_name }}
+            </option>
+            {% endfor %}
+          </select>
+
+        {% elif field.type == 'select_company' %}
+          <select id="f_{{ field.name }}" name="{{ field.name }}" class="dv-select">
+            <option value="">— All companies (admin tier) —</option>
+            {% for c in companies %}
+            <option value="{{ c.id }}"
+              {% if record and record[field.name] and record[field.name]|string == c.id|string %}selected{% endif %}>
+              {{ c.name }}
+            </option>
+            {% endfor %}
+          </select>
+
+        {% elif field.type == 'secret' %}
+          {% if fval %}
+          {# Secret already saved — show masked display with a Change button #}
+          <div class="dv-secret-wrap" id="sw_{{ field.name }}">
+            <div class="dv-secret-saved">
+              <span class="dv-secret-mask">••••••••••••</span>
+              <button type="button" class="dv-btn dv-btn-ghost dv-btn-xs"
+                      onclick="dvUnlockSecret('{{ field.name }}')">
+                <i class="ti ti-edit"></i> Change
+              </button>
+            </div>
+            <input type="password" id="f_{{ field.name }}" name="{{ field.name }}"
+                   class="dv-input" style="display:none"
+                   {% if field.get('placeholder') %}placeholder="{{ field.placeholder }}"{% endif %}>
+          </div>
+          {% else %}
+          {# No secret saved yet — show blank input #}
+          <input type="password" id="f_{{ field.name }}" name="{{ field.name }}"
+                 class="dv-input"
+                 {% if field.get('placeholder') %}placeholder="{{ field.placeholder }}"{% endif %}
+                 {% if field.get('minlength') %}data-minlength="{{ field.minlength }}"{% endif %}>
+          {% endif %}
+
+        {% elif field.type in ['password'] %}
+          <input type="password"
+                 id="f_{{ field.name }}" name="{{ field.name }}"
+                 class="dv-input"
+                 {% if field.get('placeholder') %}placeholder="{{ field.placeholder }}"{% endif %}
+                 {% if field.get('maxlength') %}maxlength="{{ field.maxlength }}"{% endif %}
+                 {% if field.get('minlength') %}data-minlength="{{ field.minlength }}"{% endif %}>
+
+        {% elif field.type == 'textarea' %}
+          <textarea id="f_{{ field.name }}" name="{{ field.name }}"
+                    class="dv-input"
+                    rows="3"
+                    {% if field.get('placeholder') %}placeholder="{{ field.placeholder }}"{% endif %}
+                    {% if field.get('maxlength') %}maxlength="{{ field.maxlength }}"{% endif %}>{{ fval }}</textarea>
+
+        {% else %}
+          {# text, code, phone #}
+          <input type="{{ 'tel' if field.type == 'phone' else 'text' }}"
+                 id="f_{{ field.name }}" name="{{ field.name }}"
+                 class="dv-input {% if field.type == 'code' %}mono{% endif %}"
+                 value="{{ fval }}"
+                 {% if field.get('placeholder') %}placeholder="{{ field.placeholder }}"{% endif %}
+                 {% if field.get('maxlength') %}maxlength="{{ field.maxlength }}"{% endif %}
+                 {% if field.type == 'code' %}oninput="this.value=this.value.toUpperCase()"{% endif %}>
+        {% endif %}
+
+        {% if field.get('hint') %}
+        <div class="dv-hint">{{ field.hint }}</div>
+        {% endif %}
+      </div>
+
+      {% endfor %}
+
+    </div>
+  </div>
+  {% endif %}{# end section create_only check #}
+  {% endfor %}
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  var RECORD_ID   = {{ (('"' + record_id + '"') if record_id else 'null') | safe }};
+  var API_PREFIX  = '{{ dt.api_prefix | safe }}';
+  var BASE_ROUTE  = '{{ dt.base_route | safe }}';
+  var IS_NEW      = !RECORD_ID;
+
+  // Secret field: reveal input when user clicks "Change"
+  window.dvUnlockSecret = function (name) {
+    var wrap = document.getElementById('sw_' + name);
+    if (!wrap) return;
+    wrap.querySelector('.dv-secret-saved').style.display = 'none';
+    var inp = wrap.querySelector('input[type=password]');
+    inp.style.display = '';
+    inp.focus();
+  };
+
+  // Toggle label sync
+  document.querySelectorAll('.dv-toggle input').forEach(function (cb) {
+    cb.addEventListener('change', function () {
+      cb.closest('.dv-toggle-wrap').querySelector('.dv-toggle-label').textContent =
+        cb.checked ? 'Enabled' : 'Disabled';
+    });
+  });
+
+  // ── Save ──────────────────────────────────────────────────
+  var saveBtn    = document.getElementById('saveBtn');
+  var statusEl   = document.getElementById('saveStatus');
+  var errorEl    = document.getElementById('formError');
+  var errorText  = document.getElementById('formErrorText');
+
+  function showError(msg) {
+    // handle FastAPI 422 array detail or plain string
+    if (Array.isArray(msg)) {
+      msg = msg.map(function (e) { return e.msg || JSON.stringify(e); }).join('; ');
+    }
+    errorText.textContent = msg || 'An error occurred.';
+    errorEl.classList.add('visible');
+    window.scrollTo({top: 0, behavior: 'smooth'});
+  }
+  function clearError() { errorEl && errorEl.classList.remove('visible'); }
+
+  function collectPayload() {
+    var payload = {};
+    // text / code / phone / password / secret inputs
+    document.querySelectorAll('.dv-input, .dv-select').forEach(function (el) {
+      if (!el.name) return;
+      // hidden secret input (masked state) — send null so server keeps existing value
+      if (el.style.display === 'none') { payload[el.name] = null; return; }
+      payload[el.name] = el.value.trim() === '' ? null : el.value.trim();
+    });
+    // checkboxes
+    document.querySelectorAll('.dv-toggle input[type=checkbox]').forEach(function (cb) {
+      if (cb.name) payload[cb.name] = cb.checked;
+    });
+    return payload;
+  }
+
+  function setBusy(busy) {
+    if (!saveBtn) return;
+    saveBtn.classList.toggle('loading', busy);
+    saveBtn.disabled = busy;
+  }
+
+  if (saveBtn) {
+    saveBtn.addEventListener('click', async function () {
+      clearError();
+      var payload = collectPayload();
+
+      var missing = [];
+      document.querySelectorAll('[data-minlength]').forEach(function (el) {
+        var min = parseInt(el.dataset.minlength, 10);
+        if ((el.value || '').length < min) missing.push(el.name + ' must be at least ' + min + ' characters');
+      });
+      if (missing.length) { showError(missing[0]); return; }
+
+      setBusy(true);
+      var method = IS_NEW ? 'POST' : 'PUT';
+      var url    = IS_NEW ? API_PREFIX + '/' : API_PREFIX + '/' + RECORD_ID;
+
+      try {
+        var res = await fetchWithAuth(url, {
+          method:  method,
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(payload),
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (res.ok) {
+          if (IS_NEW) {
+            window.location.href = BASE_ROUTE + '/' + data.id;
+          } else {
+            statusEl.innerHTML = '<i class="fas fa-check-circle"></i> Saved';
+            statusEl.className = 'dv-save-status success';
+            setTimeout(function () { statusEl.className = 'dv-save-status'; }, 3000);
+          }
+        } else {
+          showError(Array.isArray(data.detail)
+            ? data.detail.map(function (e) { return e.msg || JSON.stringify(e); }).join('; ')
+            : (data.detail || 'Save failed. Please try again.'));
+        }
+      } catch (_) {
+        showError('Network error. Please check your connection.');
+      } finally {
+        setBusy(false);
+      }
+    });
+  }
+
+  // ── Delete ────────────────────────────────────────────────
+  var deleteBtn    = document.getElementById('deleteBtn');
+  var confirmWrap  = document.getElementById('deleteConfirm');
+  var confirmBtn   = document.getElementById('confirmDeleteBtn');
+  var cancelBtn    = document.getElementById('cancelDeleteBtn');
+
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', function () {
+      deleteBtn.style.display = 'none';
+      confirmWrap.classList.add('visible');
+    });
+    cancelBtn && cancelBtn.addEventListener('click', function () {
+      confirmWrap.classList.remove('visible');
+      deleteBtn.style.display = '';
+    });
+    confirmBtn && confirmBtn.addEventListener('click', async function () {
+      confirmBtn.classList.add('loading');
+      confirmBtn.disabled = true;
+      try {
+        var res = await fetchWithAuth(API_PREFIX + '/' + RECORD_ID, {
+          method: 'DELETE',
+        });
+        if (res.ok) {
+          window.location.href = BASE_ROUTE;
+        } else {
+          var d = await res.json().catch(function () { return {}; });
+          showError(Array.isArray(d.detail)
+            ? d.detail.map(function (e) { return e.msg || ''; }).join('; ')
+            : (d.detail || 'Delete failed.'));
+          confirmWrap.classList.remove('visible');
+          deleteBtn.style.display = '';
+        }
+      } catch (_) {
+        showError('Network error.');
+      } finally {
+        confirmBtn.classList.remove('loading');
+        confirmBtn.disabled = false;
+      }
+    });
+  }
+})();
+</script>
+{% endblock %}

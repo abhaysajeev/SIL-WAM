@@ -1,0 +1,765 @@
+{% extends "base.html" %}
+{% block title %}Demo Messaging — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── Layout ──────────────────────────────────────────────── */
+.dm-layout {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 0;
+  height: calc(100vh - 64px);
+  overflow: hidden;
+  margin: -24px;        /* bleed to dash-content edges */
+}
+
+/* ── Left panel ──────────────────────────────────────────── */
+.dm-left {
+  background: #fff;
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dm-left-header {
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid #f3f4f6;
+}
+.dm-left-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #111;
+  margin-bottom: 2px;
+}
+.dm-left-sub {
+  font-size: 11.5px;
+  color: #9ca3af;
+}
+.dm-left-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── Form elements ───────────────────────────────────────── */
+.dm-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #6b7280;
+  margin-bottom: 5px;
+}
+.dm-select, .dm-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #111;
+  background: #fff;
+  transition: border-color .15s;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.dm-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+}
+.dm-select:focus, .dm-input:focus {
+  outline: none;
+  border-color: #16a34a;
+  box-shadow: 0 0 0 3px #dcfce7;
+}
+.dm-select:disabled, .dm-input:disabled {
+  background: #f9fafb;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+/* template preview */
+.dm-tpl-preview {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #166534;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  display: none;
+}
+
+/* params section */
+.dm-params { display: flex; flex-direction: column; gap: 8px; }
+.dm-param-row { display: flex; flex-direction: column; gap: 4px; }
+.dm-param-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #374151;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dm-param-badge {
+  font-family: monospace;
+  font-size: 10px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* send button */
+.dm-send-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 11px;
+  border: none;
+  border-radius: 8px;
+  background: #16a34a;
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, transform .1s;
+  font-family: inherit;
+  margin-top: 4px;
+}
+.dm-send-btn:hover:not(:disabled) { background: #15803d; }
+.dm-send-btn:active:not(:disabled) { transform: scale(.98); }
+.dm-send-btn:disabled { opacity: .5; cursor: not-allowed; }
+.dm-send-btn .spin {
+  width: 15px; height: 15px;
+  border: 2px solid rgba(255,255,255,.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .6s linear infinite;
+  display: none;
+}
+.dm-send-btn.loading .spin    { display: block; }
+.dm-send-btn.loading .lbl     { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.dm-send-feedback {
+  font-size: 12px;
+  padding: 8px 11px;
+  border-radius: 7px;
+  display: none;
+  text-align: center;
+}
+.dm-send-feedback.ok  { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+.dm-send-feedback.err { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+
+/* ── Right panel (chat) ───────────────────────────────────── */
+.dm-right {
+  display: flex;
+  flex-direction: column;
+  background: #f9fafb;
+  overflow: hidden;
+}
+.dm-chat-header {
+  padding: 14px 20px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.dm-chat-avatar {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #16a34a, #15803d);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.dm-chat-info { flex: 1; min-width: 0; }
+.dm-chat-mobile {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111;
+  font-family: monospace;
+}
+.dm-chat-company {
+  font-size: 11px;
+  color: #9ca3af;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dm-live-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #16a34a;
+  box-shadow: 0 0 0 2px #dcfce7;
+  animation: pulse 1.8s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 2px #dcfce7; }
+  50%       { box-shadow: 0 0 0 5px #dcfce7; }
+}
+
+/* ── Chat messages area ───────────────────────────────────── */
+.dm-chat-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  scroll-behavior: smooth;
+}
+
+/* empty state */
+.dm-chat-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #9ca3af;
+}
+.dm-chat-empty-icon {
+  font-size: 40px;
+  opacity: .25;
+}
+.dm-chat-empty-text { font-size: 13px; text-align: center; line-height: 1.6; }
+
+/* ── Message bubbles ─────────────────────────────────────── */
+.dm-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 68%;
+}
+.dm-msg.out {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.dm-msg.in {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+.dm-bubble {
+  padding: 9px 13px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  word-break: break-word;
+  white-space: pre-wrap;
+  position: relative;
+}
+.dm-msg.out .dm-bubble {
+  background: #16a34a;
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.dm-msg.in .dm-bubble {
+  background: #fff;
+  color: #111;
+  border: 1px solid #e5e7eb;
+  border-bottom-left-radius: 4px;
+}
+.dm-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  padding: 0 2px;
+}
+.dm-time {
+  font-size: 10.5px;
+  color: #9ca3af;
+}
+.dm-status-icon {
+  font-size: 10px;
+  color: #9ca3af;
+}
+.dm-status-icon.read     { color: #16a34a; }
+.dm-status-icon.delivered { color: #6b7280; }
+
+/* date divider */
+.dm-date-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+  color: #d1d5db;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.dm-date-divider::before,
+.dm-date-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e5e7eb;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dm-layout">
+
+  <!-- ── Left: Send form ─────────────────────────────── -->
+  <div class="dm-left">
+    <div class="dm-left-header">
+      <div class="dm-left-title"><i class="ti ti-send" style="margin-right:6px"></i>Send Message</div>
+      <div class="dm-left-sub">Choose company, template and recipient</div>
+    </div>
+
+    <div class="dm-left-body">
+
+      <!-- Company -->
+      <div>
+        <label class="dm-label">Company</label>
+        <select class="dm-select" id="companySelect">
+          <option value="">Loading…</option>
+        </select>
+      </div>
+
+      <!-- Template -->
+      <div>
+        <label class="dm-label">Template</label>
+        <select class="dm-select" id="templateSelect" disabled>
+          <option value="">Select a company first</option>
+        </select>
+      </div>
+
+      <!-- Template preview -->
+      <div class="dm-tpl-preview" id="tplPreview"></div>
+
+      <!-- Dynamic params -->
+      <div id="paramsSection" style="display:none">
+        <label class="dm-label" style="margin-bottom:8px">Template Variables</label>
+        <div class="dm-params" id="paramsContainer"></div>
+      </div>
+
+      <!-- Mobile number -->
+      <div>
+        <label class="dm-label">Mobile Number</label>
+        <input type="tel" class="dm-input" id="mobileInput"
+               placeholder="e.g. 917025985366">
+        <div style="font-size:11px;color:#9ca3af;margin-top:4px">
+          Include country code (e.g. 91 for India)
+        </div>
+      </div>
+
+      <!-- Send -->
+      <button class="dm-send-btn" id="sendBtn" disabled>
+        <span class="lbl"><i class="fas fa-paper-plane"></i> Send Template</span>
+        <div class="spin"></div>
+      </button>
+
+      <div class="dm-send-feedback" id="sendFeedback"></div>
+
+    </div>
+  </div>
+
+  <!-- ── Right: Chat ─────────────────────────────────── -->
+  <div class="dm-right" id="chatPanel">
+
+    <div class="dm-chat-header" id="chatHeader" style="display:none">
+      <div class="dm-chat-avatar"><i class="fas fa-user"></i></div>
+      <div class="dm-chat-info">
+        <div class="dm-chat-mobile" id="chatMobile">—</div>
+        <div class="dm-chat-company" id="chatCompany">—</div>
+      </div>
+      <div class="dm-live-dot" title="Live updates active"></div>
+    </div>
+
+    <div class="dm-chat-body" id="chatBody">
+      <div class="dm-chat-empty" id="chatEmpty">
+        <div class="dm-chat-empty-icon"><i class="ti ti-messages"></i></div>
+        <div class="dm-chat-empty-text">
+          Send a template to start a conversation<br>
+          <span style="font-size:11px;opacity:.7">Messages will appear here in real time</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+
+  /* ── State ─────────────────────────────────────────── */
+  var companies    = [];
+  var templates    = [];
+  var currentConvId = null;
+  var currentMobile = null;
+  var currentCompanyName = null;
+  var seenMsgIds   = new Set();
+  var sseConn      = null;
+
+  /* ── DOM refs ──────────────────────────────────────── */
+  var companySelect    = document.getElementById('companySelect');
+  var templateSelect   = document.getElementById('templateSelect');
+  var tplPreview       = document.getElementById('tplPreview');
+  var paramsSection    = document.getElementById('paramsSection');
+  var paramsContainer  = document.getElementById('paramsContainer');
+  var mobileInput      = document.getElementById('mobileInput');
+  var sendBtn          = document.getElementById('sendBtn');
+  var sendFeedback     = document.getElementById('sendFeedback');
+  var chatHeader       = document.getElementById('chatHeader');
+  var chatBody         = document.getElementById('chatBody');
+  var chatEmpty        = document.getElementById('chatEmpty');
+  var chatMobile       = document.getElementById('chatMobile');
+  var chatCompany      = document.getElementById('chatCompany');
+
+  /* ── Helpers ───────────────────────────────────────── */
+  function setLoading(btn, on) {
+    btn.disabled = on;
+    btn.classList.toggle('loading', on);
+  }
+
+  function showFeedback(el, type, msg) {
+    el.className = 'dm-send-feedback ' + type;
+    el.textContent = msg;
+    el.style.display = 'block';
+    if (type === 'ok') setTimeout(function () { el.style.display = 'none'; }, 4000);
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    var today = new Date();
+    if (d.toDateString() === today.toDateString()) return 'Today';
+    var yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+    return d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function statusIcon(status, direction) {
+    if (direction !== 'outbound') return '';
+    if (status === 'read')       return '<span class="dm-status-icon read"><i class="fas fa-check-double"></i></span>';
+    if (status === 'delivered')  return '<span class="dm-status-icon delivered"><i class="fas fa-check-double"></i></span>';
+    if (status === 'sent')       return '<span class="dm-status-icon"><i class="fas fa-check"></i></span>';
+    if (status === 'failed')     return '<span class="dm-status-icon" style="color:#dc2626"><i class="fas fa-times"></i></span>';
+    return '';
+  }
+
+  function selectedTemplate() {
+    return templates.find(function (t) { return t.id === templateSelect.value; }) || null;
+  }
+
+  function checkSendReady() {
+    var tpl = selectedTemplate();
+    sendBtn.disabled = !tpl || !mobileInput.value.trim() || !companySelect.value;
+  }
+
+  /* ── Companies load ────────────────────────────────── */
+  function loadCompanies() {
+    fetchWithAuth('/api/demo/companies')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        companies = data;
+        companySelect.innerHTML = '<option value="">Select company…</option>' +
+          data.map(function (c) {
+            return '<option value="' + c.id + '">' + c.name + '</option>';
+          }).join('');
+      });
+  }
+
+  /* ── Templates load ────────────────────────────────── */
+  function loadTemplates(companyId) {
+    templateSelect.disabled = true;
+    templateSelect.innerHTML = '<option value="">Loading…</option>';
+    tplPreview.style.display = 'none';
+    paramsSection.style.display = 'none';
+    paramsContainer.innerHTML = '';
+    templates = [];
+    checkSendReady();
+
+    fetchWithAuth('/api/demo/templates?company_id=' + companyId)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        templates = data;
+        templateSelect.disabled = false;
+        if (data.length === 0) {
+          templateSelect.innerHTML = '<option value="">No approved templates</option>';
+          return;
+        }
+        templateSelect.innerHTML = '<option value="">Select template…</option>' +
+          data.map(function (t) {
+            return '<option value="' + t.id + '">' + t.name + ' (' + t.language + ')</option>';
+          }).join('');
+      });
+  }
+
+  /* ── Template selected ─────────────────────────────── */
+  function onTemplateChange() {
+    var tpl = selectedTemplate();
+    paramsContainer.innerHTML = '';
+
+    if (!tpl) {
+      tplPreview.style.display = 'none';
+      paramsSection.style.display = 'none';
+      checkSendReady();
+      return;
+    }
+
+    // Show preview
+    tplPreview.textContent = tpl.body_text;
+    tplPreview.style.display = 'block';
+
+    // Build param inputs
+    if (tpl.params && tpl.params.length > 0) {
+      paramsSection.style.display = 'block';
+      tpl.params.forEach(function (p) {
+        var row = document.createElement('div');
+        row.className = 'dm-param-row';
+        row.innerHTML =
+          '<div class="dm-param-label">' + p.label + '</div>' +
+          '<input type="text" class="dm-input dm-param-input" ' +
+                 'data-index="' + p.index + '" ' +
+                 'placeholder="Enter ' + p.label + '">';
+        paramsContainer.appendChild(row);
+      });
+    } else {
+      paramsSection.style.display = 'none';
+    }
+
+    checkSendReady();
+  }
+
+  /* ── Send ──────────────────────────────────────────── */
+  function doSend() {
+    var tpl       = selectedTemplate();
+    var companyId = companySelect.value;
+    var mobile    = mobileInput.value.trim();
+
+    if (!tpl || !companyId || !mobile) return;
+
+    // Collect params in order
+    var paramInputs = Array.from(paramsContainer.querySelectorAll('.dm-param-input'));
+    var params = paramInputs.map(function (inp) { return inp.value.trim(); });
+
+    sendFeedback.style.display = 'none';
+    setLoading(sendBtn, true);
+
+    fetchWithAuth('/api/demo/send', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        company_id:  companyId,
+        template_id: tpl.id,
+        mobile_no:   mobile,
+        params:      params,
+      }),
+    })
+    .then(function (r) {
+      if (!r.ok) return r.json().then(function (e) { throw new Error(e.detail || 'Send failed'); });
+      return r.json();
+    })
+    .then(function (data) {
+      showFeedback(sendFeedback, 'ok', '✓ Template sent to ' + data.mobile_no);
+      loadConversation(companyId, data.mobile_no, data.conversation_id);
+    })
+    .catch(function (err) {
+      showFeedback(sendFeedback, 'err', err.message);
+    })
+    .finally(function () {
+      setLoading(sendBtn, false);
+    });
+  }
+
+  /* ── Conversation / chat ───────────────────────────── */
+  function loadConversation(companyId, mobile, knownConvId) {
+    currentMobile      = mobile;
+    currentCompanyName = (companies.find(function (c) { return c.id === companyId; }) || {}).name || companyId;
+
+    chatHeader.style.display = 'flex';
+    chatMobile.textContent   = mobile;
+    chatCompany.textContent  = currentCompanyName;
+
+    fetchWithAuth('/api/demo/conversation?company_id=' + companyId + '&mobile_no=' + encodeURIComponent(mobile))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        currentConvId = data.conversation_id || knownConvId || null;
+        renderMessages(data.messages, true);
+        startSSE();
+      });
+  }
+
+  function renderMessages(msgs, replace) {
+    if (replace) {
+      // Clear old bubbles (keep empty state element)
+      Array.from(chatBody.children).forEach(function (el) {
+        if (el !== chatEmpty) el.remove();
+      });
+      seenMsgIds = new Set();
+    }
+
+    if (msgs.length === 0 && replace) {
+      chatEmpty.style.display = 'flex';
+      return;
+    }
+    chatEmpty.style.display = 'none';
+
+    var lastDate = null;
+    msgs.forEach(function (msg) {
+      if (seenMsgIds.has(msg.id)) return;
+      seenMsgIds.add(msg.id);
+
+      var msgDate = fmtDate(msg.created_at);
+      if (msgDate !== lastDate) {
+        lastDate = msgDate;
+        var div = document.createElement('div');
+        div.className = 'dm-date-divider';
+        div.textContent = msgDate;
+        chatBody.appendChild(div);
+      }
+
+      appendBubble(msg);
+    });
+
+    chatBody.scrollTop = chatBody.scrollHeight;
+  }
+
+  function appendBubble(msg) {
+    var dir  = msg.direction === 'outbound' ? 'out' : 'in';
+    var wrap = document.createElement('div');
+    wrap.className  = 'dm-msg ' + dir;
+    wrap.dataset.id = msg.id;
+
+    var bubble = document.createElement('div');
+    bubble.className   = 'dm-bubble';
+    bubble.textContent = msg.text || '[message]';
+
+    var meta = document.createElement('div');
+    meta.className = 'dm-meta';
+    meta.innerHTML =
+      '<span class="dm-time">' + fmtTime(msg.created_at) + '</span>' +
+      (dir === 'out' ? statusIcon(msg.status, 'outbound') : '');
+
+    wrap.appendChild(bubble);
+    wrap.appendChild(meta);
+    chatBody.appendChild(wrap);
+  }
+
+  function updateBubbleStatus(msgId, status) {
+    var wrap = chatBody.querySelector('[data-id="' + msgId + '"]');
+    if (!wrap) return;
+    var meta = wrap.querySelector('.dm-meta');
+    if (!meta) return;
+    var existing = meta.querySelector('.dm-status-icon');
+    if (existing) existing.remove();
+    meta.insertAdjacentHTML('beforeend', statusIcon(status, 'outbound'));
+  }
+
+  /* ── SSE ───────────────────────────────────────────── */
+  function startSSE() {
+    if (sseConn) { sseConn.close(); sseConn = null; }
+    if (!currentConvId) return;
+
+    var token  = getToken();
+    var cursor = new Date().toISOString();
+    var url    = '/api/stream?token=' + encodeURIComponent(token) + '&cursor=' + encodeURIComponent(cursor);
+
+    sseConn = new EventSource(url);
+    sseConn.onmessage = function (e) {
+      try {
+        var ev = JSON.parse(e.data);
+        if (ev.conversation_id !== currentConvId) return;
+
+        if (ev.type === 'new_message') {
+          chatEmpty.style.display = 'none';
+          if (!seenMsgIds.has(ev.id)) {
+            seenMsgIds.add(ev.id);
+
+            // Format the message for rendering
+            var text = '';
+            var content = ev.content || {};
+            var mtype = ev.message_type || '';
+            if (mtype === 'text')        text = content.body || (content.text || {}).body || '';
+            else if (mtype === 'template') text = '[Template sent]';
+            else if (mtype === 'interactive') {
+              var ia = content.interactive || {};
+              text = (ia.button_reply || ia.list_reply || {}).title || content.button && content.button.text || '[Interactive]';
+            }
+            else if (mtype === 'button') text = (content.button || {}).text || '[Button tap]';
+            else text = content.body || content.question || '[' + mtype + ']';
+
+            appendBubble({
+              id:         ev.id,
+              direction:  ev.direction,
+              message_type: mtype,
+              text:       text,
+              status:     ev.status,
+              created_at: ev.created_at,
+            });
+            chatBody.scrollTop = chatBody.scrollHeight;
+          }
+        }
+
+        if (ev.type === 'status_update') {
+          updateBubbleStatus(ev.id, ev.status);
+        }
+      } catch (err) { /* ignore parse errors */ }
+    };
+    sseConn.onerror = function () {
+      // SSE auto-reconnects; nothing to do
+    };
+  }
+
+  /* ── Event listeners ───────────────────────────────── */
+  companySelect.addEventListener('change', function () {
+    if (this.value) {
+      loadTemplates(this.value);
+    } else {
+      templateSelect.disabled = true;
+      templateSelect.innerHTML = '<option value="">Select a company first</option>';
+      tplPreview.style.display = 'none';
+      paramsSection.style.display = 'none';
+    }
+    checkSendReady();
+  });
+
+  templateSelect.addEventListener('change', onTemplateChange);
+  mobileInput.addEventListener('input', checkSendReady);
+  sendBtn.addEventListener('click', doSend);
+
+  // Also allow loading conversation manually by pressing Enter in mobile field
+  mobileInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && companySelect.value && this.value.trim()) {
+      loadConversation(companySelect.value, this.value.trim(), null);
+    }
+  });
+
+  /* ── Boot ──────────────────────────────────────────── */
+  loadCompanies();
+
+})();
+</script>
+{% endblock %}

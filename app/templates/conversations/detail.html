@@ -1,0 +1,402 @@
+{% extends "base.html" %}
+{% block title %}{{ conv.mobile_no }} — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<style>
+  .cd-back {
+    display:inline-flex;align-items:center;gap:6px;
+    font-size:12px;font-weight:600;color:var(--muted);
+    padding:6px 10px;border:1px solid var(--line-2);background:transparent;
+    cursor:pointer;transition:all .18s;margin-bottom:20px;text-decoration:none;
+  }
+  .cd-back:hover { background:var(--bg);color:var(--ink); }
+
+  .cd-layout { display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start; }
+  @media(max-width:900px){ .cd-layout { grid-template-columns:1fr; } }
+
+  /* ── Left: thread ── */
+  .cd-thread-card {
+    background:var(--bg-card);border:1px solid var(--line);
+    display:flex;flex-direction:column;
+  }
+  .cd-thread-header {
+    padding:14px 20px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .cd-thread-title {
+    font-family:var(--f-disp);font-size:16px;font-weight:700;color:var(--black);letter-spacing:-.02em;
+  }
+  .cd-thread-meta { font-size:12px;color:var(--muted);display:flex;gap:14px;flex-wrap:wrap; }
+  .cd-thread-meta span { display:flex;align-items:center;gap:4px; }
+
+  .cd-messages { padding:16px 20px;display:flex;flex-direction:column;gap:10px;max-height:600px;overflow-y:auto; }
+
+  .cd-msg { display:flex;flex-direction:column;max-width:75%; }
+  .cd-msg-in  { align-self:flex-start; }
+  .cd-msg-out { align-self:flex-end;align-items:flex-end; }
+
+  .cd-bubble {
+    padding:10px 14px;font-size:13px;line-height:1.5;color:var(--ink);
+    border:1px solid transparent;word-break:break-word;
+  }
+  .cd-bubble-in  { background:var(--bg-card);border-color:var(--line);border-radius:0 12px 12px 12px; }
+  .cd-bubble-out { background:var(--green-tint);border-color:rgba(15,175,88,.25);border-radius:12px 0 12px 12px; }
+
+  .cd-msg-footer { display:flex;align-items:center;gap:6px;margin-top:3px; }
+  .cd-ts   { font-size:10px;color:var(--subtle); }
+  .cd-type { font-size:10px;color:var(--subtle);font-family:var(--f-mono); }
+
+  .cd-status-icon { font-size:11px; }
+  .cd-status-read      { color:var(--green); }
+  .cd-status-delivered { color:var(--muted); }
+  .cd-status-sent      { color:var(--subtle); }
+  .cd-status-failed    { color:var(--red); }
+
+  .cd-flow-tag {
+    font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--green-dark);background:var(--green-tint);
+    padding:1px 6px;border:1px solid rgba(15,175,88,.25);
+    display:inline-block;margin-bottom:4px;
+  }
+
+  .cd-empty-thread {
+    padding:48px 20px;text-align:center;color:var(--subtle);
+    display:flex;flex-direction:column;align-items:center;gap:8px;
+  }
+  .cd-empty-thread i { font-size:32px; }
+
+  /* ── Right: services panel ── */
+  .cd-services-panel {}
+  .cd-panel-header {
+    background:var(--bg-card);border:1px solid var(--line);border-bottom:none;
+    padding:12px 16px;
+    font-size:10px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;color:var(--subtle);
+  }
+
+  .cd-svc-card {
+    background:var(--bg-card);border:1px solid var(--line);border-top:none;
+    padding:14px 16px;
+  }
+  .cd-svc-card + .cd-svc-card { border-top:1px solid var(--line); }
+
+  .cd-svc-id   { font-family:var(--f-mono);font-size:12px;font-weight:700;color:var(--ink);margin-bottom:6px; }
+  .cd-svc-meta { font-size:11px;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px; }
+
+  .cd-svc-badge {
+    display:inline-flex;align-items:center;gap:4px;
+    padding:3px 8px;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+    border:1px solid transparent;
+  }
+  .cd-badge-completed  { background:var(--green-tint);color:var(--green-dark);border-color:rgba(15,175,88,.25); }
+  .cd-badge-in_progress{ background:var(--blue-tint);color:#1d4ed8;border-color:rgba(59,130,246,.2); }
+  .cd-badge-waiting    { background:var(--bg);color:var(--muted);border-color:var(--line-2); }
+  .cd-badge-expired    { background:var(--bg);color:var(--muted);border-color:var(--line-2); }
+  .cd-badge-failed     { background:var(--red-tint);color:var(--red-dark);border-color:rgba(220,38,38,.18); }
+
+  .cd-svc-link { font-size:11px;color:var(--green);font-weight:600;text-decoration:none; }
+  .cd-svc-link:hover { text-decoration:underline; }
+
+  .cd-responses { margin-top:10px;border-top:1px solid var(--line);padding-top:10px; }
+  .cd-resp-row  { display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px; }
+  .cd-resp-q    { font-size:11px;color:var(--muted);flex:1; }
+  .cd-resp-a    { font-size:11px;color:var(--green-dark);font-weight:600;text-align:right;flex-shrink:0; }
+
+  .cd-no-svcs {
+    background:var(--bg-card);border:1px solid var(--line);border-top:none;
+    padding:20px 16px;text-align:center;color:var(--subtle);font-size:12px;
+  }
+
+  .cd-info-card {
+    background:var(--bg-card);border:1px solid var(--line);
+    padding:14px 16px;margin-bottom:16px;
+    display:flex;gap:20px;flex-wrap:wrap;
+  }
+  .cd-info-item { display:flex;flex-direction:column;gap:3px; }
+  .cd-info-label{ font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--subtle); }
+  .cd-info-val  { font-size:13px;color:var(--ink); }
+  .cd-info-mono { font-family:var(--f-mono); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<a href="/conversations" class="cd-back"><i class="ti ti-arrow-left"></i> Conversations</a>
+
+<!-- Info strip -->
+<div class="cd-info-card">
+  <div class="cd-info-item">
+    <div class="cd-info-label">Mobile</div>
+    <div class="cd-info-val cd-info-mono">{{ conv.mobile_no }}</div>
+  </div>
+  {% if company %}
+  <div class="cd-info-item">
+    <div class="cd-info-label">Company</div>
+    <div class="cd-info-val">{{ company.name }}</div>
+  </div>
+  {% endif %}
+  <div class="cd-info-item">
+    <div class="cd-info-label">Total Messages</div>
+    <div class="cd-info-val">{{ conv.total_messages or 0 }}</div>
+  </div>
+  <div class="cd-info-item">
+    <div class="cd-info-label">First Contact</div>
+    <div class="cd-info-val">{{ conv.first_contact_at.strftime('%d %b %Y') if conv.first_contact_at else '—' }}</div>
+  </div>
+  <div class="cd-info-item">
+    <div class="cd-info-label">Last Activity</div>
+    <div class="cd-info-val">{{ conv.last_activity_at.strftime('%d %b %Y  %H:%M') if conv.last_activity_at else '—' }}</div>
+  </div>
+</div>
+
+<div class="cd-layout">
+
+  <!-- ── Message thread ─────────────────────────────── -->
+  <div class="cd-thread-card">
+    <div class="cd-thread-header">
+      <div class="cd-thread-title"><i class="ti ti-messages" style="margin-right:6px;"></i>Message Thread</div>
+      <div style="font-size:12px;color:var(--muted);">{{ messages | length }} message{{ 's' if messages | length != 1 else '' }}</div>
+    </div>
+
+    {% if messages %}
+    <div class="cd-messages" id="cdMessages">
+      {% for msg in messages %}
+      {% set is_out = msg.direction == 'outbound' %}
+      <div class="cd-msg {% if is_out %}cd-msg-out{% else %}cd-msg-in{% endif %}">
+
+        {% if msg.is_flow_message %}
+        <span class="cd-flow-tag">Flow</span>
+        {% endif %}
+
+        <div class="cd-bubble {% if is_out %}cd-bubble-out{% else %}cd-bubble-in{% endif %}">
+          {# Extract display text based on message type + direction #}
+          {% if msg.message_type == 'template' %}
+            <span style="color:var(--muted);font-style:italic;">📤 Template message sent</span>
+          {% elif msg.message_type == 'text' %}
+            {% if is_out %}
+              {{ msg.content.get('body', msg.content.get('text', {}).get('body', '—')) if msg.content else '—' }}
+            {% else %}
+              {{ msg.content.get('text', {}).get('body', '—') if msg.content else '—' }}
+            {% endif %}
+          {% elif msg.message_type == 'interactive' %}
+            {% if is_out %}
+              {{ msg.content.get('question', '—') if msg.content else '—' }}
+              <span style="font-size:11px;color:var(--muted);display:block;margin-top:4px;">
+                [{{ msg.content.get('answer_type', '') | string | replace('0','Yes/No') | replace('1','Rating') | replace('2','Free Text') }}]
+              </span>
+            {% else %}
+              {% set ia = msg.content.get('interactive', {}) if msg.content else {} %}
+              {% if ia.get('type') == 'button_reply' %}
+                ✅ {{ ia.get('button_reply', {}).get('title', '—') }}
+              {% elif ia.get('type') == 'list_reply' %}
+                ✅ {{ ia.get('list_reply', {}).get('title', '—') }}
+              {% else %}
+                {{ ia }}
+              {% endif %}
+            {% endif %}
+          {% elif msg.message_type == 'button' %}
+            {% set btn = msg.content.get('button', {}) if msg.content else {} %}
+            🔘 {{ btn.get('text', '—') }}
+          {% elif msg.message_type == 'document' %}
+            📄 Document sent
+          {% else %}
+            <span style="color:var(--muted);font-size:12px;">{{ msg.message_type }}</span>
+          {% endif %}
+        </div>
+
+        <div class="cd-msg-footer">
+          <span class="cd-ts">{{ msg.created_at.strftime('%d %b  %H:%M') if msg.created_at else '' }}</span>
+          {% if msg.message_type != 'template' %}
+          <span class="cd-type">{{ msg.message_type }}</span>
+          {% endif %}
+          {% if is_out and msg.status %}
+          <span class="cd-status-icon cd-status-{{ msg.status }}">
+            {% if msg.status == 'read' %}<i class="ti ti-checks"></i>
+            {% elif msg.status == 'delivered' %}<i class="ti ti-check"></i>
+            {% elif msg.status == 'failed' %}<i class="ti ti-x"></i>
+            {% else %}<i class="ti ti-clock"></i>
+            {% endif %}
+          </span>
+          {% endif %}
+        </div>
+
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="cd-empty-thread">
+      <i class="ti ti-message-off"></i>
+      No messages stored for this conversation yet.
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ── Services panel ─────────────────────────────── -->
+  <div class="cd-services-panel">
+    <div class="cd-panel-header"><i class="ti ti-message-bolt" style="margin-right:6px;"></i>Services ({{ services | length }})</div>
+
+    {% if services %}
+      {% for svc in services %}
+      <div class="cd-svc-card">
+        <div class="cd-svc-id">{{ svc.service_id }}</div>
+        <div class="cd-svc-meta">
+          <span class="cd-svc-badge cd-badge-{{ svc.status }}">
+            {{ svc.status | replace('_', ' ') | title }}
+          </span>
+          <span>{{ svc.created_at.strftime('%d %b %Y') if svc.created_at else '—' }}</span>
+        </div>
+        <a href="/services/{{ svc.id }}" class="cd-svc-link"><i class="ti ti-external-link"></i> View full service</a>
+
+        {% if svc._responses %}
+        <div class="cd-responses">
+          {% for resp in svc._responses %}
+          <div class="cd-resp-row">
+            <div class="cd-resp-q">{{ resp.field_key }}</div>
+            <div class="cd-resp-a">{{ resp.response_value or '—' }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        {% elif svc.status == 'completed' %}
+        <div style="font-size:11px;color:var(--subtle);margin-top:8px;">Template-only — no questions.</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+    <div class="cd-no-svcs">No service flows for this conversation.</div>
+    {% endif %}
+  </div>
+
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  // Auto-scroll message thread to bottom
+  var threadEl = document.getElementById('cdMessages');
+  if (threadEl) threadEl.scrollTop = threadEl.scrollHeight;
+
+  var CONV_ID = "{{ conv.id }}";
+  {% if messages %}
+  var CURSOR = "{{ messages[-1].created_at.isoformat() if messages[-1].created_at else '' }}";
+  {% else %}
+  var CURSOR = "";
+  {% endif %}
+
+  // ── Bubble builder ────────────────────────────────────────
+  function buildBubble(ev) {
+    var isOut = ev.direction === 'outbound';
+    var dirCls = isOut ? 'cd-msg-out' : 'cd-msg-in';
+    var bubCls  = isOut ? 'cd-bubble-out' : 'cd-bubble-in';
+
+    var text = '';
+    var c = ev.content || {};
+    switch (ev.message_type) {
+      case 'template':
+        text = '<span style="color:var(--muted);font-style:italic">📤 Template message sent</span>';
+        break;
+      case 'text':
+        text = isOut
+          ? (c.body || (c.text || {}).body || '—')
+          : ((c.text || {}).body || '—');
+        break;
+      case 'interactive':
+        if (isOut) {
+          text = c.question || '—';
+        } else {
+          var ia = c.interactive || {};
+          if (ia.type === 'button_reply')
+            text = '✅ ' + ((ia.button_reply || {}).title || '—');
+          else if (ia.type === 'list_reply')
+            text = '✅ ' + ((ia.list_reply || {}).title || '—');
+          else
+            text = ev.message_type;
+        }
+        break;
+      case 'button':
+        text = '🔘 ' + ((c.button || {}).text || '—');
+        break;
+      case 'document':
+        text = '📄 Document sent';
+        break;
+      default:
+        text = '<span style="color:var(--muted);font-size:12px">' + ev.message_type + '</span>';
+    }
+
+    var ts = ev.created_at ? new Date(ev.created_at) : new Date();
+    var tsStr = ts.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+              + '  ' + ts.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+    var statusHtml = '';
+    if (isOut && ev.status) {
+      var iconCls = 'ti-clock';
+      var statusCls = 'cd-status-sent';
+      if (ev.status === 'read')      { iconCls = 'ti-checks'; statusCls = 'cd-status-read'; }
+      else if (ev.status === 'delivered') { iconCls = 'ti-check'; statusCls = 'cd-status-delivered'; }
+      else if (ev.status === 'failed')    { iconCls = 'ti-x';     statusCls = 'cd-status-failed'; }
+      statusHtml = '<span class="cd-status-icon ' + statusCls + '"><i class="ti ' + iconCls + '"></i></span>';
+    }
+
+    var flowTag = ev.is_flow_message ? '<span class="cd-flow-tag">Flow</span>' : '';
+
+    return '<div class="cd-msg ' + dirCls + '" data-msg-id="' + ev.id + '">' +
+      flowTag +
+      '<div class="cd-bubble ' + bubCls + '">' + text + '</div>' +
+      '<div class="cd-msg-footer">' +
+        '<span class="cd-ts">' + tsStr + '</span>' +
+        '<span class="cd-type">' + ev.message_type + '</span>' +
+        statusHtml +
+      '</div>' +
+    '</div>';
+  }
+
+  function appendMsg(ev) {
+    if (!threadEl) return;
+    // Replace empty-state placeholder if present
+    var empty = threadEl.querySelector('.cd-empty-thread');
+    if (empty) empty.remove();
+
+    threadEl.insertAdjacentHTML('beforeend', buildBubble(ev));
+    threadEl.scrollTop = threadEl.scrollHeight;
+  }
+
+  function applyStatusUpdate(ev) {
+    var msgEl = document.querySelector('[data-msg-id="' + ev.id + '"]');
+    if (!msgEl) return;
+    var iconEl = msgEl.querySelector('.cd-status-icon');
+    if (!iconEl) return;
+    var iconCls = 'ti-clock', statusCls = 'cd-status-sent';
+    if (ev.status === 'read')      { iconCls = 'ti-checks'; statusCls = 'cd-status-read'; }
+    else if (ev.status === 'delivered') { iconCls = 'ti-check'; statusCls = 'cd-status-delivered'; }
+    else if (ev.status === 'failed')    { iconCls = 'ti-x';     statusCls = 'cd-status-failed'; }
+    iconEl.className = 'cd-status-icon ' + statusCls;
+    iconEl.innerHTML = '<i class="ti ' + iconCls + '"></i>';
+  }
+
+  // ── SSE connection ────────────────────────────────────────
+  var token = getToken();   // from base.html global
+  if (!token) return;       // not logged in via JWT — skip SSE
+
+  var url = '/api/stream?token=' + encodeURIComponent(token);
+  if (CURSOR) url += '&cursor=' + encodeURIComponent(CURSOR);
+
+  var es = new EventSource(url);
+
+  es.onmessage = function (e) {
+    try {
+      var ev = JSON.parse(e.data);
+      if (ev.conversation_id !== CONV_ID) return;
+      if (ev.type === 'new_message')   appendMsg(ev);
+      if (ev.type === 'status_update') applyStatusUpdate(ev);
+    } catch (_) {}
+  };
+
+  es.onerror = function () {
+    // EventSource auto-reconnects with Last-Event-ID — nothing to do here
+  };
+
+  // Clean up on page unload
+  window.addEventListener('beforeunload', function () { es.close(); });
+})();
+</script>
+{% endblock %}
