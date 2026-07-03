@@ -22,6 +22,20 @@ from app.models.api_key import CompanyApiKey
 from app.models.conversation import Message, Service, ServiceResponse
 from app.models.outbound_notification import OutboundNotification
 
+# The status field is shown as a stable dashboard indicator on the client's side —
+# it must only ever move forward, never back. sent/delivered/read for individual
+# question messages must not reset it after the customer has already engaged
+# (responded) or the service has already reached a terminal state.
+_STATUS_RANK = {
+    "sent":      1,
+    "delivered": 2,
+    "read":      3,
+    "responded": 4,
+    "completed": 5,
+    "expired":   5,
+    "failed":    5,
+}
+
 
 def enqueue_notification(
     db: Session,
@@ -35,6 +49,10 @@ def enqueue_notification(
     No-op if the service wasn't created via client-api (no api_key_id) or its
     key has no notify_url configured — most Services (demo, ERPNext) fall here.
 
+    Also a no-op if this event would move the client-visible status backward —
+    see _STATUS_RANK. Once "responded" has fired, a later question's own
+    sent/delivered/read must not revert the dashboard status to an earlier stage.
+
     note is accepted but not yet surfaced in the payload (message stays null) —
     client hasn't finalized what should populate it (e.g. stray/off-flow replies).
     """
@@ -45,6 +63,18 @@ def enqueue_notification(
     if not api_key or not api_key.notify_url:
         return
 
+    # Cheap first-pass filter, independent of notification history: covers the edge
+    # case where notify_url gets configured only after a service already reached a
+    # terminal state, so no prior "completed"/"expired"/"failed" row exists to rank
+    # against — a stray late status receipt must still not sneak through.
+    if service.status in ("completed", "expired", "failed") and event_status not in (
+        "completed", "expired", "failed",
+    ):
+        return
+
+    if _STATUS_RANK.get(event_status, 0) <= _max_notified_rank(db, service.id):
+        return
+
     payload = _build_payload(db, service, event_status, message)
 
     db.add(OutboundNotification(
@@ -53,6 +83,21 @@ def enqueue_notification(
         notify_url = api_key.notify_url,
         payload    = payload,
     ))
+
+
+def _max_notified_rank(db: Session, service_id) -> int:
+    """Highest _STATUS_RANK already enqueued for this service. 0 if none yet."""
+    # Same autoflush=False caveat as _build_payload — flush so a status just
+    # enqueued earlier in this same transaction (e.g. "responded" moments ago)
+    # is visible here too.
+    db.flush()
+    rows = (
+        db.query(OutboundNotification.payload)
+        .filter(OutboundNotification.service_id == service_id)
+        .all()
+    )
+    ranks = [_STATUS_RANK.get(p["status"], 0) for (p,) in rows]
+    return max(ranks, default=0)
 
 
 def _build_payload(

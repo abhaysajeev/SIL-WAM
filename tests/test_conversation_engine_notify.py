@@ -120,3 +120,41 @@ class TestHandleStatusSuppressionAfterTerminal:
             svc, account, msg = self._setup(db, status, unique=str(i))
             handle_status(db, {"id": msg.wamid, "status": "sent", "timestamp": "1783077431"}, account)
             assert db.query(OutboundNotification).count() == 0
+
+
+class TestMonotonicStatusProgression:
+    """Dashboard status must only move forward — a question's own sent/delivered/read
+    must not revert it after "responded" has already fired for this service."""
+
+    def _setup(self, db):
+        comp = make_company(db, code="CEMONO")
+        key = make_api_key(db, comp.id, key="ce-mono-key", notify_url="https://client.example/hook")
+        conv = make_conversation(db, comp.id, "919999900003")
+        account = make_wa_account(db, comp.id)
+        svc = make_service(db, conv.id, comp.id, api_key_id=key.id, status="in_progress")
+        return svc, account
+
+    def test_question_receipts_suppressed_after_responded(self, db):
+        svc, account = self._setup(db)
+        template_msg = make_message(db, svc, wamid="wamid.tmpl", message_type="template")
+
+        # Template's own sent/delivered/read all fire normally (rank increasing).
+        handle_status(db, {"id": template_msg.wamid, "status": "sent", "timestamp": "1"}, account)
+        handle_status(db, {"id": template_msg.wamid, "status": "delivered", "timestamp": "2"}, account)
+        handle_status(db, {"id": template_msg.wamid, "status": "read", "timestamp": "3"}, account)
+
+        # Customer taps the button — fires "responded" directly via notify_queue
+        # (mirrors handle_inbound's first-engagement call).
+        from app.services import notify_queue
+        notify_queue.enqueue_notification(db, svc, "responded", message=template_msg)
+
+        # A question message's own delivery receipts arrive next — must be suppressed.
+        q_msg = make_message(db, svc, wamid="wamid.q1", message_type="interactive")
+        handle_status(db, {"id": q_msg.wamid, "status": "sent", "timestamp": "4"}, account)
+        handle_status(db, {"id": q_msg.wamid, "status": "delivered", "timestamp": "5"}, account)
+        handle_status(db, {"id": q_msg.wamid, "status": "read", "timestamp": "6"}, account)
+
+        statuses = [r.payload["status"] for r in db.query(OutboundNotification).order_by(
+            OutboundNotification.created_at
+        ).all()]
+        assert statuses == ["sent", "delivered", "read", "responded"]

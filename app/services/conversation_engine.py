@@ -260,11 +260,11 @@ def handle_status(db: Session, status: dict, account: WhatsAppAccount) -> None:
 
     if msg.service_id:
         service = db.query(Service).filter(Service.id == msg.service_id).first()
-        # Suppress sent/delivered/read receipts once the service has already reached
-        # a terminal state (e.g. the completion message's own delivery receipts
-        # arriving after "completed") — these trailing events have caused client-side
-        # status columns to get overwritten backward from "completed" to "read".
-        if service and service.status not in ("completed", "expired", "failed"):
+        if service:
+            # notify_queue.enqueue_notification enforces monotonic status progression
+            # (sent < delivered < read < responded < completed) — a question's own
+            # delivery receipts arriving after "responded"/"completed" already fired
+            # are automatically suppressed there, not re-checked here.
             notify_queue.enqueue_notification(db, service, state, message=msg)
 
     try:
