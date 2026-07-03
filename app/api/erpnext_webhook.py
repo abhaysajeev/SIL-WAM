@@ -137,7 +137,7 @@ def erpnext_notify(
     db.add(svc)
     db.flush()
 
-    # ── 7. Enqueue (sends template immediately, completes at once) ────────────
+    # ── 7. Enqueue (positions in queue; send_scheduler dispatches the template) ─
     try:
         queue_manager.enqueue_service(db, svc, account)
         db.commit()

@@ -6,7 +6,12 @@ Called from meta_webhook.py BackgroundTasks (with its own DB session).
 Flow per inbound message:
   1. Dedup by wamid (DB unique index — silently skip if already stored)
   2. Get/create Conversation for (company_id, mobile_no)
-  3. Find active MobileQueue entry for this mobile
+  3. Resolve which Service this message belongs to — concurrency is unlimited, so
+     several services can be active for the same mobile at once. Interactive/button
+     replies carry Meta's context.id (the wamid replied to), resolved deterministically
+     via _resolve_service_from_context. Plain text has no such reference, so it falls
+     back to whichever ONE service (if exactly one) has an outstanding free-text
+     question — see _has_outstanding_free_text.
   4. Store inbound Message
   5. If no active queue → random out-of-flow message, done
   6. Route based on whether it's a template button click or a Q&A reply
@@ -30,7 +35,7 @@ from app.models.conversation import (
 )
 from app.models.erpnext_config import ERPNextConfig
 from app.models.whatsapp import WhatsAppAccount
-from app.services import queue_manager, wa_sender
+from app.services import notify_queue, queue_manager, wa_sender
 from app.utils.error_logger import log_error
 
 _WAMID_TTL = 86_400  # 24 h — wamid cache expiry in Redis
@@ -69,20 +74,37 @@ def handle_inbound(db: Session, account: WhatsAppAccount, msg: dict) -> None:
     from_no = _resolve_stored_mobile(db, account.company_id, from_no)
     conv = _get_or_create_conversation(db, account.company_id, from_no)
 
-    # 3. FIND ACTIVE QUEUE ENTRY
-    queue_entry = (
-        db.query(MobileQueue)
-        .filter(
-            MobileQueue.company_id == account.company_id,
-            MobileQueue.mobile_no  == from_no,
-            MobileQueue.status     == "in_progress",
-        )
-        .first()
-    )
-
+    # 3. RESOLVE WHICH SERVICE THIS MESSAGE BELONGS TO — see module docstring.
+    context_wamid = (msg.get("context") or {}).get("id")
     service = None
-    if queue_entry:
-        service = db.query(Service).filter(Service.id == queue_entry.service_id).first()
+
+    if msg_type in ("interactive", "button"):
+        service = _resolve_service_from_context(db, context_wamid)
+    elif msg_type == "text":
+        service = _resolve_service_from_context(db, context_wamid)  # rare, but honor if Meta attaches it
+        if service is None:
+            candidates = (
+                db.query(Service)
+                .filter(Service.conversation_id == conv.id, Service.status == "in_progress")
+                .all()
+            )
+            awaiting = [
+                s for s in candidates
+                if any(
+                    q.get("answer_type") == 2 and q.get("dispatched") == 1 and q.get("sent") == 0
+                    for q in (s.questions or [])
+                )
+            ]
+            if len(awaiting) == 1:
+                service = awaiting[0]
+            # 0 or >1 awaiting → ambiguous/none → stays out-of-flow, matching prior behavior
+
+    queue_entry = None
+    if service:
+        queue_entry = db.query(MobileQueue).filter(
+            MobileQueue.service_id == service.id,
+            MobileQueue.status     == "in_progress",
+        ).first()
 
     # 4. STORE INBOUND MESSAGE
     inbound = Message(
@@ -120,6 +142,19 @@ def handle_inbound(db: Session, account: WhatsAppAccount, msg: dict) -> None:
             _handle_pdf_request(db, account, from_no, conv, msg)
             db.commit()
             return
+        # First-ever engagement → notify once. Buttons stay clickable forever, so a
+        # re-tap must not re-fire this — question["sent"] only flips on an ANSWER
+        # (step 12 below), so it can't detect "already fired but not yet answered".
+        # Check for a prior non-template outbound flow message instead — only
+        # _fire_next_question creates those before this service reaches completion.
+        already_engaged = db.query(Message).filter(
+            Message.service_id      == service.id,
+            Message.direction       == "outbound",
+            Message.is_flow_message.is_(True),
+            Message.message_type    != "template",
+        ).first() is not None
+        if not already_engaged:
+            notify_queue.enqueue_notification(db, service, "responded", message=inbound)
         _fire_next_question(db, service, account, from_no)
         db.commit()
         return
@@ -221,6 +256,11 @@ def handle_status(db: Session, status: dict, account: WhatsAppAccount) -> None:
     elif state == "read" and ts:
         msg.read_at = ts
 
+    if msg.service_id:
+        service = db.query(Service).filter(Service.id == msg.service_id).first()
+        if service:
+            notify_queue.enqueue_notification(db, service, state, message=msg)
+
     try:
         db.commit()
     except Exception as exc:
@@ -276,6 +316,61 @@ def _get_or_create_conversation(
     return conv
 
 
+def _resolve_service_from_context(db: Session, context_wamid: str | None) -> Service | None:
+    """Resolve the Service a reply belongs to via Meta's context.id (the wamid of
+    the outbound message being replied to) — the one deterministic, concurrency-safe
+    routing signal Meta provides. Works for template-CTA taps and interactive replies."""
+    if not context_wamid:
+        return None
+    ctx_msg = db.query(Message).filter(
+        Message.wamid == context_wamid, Message.direction == "outbound"
+    ).first()
+    if ctx_msg and ctx_msg.service_id:
+        return db.query(Service).filter(Service.id == ctx_msg.service_id).first()
+    return None
+
+
+def _has_outstanding_free_text(db: Session, conversation_id, exclude_service_id=None) -> bool:
+    """True if some active service in this conversation currently has a
+    dispatched-but-unanswered free-text question. Only one may exist at a time per
+    mobile number, since Meta gives no reply-threading for plain text messages."""
+    # The app's session has autoflush=False (app/core/database.py), so a status
+    # change made moments earlier in the same transaction (e.g. this service's own
+    # answer being recorded, or another service just completing) isn't visible to
+    # this query until flushed.
+    db.flush()
+    candidates = db.query(Service).filter(
+        Service.conversation_id == conversation_id, Service.status == "in_progress"
+    )
+    if exclude_service_id is not None:
+        candidates = candidates.filter(Service.id != exclude_service_id)
+    for svc in candidates.all():
+        for q in (svc.questions or []):
+            if q.get("answer_type") == 2 and q.get("dispatched") == 1 and q.get("sent") == 0:
+                return True
+    return False
+
+
+def _release_free_text_slot(db: Session, account: WhatsAppAccount, conversation_id) -> None:
+    """Called whenever a service in this conversation reaches a terminal state
+    (completed/expired/failed). If another in_progress service in the same
+    conversation has a held free-text question next in line, fire it now."""
+    db.flush()  # see _has_outstanding_free_text — same autoflush=False caveat
+    candidates = (
+        db.query(Service)
+        .filter(Service.conversation_id == conversation_id, Service.status == "in_progress")
+        .order_by(Service.created_at)
+        .all()
+    )
+    for svc in candidates:
+        next_q = next((q for q in (svc.questions or []) if q.get("sent") == 0), None)
+        if next_q and next_q.get("answer_type") == 2 and next_q.get("dispatched") == 0:
+            mobile_no = (svc.data or {}).get("customer_mobile")
+            if mobile_no:
+                _fire_next_question(db, svc, account, mobile_no)
+            break
+
+
 def _is_valid_response(msg_type: str, answer_type: int | None) -> bool:
     """True if the Meta message type matches the expected answer type."""
     if answer_type in (0, 1):       # yes/no buttons or rating
@@ -303,7 +398,14 @@ def _extract_response_value(msg: dict, msg_type: str) -> str | None:
 def _fire_next_question(
     db: Session, service: Service, account: WhatsAppAccount, mobile_no: str
 ) -> None:
-    """Send the next unanswered question to the customer."""
+    """Send the next unanswered question to the customer.
+
+    Every button/list question shows the order number as a native Meta footer.
+    Free-text questions have no footer slot in Meta's API, so the order number is
+    appended into the body text instead. Free-text questions are additionally
+    serialized across concurrently active services for the same mobile — see
+    _has_outstanding_free_text — since Meta gives no reply-threading for plain text.
+    """
     questions = service.questions or []
     next_q = next((q for q in questions if q.get("sent") == 0), None)
     if next_q is None:
@@ -311,8 +413,20 @@ def _fire_next_question(
 
     answer_type = next_q.get("answer_type")
     question_text = next_q.get("question", "")
+
+    if answer_type == 2 and _has_outstanding_free_text(
+        db, service.conversation_id, exclude_service_id=service.id
+    ):
+        logger.debug(
+            "Holding free-text question seq=%s for service=%s — another free-text "
+            "question is outstanding for this mobile",
+            next_q.get("sequence"), service.service_id,
+        )
+        return
+
     result = None
     msg_type_out = "text"
+    footer = service.service_id
 
     if answer_type == 0:
         # Yes/No or custom buttons
@@ -321,7 +435,7 @@ def _fire_next_question(
             {"id": f"q{next_q['sequence']}_opt{i}", "title": str(opt)[:20]}
             for i, opt in enumerate(options[:3])  # Meta max 3 buttons
         ]
-        result = wa_sender.send_interactive_buttons(account, mobile_no, question_text, buttons)
+        result = wa_sender.send_interactive_buttons(account, mobile_no, question_text, buttons, footer=footer)
         msg_type_out = "interactive"
 
     elif answer_type == 1:
@@ -332,26 +446,28 @@ def _fire_next_question(
                 {"id": f"q{next_q['sequence']}_r{i+1}", "title": str(i + 1)}
                 for i in range(scale)
             ]
-            result = wa_sender.send_interactive_buttons(account, mobile_no, question_text, buttons)
+            result = wa_sender.send_interactive_buttons(account, mobile_no, question_text, buttons, footer=footer)
             msg_type_out = "interactive"
         else:
             rows = [
-                {"id": f"q{next_q['sequence']}_r{i+1}",
-                 "title": f"{i+1} Star{'s' if i > 0 else ''}"}
+                {"id": f"q{next_q['sequence']}_r{i+1}", "title": str(i + 1)}
                 for i in range(scale)
             ]
             sections = [{"title": "Rating", "rows": rows}]
             result = wa_sender.send_list_message(
-                account, mobile_no, question_text, "Rate", sections
+                account, mobile_no, question_text, "Rate", sections, footer=footer
             )
             msg_type_out = "interactive"
 
     elif answer_type == 2:
-        # Free text
-        result = wa_sender.send_text(account, mobile_no, question_text)
+        # Free text — no native footer slot, append order number into the body
+        result = wa_sender.send_text(account, mobile_no, f"{question_text}\n\n_Order: {service.service_id}_")
         msg_type_out = "text"
 
     if result and result.ok:
+        next_q["dispatched"] = 1
+        service.questions = questions
+        flag_modified(service, "questions")
         db.add(Message(
             conversation_id = service.conversation_id,
             service_id      = service.id,
@@ -393,12 +509,15 @@ def _complete_service(
     service.completed_at = datetime.now(timezone.utc)
     queue_entry.status   = "completed"
 
+    notify_queue.enqueue_notification(db, service, "completed")
+
     mobile_no = (service.data or {}).get("customer_mobile", "")
 
     # Send completion_message if client included it in data
     completion_msg = (service.data or {}).get("completion_message")
     if completion_msg and mobile_no:
-        result = wa_sender.send_text(account, mobile_no, completion_msg)
+        # No native footer slot on a text message — append the order number to the body.
+        result = wa_sender.send_text(account, mobile_no, f"{completion_msg}\n\n_Order: {service.service_id}_")
         if result.ok:
             db.add(Message(
                 conversation_id = service.conversation_id,
@@ -415,6 +534,17 @@ def _complete_service(
     # Advance queue — start next waiting service for this mobile
     if mobile_no:
         queue_manager.advance_queue(db, mobile_no, service.company_id, account)
+
+    # Another concurrent service on this mobile may have a free-text question
+    # held back waiting on this one — release it now that this service is done.
+    try:
+        _release_free_text_slot(db, account, service.conversation_id)
+    except Exception as exc:
+        log_error(
+            f"_release_free_text_slot failed after completion service={service.service_id}",
+            "conversation_engine._complete_service",
+            exc,
+        )
 
 
 def _is_download_invoice(payload: str) -> bool:
@@ -447,20 +577,7 @@ def _handle_pdf_request(
     # Use context.id to identify which template message was tapped, then find its Service.
     # Falls back to most-recent service if context is missing (shouldn't happen in practice).
     context_wamid = (msg.get("context") or {}).get("id")
-    recent_svc = None
-
-    if context_wamid:
-        template_msg = (
-            db.query(Message)
-            .filter(
-                Message.wamid      == context_wamid,
-                Message.direction  == "outbound",
-                Message.message_type == "template",
-            )
-            .first()
-        )
-        if template_msg and template_msg.service_id:
-            recent_svc = db.query(Service).filter(Service.id == template_msg.service_id).first()
+    recent_svc = _resolve_service_from_context(db, context_wamid)
 
     if not recent_svc:
         recent_svc = (

@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     ERPNEXT_PDF_METHOD: str = "sil.services.print_download.get_invoice_pdf"
     # Optional Redis for wamid dedup fast path — leave empty to rely on DB unique index only
     REDIS_URL: str = ""
+    # Set True in production (HTTPS) so the session cookie gets the Secure flag
+    HTTPS_ONLY: bool = False
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

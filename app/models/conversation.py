@@ -4,9 +4,10 @@ Conversation engine models — core of the new architecture.
 Hierarchy:
     companies
         └── conversations  (unique per mobile_no + company_id)
-                ├── services       (one per client service_id / order)
+                ├── services       (one per client service_id / order — multiple can
+                │       │           be in_progress concurrently for the same mobile_no)
                 │       ├── service_responses  (one per answered question)
-                │       └── mobile_queue       (FIFO position tracker)
+                │       └── mobile_queue       (per-service in_progress marker)
                 └── messages       (every WA message, both directions)
 """
 import uuid
@@ -50,8 +51,11 @@ class Service(Base):
     Replaces the old sales_orders table.
 
     status values:   waiting | in_progress | completed | expired | failed
-    expired_reason:  timeout | new_order_arrived
+    expired_reason:  timeout
     failed_reason:   whatsapp_number_invalid | send_error
+
+    Concurrency is unlimited: multiple services can be status="in_progress" for
+    the same (company_id, mobile_no) at once — see queue_manager.enqueue_service.
     """
     __tablename__ = "services"
 
@@ -65,7 +69,16 @@ class Service(Base):
     template_id          = Column(UUID(as_uuid=True),
                                   ForeignKey("whatsapp_templates.id", ondelete="SET NULL"),
                                   nullable=True)
+    # Which CompanyApiKey ingested this service — resolves notify_url for outbound
+    # status notifications. Null for services created outside client-api (demo, ERPNext).
+    api_key_id           = Column(UUID(as_uuid=True),
+                                  ForeignKey("company_api_keys.id", ondelete="SET NULL"),
+                                  nullable=True, index=True)
     status               = Column(String(30), nullable=False, default="waiting", index=True)
+    # False until the background send_scheduler has attempted the Meta template send.
+    # A service can be status="in_progress" with template_sent=False — it's the active
+    # flow for its mobile number but the actual Graph API call is still pending pickup.
+    template_sent        = Column(Boolean, nullable=False, default=False, index=True)
     expired_reason       = Column(String(50), nullable=True)
     failed_reason        = Column(String(100), nullable=True)
     # Client-owned payload stored as-is: order details, customer info, etc.
@@ -87,8 +100,11 @@ class Service(Base):
 
 class MobileQueue(Base):
     """
-    FIFO queue per (company_id, mobile_no).
-    Only one service is in_progress at a time per mobile.
+    Per-service "in_progress" marker for (company_id, mobile_no). Historically a FIFO
+    queue enforcing one in_progress service per mobile; concurrency is now unlimited,
+    so multiple rows with status="in_progress" can coexist for the same mobile_no.
+    `position` is vestigial (always 1) — retained for schema stability, not used for
+    ordering anymore.
     """
     __tablename__ = "mobile_queue"
 

@@ -10,7 +10,7 @@ from app.core.security import hash_password
 from app.main import app
 from app.models.api_key import CompanyApiKey
 from app.models.company import Company
-from app.models.conversation import Conversation, MobileQueue, Service
+from app.models.conversation import Conversation, Message, MobileQueue, Service
 from app.models.role import Role, RolePagePermission
 from app.models.user import User
 from app.models.whatsapp import WhatsAppAccount, WhatsAppTemplate
@@ -172,8 +172,8 @@ def make_wa_template(
     return t
 
 
-def make_api_key(db, company_id, key: str = "test-api-key-12345") -> CompanyApiKey:
-    k = CompanyApiKey(company_id=company_id, api_key=key, label="test")
+def make_api_key(db, company_id, key: str = "test-api-key-12345", notify_url: str | None = None) -> CompanyApiKey:
+    k = CompanyApiKey(company_id=company_id, api_key=key, label="test", notify_url=notify_url)
     db.add(k)
     db.commit()
     db.refresh(k)
@@ -196,6 +196,8 @@ def make_service(
     created_at=None,
     template_expiry_hours: int = 24,
     mobile_no: str = "919876543210",
+    template_sent: bool = True,
+    api_key_id=None,
 ) -> Service:
     svc = Service(
         conversation_id=conversation_id,
@@ -205,6 +207,8 @@ def make_service(
         questions=questions,
         data={"customer_mobile": mobile_no},
         template_expiry_hours=template_expiry_hours,
+        template_sent=template_sent,
+        api_key_id=api_key_id,
     )
     if created_at is not None:
         svc.created_at = created_at
@@ -212,6 +216,29 @@ def make_service(
     db.commit()
     db.refresh(svc)
     return svc
+
+
+def make_message(
+    db, service: Service,
+    wamid: str = "wamid.TEST123",
+    message_type: str = "template",
+    content=None,
+    direction: str = "outbound",
+) -> Message:
+    m = Message(
+        conversation_id=service.conversation_id,
+        service_id=service.id,
+        wamid=wamid,
+        direction=direction,
+        message_type=message_type,
+        content=content,
+        is_flow_message=True,
+        status="sent",
+    )
+    db.add(m)
+    db.commit()
+    db.refresh(m)
+    return m
 
 
 def make_queue_entry(

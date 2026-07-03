@@ -5,10 +5,12 @@ GET  /api/demo/companies                            — list all active companie
 GET  /api/demo/templates?company_id=X               — approved templates for a company
 GET  /api/demo/conversation?company_id=X&mobile_no=Y — conversation messages
 POST /api/demo/send                                 — send a template message
+POST /api/demo/send-text                            — send a plain text message
 """
 import re
 import uuid as _uuid
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -20,6 +22,7 @@ from app.models.company import Company
 from app.models.conversation import Conversation, Message, Service
 from app.models.whatsapp import WhatsAppAccount, WhatsAppTemplate
 from app.services import queue_manager
+from app.services import wa_sender
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +189,72 @@ def demo_send(
         "status":          svc.status,
         "conversation_id": str(conv.id),
         "mobile_no":       mobile,
+    }
+
+
+# ── Send plain text ───────────────────────────────────────────────────────────
+
+class DemoSendTextRequest(BaseModel):
+    company_id: str
+    mobile_no:  str
+    body:       str
+
+
+@router.post("/send-text")
+def demo_send_text(
+    payload: DemoSendTextRequest,
+    _user=Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    try:
+        cid = _uuid.UUID(payload.company_id)
+    except ValueError:
+        raise HTTPException(400, "Invalid UUID")
+
+    if not payload.body.strip():
+        raise HTTPException(400, "Message body cannot be empty")
+
+    account = db.query(WhatsAppAccount).filter(
+        WhatsAppAccount.company_id == cid
+    ).first()
+    if not account or not account.access_token_encrypted:
+        raise HTTPException(503, "WhatsApp account not configured for this company")
+
+    mobile = payload.mobile_no.strip().lstrip("+").replace(" ", "").replace("-", "")
+    if len(mobile) == 10:
+        mobile = "91" + mobile
+
+    conv = db.query(Conversation).filter(
+        Conversation.company_id == cid,
+        Conversation.mobile_no  == mobile,
+    ).first()
+    if not conv:
+        conv = Conversation(company_id=cid, mobile_no=mobile)
+        db.add(conv)
+        db.flush()
+
+    result = wa_sender.send_text(account, mobile, payload.body.strip())
+    if not result.ok:
+        raise HTTPException(502, f"WhatsApp send failed: {result.error}")
+
+    msg = Message(
+        conversation_id = conv.id,
+        service_id      = None,
+        wamid           = result.meta_message_id,
+        direction       = "outbound",
+        message_type    = "text",
+        content         = {"body": payload.body.strip()},
+        is_flow_message = False,
+        status          = "sent",
+        sent_at         = datetime.now(timezone.utc),
+    )
+    db.add(msg)
+    db.commit()
+
+    return {
+        "conversation_id": str(conv.id),
+        "mobile_no":       mobile,
+        "wamid":           result.meta_message_id,
     }
 
 

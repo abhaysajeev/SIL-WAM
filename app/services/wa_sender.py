@@ -113,6 +113,7 @@ def send_interactive_buttons(
     to_phone: str,
     body: str,
     buttons: list[dict],  # [{"id": "...", "title": "..."}]  max 3
+    footer: str | None = None,
 ) -> SendResult:
     """Send an interactive reply-button message (max 3 buttons)."""
     message_body = {
@@ -130,6 +131,8 @@ def send_interactive_buttons(
             },
         },
     }
+    if footer:
+        message_body["interactive"]["footer"] = {"text": footer[:60]}  # Meta caps footer at 60 chars
     return _post_message(account, message_body, "send_interactive_buttons")
 
 
@@ -139,6 +142,7 @@ def send_list_message(
     body: str,
     button_label: str,
     sections: list[dict],
+    footer: str | None = None,
 ) -> SendResult:
     """Send a list-picker interactive message (supports up to 10 items per section)."""
     message_body = {
@@ -154,6 +158,8 @@ def send_list_message(
             },
         },
     }
+    if footer:
+        message_body["interactive"]["footer"] = {"text": footer[:60]}  # Meta caps footer at 60 chars
     return _post_message(account, message_body, "send_list_message")
 
 

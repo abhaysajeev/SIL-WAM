@@ -224,25 +224,45 @@ def get_api_company(
     """
     Authenticates external client calls (e.g. from .NET SFA).
     Returns the Company row the key belongs to.
-    Touches last_used_at on each successful call for observability.
     """
     from app.models.api_key import CompanyApiKey
     from app.models.company import Company
 
-    record = db.query(CompanyApiKey).filter(
-        CompanyApiKey.api_key == x_api_key,
-        CompanyApiKey.is_active.is_(True),
-    ).first()
-    if not record:
-        raise HTTPException(status_code=401, detail="Invalid or inactive API key")
-
-    try:
-        record.last_used_at = datetime.now(timezone.utc)
-        db.commit()
-    except Exception:
-        db.rollback()
-
-    company = db.query(Company).filter(Company.id == record.company_id).first()
+    company = (
+        db.query(Company)
+        .join(CompanyApiKey, CompanyApiKey.company_id == Company.id)
+        .filter(
+            CompanyApiKey.api_key == x_api_key,
+            CompanyApiKey.is_active.is_(True),
+        )
+        .first()
+    )
     if not company:
         raise HTTPException(status_code=401, detail="Invalid or inactive API key")
     return company
+
+
+def get_api_key_and_company(
+    x_api_key: str = Header(..., alias="X-API-Key"),
+    db: Session = Depends(get_db),
+):
+    """
+    Like get_api_company, but also returns the specific CompanyApiKey row used —
+    needed to record which key ingested a Service (a company can have multiple
+    active keys, each with its own notify_url).
+    """
+    from app.models.api_key import CompanyApiKey
+    from app.models.company import Company
+
+    row = (
+        db.query(CompanyApiKey, Company)
+        .join(Company, CompanyApiKey.company_id == Company.id)
+        .filter(
+            CompanyApiKey.api_key == x_api_key,
+            CompanyApiKey.is_active.is_(True),
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=401, detail="Invalid or inactive API key")
+    return row  # (CompanyApiKey, Company)

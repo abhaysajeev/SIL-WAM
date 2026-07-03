@@ -167,6 +167,8 @@ def change_password(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
     db_user.hashed_password = hash_password(payload.new_password)
     db_user.must_change_password = False
+    # Revoke all refresh tokens so other sessions can't persist after a password change
+    db.execute(text("DELETE FROM refresh_tokens WHERE user_id = :uid"), {"uid": str(user.id)})
     db.commit()
 
 

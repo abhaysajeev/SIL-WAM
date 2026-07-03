@@ -1,11 +1,10 @@
 """
-app/services/queue_manager.py — FIFO mobile queue management.
+app/services/queue_manager.py — per-mobile service activation.
 
 Handles:
-- Enqueueing new services (start immediately or add to back of queue)
-- Condition B expiry (new service arrives while customer hasn't clicked template yet)
-- Queue advancement when a service completes
-- Template sending on queue activation
+- Enqueueing new services (every service starts immediately — concurrency is
+  unlimited, no pre-emption, no waiting queue)
+- Template sending on activation
 
 No FastAPI imports. No HTTPException. All failures logged, never raised.
 """
@@ -17,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.conversation import Message, MobileQueue, Service
 from app.models.whatsapp import WhatsAppAccount, WhatsAppTemplate
-from app.services import wa_sender
+from app.services import notify_queue, wa_sender
 from app.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
@@ -25,53 +24,22 @@ logger = logging.getLogger(__name__)
 
 def enqueue_service(db: Session, service: Service, account: WhatsAppAccount) -> str:
     """
-    Add `service` to the mobile queue. Returns "in_progress" if the template
-    was sent immediately, or "waiting" if queued behind another service.
+    Activate `service` immediately. Concurrency is unlimited — multiple services can
+    be "in_progress" for the same mobile number at once, distinguished by the order
+    number shown on each message (see conversation_engine's footer/body injection).
+    Positioning only — the actual Meta template send is picked up asynchronously by
+    send_scheduler (template_sent stays False here).
     """
     mobile_no = _get_mobile(service)
     if not mobile_no:
         logger.error("enqueue_service: no customer_mobile in service.data id=%s", service.id)
         service.status = "failed"
         service.failed_reason = "send_error"
+        notify_queue.enqueue_notification(db, service, "failed", note="send_error")
         return "failed"
 
-    active = (
-        db.query(MobileQueue)
-        .filter(
-            MobileQueue.company_id == service.company_id,
-            MobileQueue.mobile_no  == mobile_no,
-            MobileQueue.status.in_(["waiting", "in_progress"]),
-        )
-        .order_by(MobileQueue.position)
-        .all()
-    )
-
-    if not active:
-        _start_service(db, service, account, mobile_no, position=1)
-        return "in_progress"
-
-    # Check Condition B: in_progress with zero questions answered → expire and replace
-    ip_entry = next((e for e in active if e.status == "in_progress"), None)
-    if ip_entry:
-        ip_svc = db.query(Service).filter(Service.id == ip_entry.service_id).first()
-        questions_started = ip_svc and any(
-            q.get("sent") == 1 for q in (ip_svc.questions or [])
-        )
-        if not questions_started:
-            _expire_entries(db, active, reason="new_order_arrived")
-            _start_service(db, service, account, mobile_no, position=1)
-            return "in_progress"
-
-    # Normal: queue behind existing activity
-    max_pos = max(e.position for e in active)
-    db.add(MobileQueue(
-        company_id = service.company_id,
-        mobile_no  = mobile_no,
-        service_id = service.id,
-        position   = max_pos + 1,
-        status     = "waiting",
-    ))
-    return "waiting"
+    _start_service(db, service, account, mobile_no, position=1)
+    return "in_progress"
 
 
 def advance_queue(
@@ -80,7 +48,11 @@ def advance_queue(
     company_id: uuid.UUID,
     account: WhatsAppAccount,
 ) -> None:
-    """Start the next waiting service in the queue for this mobile number."""
+    """
+    Activate the next waiting service in the queue for this mobile number.
+    Only flips status — the actual template send is picked up asynchronously
+    by send_scheduler (template_sent stays False here).
+    """
     next_entry = (
         db.query(MobileQueue)
         .filter(
@@ -100,7 +72,6 @@ def advance_queue(
 
     next_entry.status  = "in_progress"
     next_svc.status    = "in_progress"
-    _send_template_for_service(db, next_svc, account, mobile_no)
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
@@ -120,25 +91,43 @@ def _start_service(
         status     = "in_progress",
     ))
     service.status = "in_progress"
-    _send_template_for_service(db, service, account, mobile_no)
 
 
-def _send_template_for_service(
+def send_template_for_service(
     db: Session,
     service: Service,
     account: WhatsAppAccount,
-    mobile_no: str,
 ) -> None:
-    """Load the WhatsApp template and send it. Updates service status on failure."""
+    """
+    Load the WhatsApp template and send it. Updates service status on failure.
+
+    Called by send_scheduler, not the request path — this is the one place that
+    actually talks to the Meta Graph API. template_sent is set True unconditionally
+    up front so a claimed row is never retried automatically, regardless of outcome.
+    """
+    service.template_sent = True
+
+    mobile_no = _get_mobile(service)
+    if not mobile_no:
+        logger.error("send_template_for_service: no customer_mobile in service.data id=%s", service.id)
+        service.status = "failed"
+        service.failed_reason = "send_error"
+        _mark_queue_completed(db, service)
+        notify_queue.enqueue_notification(db, service, "failed", note="send_error")
+        _release_free_text(db, service, account)
+        return
+
     template = db.query(WhatsAppTemplate).filter(
         WhatsAppTemplate.id == service.template_id
     ).first()
 
     if not template:
-        logger.error("_send_template_for_service: template not found id=%s", service.template_id)
+        logger.error("send_template_for_service: template not found id=%s", service.template_id)
         service.status = "failed"
         service.failed_reason = "send_error"
         _mark_queue_completed(db, service)
+        notify_queue.enqueue_notification(db, service, "failed", note="send_error")
+        _release_free_text(db, service, account)
         return
 
     result = wa_sender.send_template(
@@ -166,6 +155,8 @@ def _send_template_for_service(
             service.status       = "completed"
             service.completed_at = datetime.now(timezone.utc)
             _mark_queue_completed(db, service)
+            notify_queue.enqueue_notification(db, service, "completed")
+            _release_free_text(db, service, account)
     else:
         err = result.error or ""
         if "131026" in err:
@@ -177,11 +168,13 @@ def _send_template_for_service(
             service.failed_reason = "send_error"
             log_error(
                 f"Template send failed for service {service.service_id}",
-                f"queue_manager._send_template_for_service → {mobile_no}",
+                f"queue_manager.send_template_for_service → {mobile_no}",
                 Exception(err),
             )
         service.status = "failed"
         _mark_queue_completed(db, service)
+        notify_queue.enqueue_notification(db, service, "failed", note=service.failed_reason)
+        _release_free_text(db, service, account)
 
 
 def _mark_queue_completed(db: Session, service: Service) -> None:
@@ -194,14 +187,22 @@ def _mark_queue_completed(db: Session, service: Service) -> None:
         entry.status = "completed"
 
 
-def _expire_entries(db: Session, entries: list, reason: str) -> None:
-    """Expire all queue entries and their services."""
-    for entry in entries:
-        svc = db.query(Service).filter(Service.id == entry.service_id).first()
-        if svc:
-            svc.status         = "expired"
-            svc.expired_reason = reason
-        entry.status = "completed"
+def _release_free_text(db: Session, service: Service, account: WhatsAppAccount) -> None:
+    """
+    Best-effort: this service just reached a terminal state (completed/failed).
+    If another concurrent service on the same mobile has a free-text question held
+    back (see conversation_engine._has_outstanding_free_text), fire it now. Local
+    import avoids a circular dependency (conversation_engine imports this module).
+    """
+    try:
+        from app.services import conversation_engine
+        conversation_engine._release_free_text_slot(db, account, service.conversation_id)
+    except Exception as exc:
+        log_error(
+            f"_release_free_text failed for service={service.service_id}",
+            "queue_manager._release_free_text",
+            exc,
+        )
 
 
 def _get_mobile(service: Service) -> str | None:

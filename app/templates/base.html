@@ -209,11 +209,22 @@
   async function fetchWithAuth(url, options) {
     options = Object.assign({}, options);
     options.headers = Object.assign({}, options.headers || {});
-    options.headers['Authorization'] = 'Bearer ' + getToken();
+    var tokenAtStart = getToken();
+    options.headers['Authorization'] = 'Bearer ' + tokenAtStart;
     var res = await fetch(url, options);
     if (res.status !== 401) return res;
     var ok = await _doRefresh();
-    if (!ok) { showSessionBanner(); return res; }
+    if (!ok) {
+      // Another tab may have won the refresh race and stored a new token.
+      // If the token in localStorage changed, retry once with the new token.
+      var newToken = getToken();
+      if (newToken && newToken !== tokenAtStart) {
+        options.headers['Authorization'] = 'Bearer ' + newToken;
+        return fetch(url, options);
+      }
+      showSessionBanner();
+      return res;
+    }
     options.headers['Authorization'] = 'Bearer ' + getToken();
     return fetch(url, options);
   }

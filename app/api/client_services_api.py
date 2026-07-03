@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.deps import get_api_company
+from app.core.deps import get_api_company, get_api_key_and_company
 from app.models.company import Company
 from app.models.conversation import Conversation, MobileQueue, Service, ServiceResponse
 from app.models.whatsapp import WhatsAppAccount, WhatsAppTemplate
@@ -32,26 +32,6 @@ from app.utils.error_logger import log_error
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/client-api/v1", tags=["Client API"])
-
-
-def _canonical_mobile(db, company_id, mobile: str) -> str:
-    """Return the canonical mobile_no already stored in DB for this number.
-
-    Meta always returns full international numbers (e.g. 917025985366) in webhooks,
-    but clients often ingest without a country code (e.g. 7025985366).  Always prefer
-    a longer existing number that ends with the given one so queue entries stay in sync
-    with what Meta sends back in webhooks.
-    """
-    from app.models.conversation import Conversation as _Conv
-    # Prefer a longer (international) number that ends with this one
-    existing = db.query(_Conv.mobile_no).filter(
-        _Conv.company_id == company_id,
-        _Conv.mobile_no.like(f"%{mobile}"),
-        _Conv.mobile_no != mobile,
-    ).order_by(_Conv.mobile_no.desc()).first()
-    if existing:
-        return existing[0]
-    return mobile
 
 
 def _get_nested(data: dict, dot_path: str) -> str:
@@ -90,9 +70,11 @@ def _resolve_cta_urls(data: dict, cta_mapping: dict) -> dict[str, str]:
 @router.post("/services", response_model=ServiceIngestResponse, status_code=201)
 def ingest_service(
     payload: ServiceIngestRequest,
-    company: Company = Depends(get_api_company),
+    api_key_company: tuple = Depends(get_api_key_and_company),
     db: Session = Depends(get_db),
 ):
+    api_key, company = api_key_company
+
     # 1. Duplicate check — service_id is unique per company
     if db.query(Service).filter(
         Service.service_id == payload.service_id,
@@ -120,11 +102,25 @@ def ingest_service(
     questions    = payload.data.get("questions") or []
     service_data = {k: v for k, v in payload.data.items() if k != "questions"}
 
+    # Client's answer_type convention is 1-indexed (1=yes/no, 2=rating, 3=free text);
+    # our internal engine is 0-indexed (0=yes/no, 1=rating, 2=free text). Translate at
+    # this boundary so conversation_engine's dispatch logic never needs to know about
+    # the client's numbering. Mirrored on the way out in notify_queue._build_payload.
+    for q in questions:
+        if "answer_type" in q:
+            q["answer_type"] = q["answer_type"] - 1
+
     # Validate question field_keys are unique within this service
     if questions:
         field_keys = [q.get("field_key") for q in questions if q.get("field_key")]
         if len(field_keys) != len(set(field_keys)):
             raise HTTPException(400, "Duplicate field_key found in questions — each field_key must be unique")
+        bad = [q.get("field_key") for q in questions if q.get("answer_type") not in (0, 1, 2)]
+        if bad:
+            raise HTTPException(
+                400,
+                f"Invalid answer_type for field_key(s) {bad} — must be 1 (yes/no), 2 (rating), or 3 (free text)",
+            )
 
     # Full resolver context — dot-paths are relative to the full payload envelope
     # so "data.customer_name" resolves correctly from {"data": {...}, "service_id": ...}
@@ -136,10 +132,6 @@ def ingest_service(
     else:
         customer_mobile = str(service_data.get("customer_mobile", ""))
 
-    # Normalise to canonical form: Meta always sends back the full international number
-    # (e.g. 917025985366). If a conversation already exists whose mobile_no ends with the
-    # given number (or vice versa), reuse that canonical number so inbound webhooks match.
-    customer_mobile = _canonical_mobile(db, company.id, customer_mobile)
     service_data["customer_mobile"] = customer_mobile
 
     # Auto-resolve template_params and cta_urls from template mapping when not supplied
@@ -164,6 +156,7 @@ def ingest_service(
     service = Service(
         conversation_id       = conv.id,
         company_id            = company.id,
+        api_key_id            = api_key.id,
         service_id            = payload.service_id,
         template_id           = template.id,
         template_params       = template_params,
@@ -189,17 +182,10 @@ def ingest_service(
         )
         raise HTTPException(500, "Internal error during service creation")
 
-    if queue_status == "in_progress":
-        message = "Template sent. Service flow is active."
-    elif queue_status == "waiting":
-        message = "Service queued. Will start after current flow completes."
-    else:
-        message = f"Service status: {queue_status}"
-
     return ServiceIngestResponse(
         service_id=payload.service_id,
+        reference_id=service.id,
         status=queue_status,
-        message=message,
     )
 
 
@@ -276,8 +262,9 @@ def retry_service(
     data = dict(service.data or {})
     data["customer_mobile"] = new_mobile
     service.data         = data
-    service.status       = "waiting"
+    service.status        = "waiting"
     service.failed_reason = None
+    service.template_sent = False
 
     # Update or create conversation for new mobile
     conv = db.query(Conversation).filter(
@@ -306,6 +293,6 @@ def retry_service(
 
     return ServiceIngestResponse(
         service_id=service_id,
+        reference_id=service.id,
         status=queue_status,
-        message=f"Retry queued. New mobile: {new_mobile}",
     )

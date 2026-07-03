@@ -7,7 +7,7 @@ Condition A (architecture §9.6):
 
 This applies only when NO questions have been answered yet (sent==0 for all questions).
 Once the customer taps the button, Q1 fires and the flow is "started" — Condition A
-no longer applies, only Condition B (new_order_arrived) or normal completion.
+no longer applies, only normal completion (or a later timeout mid-flow, same deadline).
 
 Template-only services (questions=None or []) are marked completed immediately on
 template send by queue_manager, so they are never in_progress when this job runs.
@@ -24,7 +24,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from app.core.database import SessionLocal
 from app.models.conversation import MobileQueue, Service
 from app.models.whatsapp import WhatsAppAccount
-from app.services import queue_manager
+from app.services import notify_queue, queue_manager
 from app.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,7 @@ def _expire_timed_out_services(db) -> int:
 
     Applies to ALL in_progress services — whether the customer never tapped
     the template button (Condition A) or started answering but went silent
-    mid-flow (Condition B). The deadline is always created_at + template_expiry_hours.
+    mid-flow. The deadline is always created_at + template_expiry_hours.
 
     Returns the number of services expired.
     """
@@ -87,8 +87,9 @@ def _expire_timed_out_services(db) -> int:
         db.query(Service, MobileQueue)
         .join(MobileQueue, MobileQueue.service_id == Service.id)
         .filter(
-            Service.status     == "in_progress",
-            MobileQueue.status == "in_progress",
+            Service.status        == "in_progress",
+            Service.template_sent.is_(True),
+            MobileQueue.status    == "in_progress",
         )
         .all()
     )
@@ -118,6 +119,7 @@ def _expire_timed_out_services(db) -> int:
         svc.status         = "expired"
         svc.expired_reason = "timeout"
         queue_entry.status = "completed"
+        notify_queue.enqueue_notification(db, svc, "expired", note="timeout")
 
         # Advance the queue for this mobile — start the next waiting service
         mobile_no = (svc.data or {}).get("customer_mobile", "")
@@ -130,7 +132,16 @@ def _expire_timed_out_services(db) -> int:
                     queue_manager.advance_queue(db, mobile_no, svc.company_id, account)
                 except Exception as exc:
                     log_error(
-                        f"advance_queue failed after Condition A expiry service={svc.service_id}",
+                        f"advance_queue failed after expiry service={svc.service_id}",
+                        "expiry_scheduler._expire_timed_out_services",
+                        exc,
+                    )
+                try:
+                    from app.services import conversation_engine
+                    conversation_engine._release_free_text_slot(db, account, svc.conversation_id)
+                except Exception as exc:
+                    log_error(
+                        f"_release_free_text_slot failed after expiry service={svc.service_id}",
                         "expiry_scheduler._expire_timed_out_services",
                         exc,
                     )

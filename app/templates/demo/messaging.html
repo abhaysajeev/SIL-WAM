@@ -85,6 +85,30 @@
   cursor: not-allowed;
 }
 
+/* ── Mode toggle ─────────────────────────────────────── */
+.dm-mode-toggle {
+  display: flex;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.dm-mode-btn {
+  flex: 1;
+  padding: 8px 0;
+  border: none;
+  background: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #6b7280;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+  font-family: inherit;
+}
+.dm-mode-btn.active {
+  background: #16a34a;
+  color: #fff;
+}
+
 /* template preview */
 .dm-tpl-preview {
   background: #f0fdf4;
@@ -141,6 +165,26 @@
 .dm-send-btn:hover:not(:disabled) { background: #15803d; }
 .dm-send-btn:active:not(:disabled) { transform: scale(.98); }
 .dm-send-btn:disabled { opacity: .5; cursor: not-allowed; }
+.dm-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #111;
+  background: #fff;
+  resize: vertical;
+  min-height: 90px;
+  transition: border-color .15s;
+}
+.dm-textarea:focus {
+  outline: none;
+  border-color: #16a34a;
+  box-shadow: 0 0 0 3px #dcfce7;
+}
+
 .dm-send-btn .spin {
   width: 15px; height: 15px;
   border: 2px solid rgba(255,255,255,.3);
@@ -330,6 +374,15 @@
 
     <div class="dm-left-body">
 
+      <!-- Mode toggle -->
+      <div>
+        <label class="dm-label">Message Type</label>
+        <div class="dm-mode-toggle">
+          <button class="dm-mode-btn active" id="modeTemplate" type="button">Template</button>
+          <button class="dm-mode-btn" id="modeText" type="button">Text Message</button>
+        </div>
+      </div>
+
       <!-- Company -->
       <div>
         <label class="dm-label">Company</label>
@@ -338,8 +391,8 @@
         </select>
       </div>
 
-      <!-- Template -->
-      <div>
+      <!-- Template section -->
+      <div id="templateSection">
         <label class="dm-label">Template</label>
         <select class="dm-select" id="templateSelect" disabled>
           <option value="">Select a company first</option>
@@ -355,11 +408,16 @@
         <div class="dm-params" id="paramsContainer"></div>
       </div>
 
+      <!-- Text body (shown in text mode) -->
+      <div id="textBodySection" style="display:none">
+        <label class="dm-label">Message Body</label>
+        <textarea class="dm-textarea" id="textBody" placeholder="Type your message…"></textarea>
+      </div>
+
       <!-- Mobile number -->
       <div>
         <label class="dm-label">Mobile Number</label>
-        <input type="tel" class="dm-input" id="mobileInput"
-               placeholder="e.g. 917025985366">
+        <input type="tel" class="dm-input" id="mobileInput">
         <div style="font-size:11px;color:#9ca3af;margin-top:4px">
           Include country code (e.g. 91 for India)
         </div>
@@ -415,13 +473,17 @@
   var currentCompanyName = null;
   var seenMsgIds   = new Set();
   var sseConn      = null;
+  var mode         = 'template';   // 'template' | 'text'
 
   /* ── DOM refs ──────────────────────────────────────── */
   var companySelect    = document.getElementById('companySelect');
   var templateSelect   = document.getElementById('templateSelect');
+  var templateSection  = document.getElementById('templateSection');
   var tplPreview       = document.getElementById('tplPreview');
   var paramsSection    = document.getElementById('paramsSection');
   var paramsContainer  = document.getElementById('paramsContainer');
+  var textBodySection  = document.getElementById('textBodySection');
+  var textBody         = document.getElementById('textBody');
   var mobileInput      = document.getElementById('mobileInput');
   var sendBtn          = document.getElementById('sendBtn');
   var sendFeedback     = document.getElementById('sendFeedback');
@@ -430,6 +492,8 @@
   var chatEmpty        = document.getElementById('chatEmpty');
   var chatMobile       = document.getElementById('chatMobile');
   var chatCompany      = document.getElementById('chatCompany');
+  var modeTemplateBtn  = document.getElementById('modeTemplate');
+  var modeTextBtn      = document.getElementById('modeText');
 
   /* ── Helpers ───────────────────────────────────────── */
   function setLoading(btn, on) {
@@ -474,8 +538,34 @@
   }
 
   function checkSendReady() {
-    var tpl = selectedTemplate();
-    sendBtn.disabled = !tpl || !mobileInput.value.trim() || !companySelect.value;
+    var mobile = mobileInput.value.trim();
+    var company = companySelect.value;
+    if (mode === 'text') {
+      sendBtn.disabled = !mobile || !company || !textBody.value.trim();
+    } else {
+      var tpl = selectedTemplate();
+      sendBtn.disabled = !tpl || !mobile || !company;
+    }
+  }
+
+  /* ── Mode switch ───────────────────────────────────── */
+  function switchMode(newMode) {
+    mode = newMode;
+    modeTemplateBtn.classList.toggle('active', mode === 'template');
+    modeTextBtn.classList.toggle('active', mode === 'text');
+
+    if (mode === 'template') {
+      templateSection.style.display = '';
+      textBodySection.style.display = 'none';
+      sendBtn.querySelector('.lbl').innerHTML = '<i class="fas fa-paper-plane"></i> Send Template';
+    } else {
+      templateSection.style.display = 'none';
+      tplPreview.style.display      = 'none';
+      paramsSection.style.display   = 'none';
+      textBodySection.style.display = '';
+      sendBtn.querySelector('.lbl').innerHTML = '<i class="fas fa-paper-plane"></i> Send Message';
+    }
+    checkSendReady();
   }
 
   /* ── Companies load ────────────────────────────────── */
@@ -555,35 +645,40 @@
 
   /* ── Send ──────────────────────────────────────────── */
   function doSend() {
-    var tpl       = selectedTemplate();
     var companyId = companySelect.value;
     var mobile    = mobileInput.value.trim();
-
-    if (!tpl || !companyId || !mobile) return;
-
-    // Collect params in order
-    var paramInputs = Array.from(paramsContainer.querySelectorAll('.dm-param-input'));
-    var params = paramInputs.map(function (inp) { return inp.value.trim(); });
+    if (!companyId || !mobile) return;
 
     sendFeedback.style.display = 'none';
     setLoading(sendBtn, true);
 
-    fetchWithAuth('/api/demo/send', {
+    var url, body;
+    if (mode === 'text') {
+      var msgBody = textBody.value.trim();
+      if (!msgBody) { setLoading(sendBtn, false); return; }
+      url  = '/api/demo/send-text';
+      body = JSON.stringify({ company_id: companyId, mobile_no: mobile, body: msgBody });
+    } else {
+      var tpl = selectedTemplate();
+      if (!tpl) { setLoading(sendBtn, false); return; }
+      var paramInputs = Array.from(paramsContainer.querySelectorAll('.dm-param-input'));
+      var params = paramInputs.map(function (inp) { return inp.value.trim(); });
+      url  = '/api/demo/send';
+      body = JSON.stringify({ company_id: companyId, template_id: tpl.id, mobile_no: mobile, params: params });
+    }
+
+    fetchWithAuth(url, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({
-        company_id:  companyId,
-        template_id: tpl.id,
-        mobile_no:   mobile,
-        params:      params,
-      }),
+      body:    body,
     })
     .then(function (r) {
       if (!r.ok) return r.json().then(function (e) { throw new Error(e.detail || 'Send failed'); });
       return r.json();
     })
     .then(function (data) {
-      showFeedback(sendFeedback, 'ok', '✓ Template sent to ' + data.mobile_no);
+      var label = mode === 'text' ? '✓ Message sent to ' : '✓ Template sent to ';
+      showFeedback(sendFeedback, 'ok', label + data.mobile_no);
       loadConversation(companyId, data.mobile_no, data.conversation_id);
     })
     .catch(function (err) {
@@ -734,6 +829,10 @@
   }
 
   /* ── Event listeners ───────────────────────────────── */
+  modeTemplateBtn.addEventListener('click', function () { switchMode('template'); });
+  modeTextBtn.addEventListener('click', function () { switchMode('text'); });
+  textBody.addEventListener('input', checkSendReady);
+
   companySelect.addEventListener('change', function () {
     if (this.value) {
       loadTemplates(this.value);

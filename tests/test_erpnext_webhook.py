@@ -1,5 +1,6 @@
 """Module 4 — ERPNext inbound webhook: auth, dedup, service creation."""
 from unittest.mock import patch
+from app.services import send_scheduler
 from app.services.wa_sender import SendResult
 from tests.conftest import (
     make_api_key, make_company, make_conversation, make_wa_account,
@@ -109,6 +110,7 @@ class TestERPNextNotifySuccess:
                               "template_name": "payment_receipt",
                               "reference_id": "SVC-DB-CHECK"},
                         headers=_headers())
+            send_scheduler._send_one_pending(db)  # flush the async send for this test
         from app.models.conversation import Service
         svc = db.query(Service).filter(Service.service_id == "SVC-DB-CHECK").first()
         assert svc is not None
@@ -170,4 +172,5 @@ class TestERPNextNotifyDedup:
         with patch("app.services.wa_sender.send_template", return_value=_MOCK_SEND) as mock_send:
             client.post("/webhook/erpnext/notify", json=payload, headers=_headers())
             client.post("/webhook/erpnext/notify", json=payload, headers=_headers())
+            send_scheduler._send_one_pending(db)  # flush the single async send
         assert mock_send.call_count == 1

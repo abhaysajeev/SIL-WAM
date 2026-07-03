@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from app.core.config import settings
 from app.core.database import Base
-from app.models import api_key, user, company, conversation, erpnext_config, error_log, failed_webhook, role, whatsapp  # noqa: F401 — registers all models with Base.metadata
+from app.models import api_key, user, company, conversation, erpnext_config, error_log, failed_webhook, outbound_notification, role, whatsapp  # noqa: F401 — registers all models with Base.metadata
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

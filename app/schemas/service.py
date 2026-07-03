@@ -67,9 +67,9 @@ class ServiceRetryRequest(BaseModel):
 
 
 class ServiceIngestResponse(BaseModel):
-    service_id: str
-    status:     str    # "in_progress" | "waiting"
-    message:    str
+    service_id:   str
+    reference_id: uuid.UUID  # our internal Service.id — for support/log lookups
+    status:       str        # "in_progress" | "waiting"
 
 
 # ── Outbound: API responses ───────────────────────────────────────────────────

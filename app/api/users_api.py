@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -97,6 +98,8 @@ def change_user_password(
         raise HTTPException(status_code=404, detail="User not found")
     user.hashed_password = hash_password(payload.new_password)
     user.must_change_password = False
+    # Revoke all active refresh tokens so the user's old sessions are invalidated
+    db.execute(text("DELETE FROM refresh_tokens WHERE user_id = :uid"), {"uid": str(user_id)})
     db.commit()
 
 

@@ -43,12 +43,13 @@ def conversations_list(
 
     convs = q.order_by(Conversation.last_activity_at.desc()).all()
 
-    # Bulk-fetch active (in_progress) service status per conversation
+    # Bulk-fetch active (in_progress) service count per conversation — concurrency is
+    # unlimited, so several services can be in_progress at once for one conversation.
     conv_ids = [str(c.id) for c, _ in convs]
-    active_status: dict[str, str] = {}
+    active_status: dict[str, int] = {}
     if conv_ids:
         active_svcs = (
-            db.query(Service.conversation_id, Service.status)
+            db.query(Service.conversation_id)
             .join(MobileQueue, MobileQueue.service_id == Service.id)
             .filter(
                 Service.conversation_id.in_([_uuid.UUID(x) for x in conv_ids]),
@@ -56,8 +57,8 @@ def conversations_list(
             )
             .all()
         )
-        for conv_id, status in active_svcs:
-            active_status[str(conv_id)] = status
+        for (conv_id,) in active_svcs:
+            active_status[str(conv_id)] = active_status.get(str(conv_id), 0) + 1
 
     rows = []
     for conv, company in convs:
@@ -70,7 +71,9 @@ def conversations_list(
                 conv.last_activity_at.strftime("%d %b %Y  %H:%M")
                 if conv.last_activity_at else "—"
             ),
-            "active_service":   active_status.get(str(conv.id), "—"),
+            "active_service":   (
+                f"{active_status[str(conv.id)]} active" if active_status.get(str(conv.id)) else "—"
+            ),
         })
 
     return templates.TemplateResponse("layouts/list_view.html", {

@@ -66,10 +66,14 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Tables are managed by Alembic migrations — never auto-create here
-    from app.services import expiry_scheduler
+    from app.services import expiry_scheduler, notify_scheduler, send_scheduler
     expiry_scheduler.start()
+    send_scheduler.start()
+    notify_scheduler.start()
     yield
     expiry_scheduler.stop()
+    send_scheduler.stop()
+    notify_scheduler.stop()
 
 
 app = FastAPI(title=settings.APP_TITLE, lifespan=lifespan)
@@ -78,7 +82,8 @@ app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SECRET_KEY,
     session_cookie="wam_session",
-    https_only=False,
+    max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+    https_only=settings.HTTPS_ONLY,
     same_site="lax",
 )
 
