@@ -1,8 +1,12 @@
-"""conversation_engine.handle_inbound — "responded" notification on first CTA tap."""
+"""
+conversation_engine.handle_inbound — "responded" notification on first CTA tap.
+conversation_engine.handle_status — message-status notification suppression
+once a service is terminal.
+"""
 from unittest.mock import patch
 
 from app.models.outbound_notification import OutboundNotification
-from app.services.conversation_engine import handle_inbound
+from app.services.conversation_engine import handle_inbound, handle_status
 from app.services.wa_sender import SendResult
 from tests.conftest import (
     make_api_key, make_company, make_conversation, make_message, make_queue_entry,
@@ -81,3 +85,38 @@ class TestRespondedNotification:
         rows = db.query(OutboundNotification).all()
         statuses = [r.payload["status"] for r in rows]
         assert statuses.count("responded") == 1
+
+
+class TestHandleStatusSuppressionAfterTerminal:
+    def _setup(self, db, service_status, unique="1"):
+        comp = make_company(db, code=f"CESTATUS{unique}")
+        key = make_api_key(db, comp.id, key=f"ce-status-key-{unique}", notify_url="https://client.example/hook")
+        conv = make_conversation(db, comp.id, f"91999990000{unique}")
+        account = make_wa_account(db, comp.id, phone_number_id=f"phone-{unique}")
+        svc = make_service(db, conv.id, comp.id, api_key_id=key.id, status=service_status)
+        msg = make_message(db, svc, wamid=f"wamid.status-target-{unique}", message_type="text")
+        return svc, account, msg
+
+    def test_in_progress_service_still_notifies(self, db):
+        svc, account, msg = self._setup(db, "in_progress")
+
+        handle_status(db, {"id": msg.wamid, "status": "read", "timestamp": "1783077431"}, account)
+
+        rows = db.query(OutboundNotification).all()
+        assert len(rows) == 1
+        assert rows[0].payload["status"] == "read"
+
+    def test_completed_service_suppresses_trailing_status(self, db):
+        svc, account, msg = self._setup(db, "completed")
+
+        handle_status(db, {"id": msg.wamid, "status": "read", "timestamp": "1783077431"}, account)
+
+        # msg.status itself still updates — only the outbound notification is suppressed.
+        assert msg.status == "read"
+        assert db.query(OutboundNotification).count() == 0
+
+    def test_expired_and_failed_services_also_suppress(self, db):
+        for i, status in enumerate(("expired", "failed"), start=2):
+            svc, account, msg = self._setup(db, status, unique=str(i))
+            handle_status(db, {"id": msg.wamid, "status": "sent", "timestamp": "1783077431"}, account)
+            assert db.query(OutboundNotification).count() == 0
