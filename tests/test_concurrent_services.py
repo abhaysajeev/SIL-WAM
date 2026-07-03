@@ -251,3 +251,53 @@ class TestOutOfFlowFallback:
         ).first()
         assert inbound.service_id is None
         assert db.query(ServiceResponse).count() == 0
+
+
+class TestDuplicateReplyAfterCompletion:
+    """
+    Regression test for a production crash: WhatsApp buttons stay clickable
+    forever, so a customer re-tapping an already-answered button produces a
+    genuinely new wamid (not caught by step-1 dedup) that still resolves via
+    context.id to the same, now-completed service. handle_inbound must not
+    crash, and must not re-send the completion message or re-fire notifications.
+    """
+
+    def test_retap_after_completion_does_not_crash_or_duplicate_side_effects(self, db):
+        comp = make_company(db, code="CS10")
+        conv = make_conversation(db, comp.id, "919000000010")
+        account = make_wa_account(db, comp.id)
+        svc = make_service(
+            db, conv.id, comp.id, service_id="ORD-DUP-1", status="in_progress",
+            questions=[{"sequence": 1, "field_key": "q1", "question": "Happy?",
+                        "answer_type": 0, "options": ["Yes", "No"], "sent": 0, "dispatched": 1}],
+            mobile_no="919000000010",
+        )
+        svc.data = dict(svc.data or {}, completion_message="Thanks!")
+        db.commit()
+        make_queue_entry(db, svc, mobile_no="919000000010", status="in_progress")
+        q1_msg = make_message(db, svc, wamid="wamid.q1-orig", message_type="interactive",
+                               content={"sequence": 1, "field_key": "q1", "answer_type": 0})
+
+        first_reply = {
+            "id": "wamid.reply-first", "from": "919000000010", "type": "interactive",
+            "interactive": {"type": "button_reply", "button_reply": {"id": "q1_opt0", "title": "Yes"}},
+            "context": {"id": q1_msg.wamid},
+        }
+        with patch("app.services.wa_sender.send_text", return_value=_SEND_OK) as mock_text:
+            conversation_engine.handle_inbound(db, account, first_reply)
+
+        db.commit()
+        assert svc.status == "completed"
+        assert mock_text.call_count == 1  # completion message sent once
+
+        # Customer re-taps the same (now stale) button — different wamid, same context target.
+        retap_reply = {
+            "id": "wamid.reply-retap", "from": "919000000010", "type": "interactive",
+            "interactive": {"type": "button_reply", "button_reply": {"id": "q1_opt0", "title": "Yes"}},
+            "context": {"id": q1_msg.wamid},
+        }
+        with patch("app.services.wa_sender.send_text", return_value=_SEND_OK) as mock_text2:
+            conversation_engine.handle_inbound(db, account, retap_reply)  # must not raise
+
+        assert svc.status == "completed"
+        mock_text2.assert_not_called()  # idempotent — no duplicate completion message

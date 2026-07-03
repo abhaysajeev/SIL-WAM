@@ -99,11 +99,13 @@ def handle_inbound(db: Session, account: WhatsAppAccount, msg: dict) -> None:
                 service = awaiting[0]
             # 0 or >1 awaiting → ambiguous/none → stays out-of-flow, matching prior behavior
 
+    # No status filter here — a duplicate/retried webhook for an already-completed
+    # service must still find this row (its status is now "completed", not
+    # "in_progress") so the idempotent-complete path below doesn't crash on None.
     queue_entry = None
     if service:
         queue_entry = db.query(MobileQueue).filter(
             MobileQueue.service_id == service.id,
-            MobileQueue.status     == "in_progress",
         ).first()
 
     # 4. STORE INBOUND MESSAGE
@@ -501,13 +503,23 @@ def _resend_question(
 
 
 def _complete_service(
-    db: Session, service: Service, queue_entry: MobileQueue,
+    db: Session, service: Service, queue_entry: MobileQueue | None,
     account: WhatsAppAccount,
 ) -> None:
-    """Mark service completed, send optional completion message, advance queue."""
+    """Mark service completed, send optional completion message, advance queue.
+
+    Idempotent: a duplicate/retried webhook can resolve to an already-completed
+    service (see handle_inbound's "idempotent complete" branch) — bail out before
+    re-sending the completion message or re-firing the "completed" notification.
+    queue_entry can be None in that case (its status is no longer "in_progress").
+    """
+    if service.status == "completed":
+        return
+
     service.status       = "completed"
     service.completed_at = datetime.now(timezone.utc)
-    queue_entry.status   = "completed"
+    if queue_entry:
+        queue_entry.status = "completed"
 
     notify_queue.enqueue_notification(db, service, "completed")
 
