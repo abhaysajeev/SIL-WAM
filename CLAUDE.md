@@ -5,6 +5,15 @@
 SIL WhatsApp Manager — internal admin panel for an ISV hosting WhatsApp Business
 messaging for multiple client companies. FastAPI + Jinja2 SSR backend, PostgreSQL DB.
 
+## Full Project Map
+
+See `PROJECT_MAP.md` in the repo root for the complete context map: data model /
+FK graph, permission resources, every router + its guard, auth flows, background
+schedulers, and the client-facing ingestion API. Read it before adding new logic
+that touches models, routes, or permissions — it's the fastest way to see how a
+new piece connects to the existing system. Keep it updated when adding a resource
+(see "Adding a New Resource" below).
+
 ## How to Run
 
 ```bash
