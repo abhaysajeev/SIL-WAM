@@ -11,7 +11,7 @@ Flow per inbound message:
      replies carry Meta's context.id (the wamid replied to), resolved deterministically
      via _resolve_service_from_context. Plain text has no such reference, so it falls
      back to whichever ONE service (if exactly one) has an outstanding free-text
-     question — see _has_outstanding_free_text.
+     question — see _find_free_text_blockers.
   4. Store inbound Message
   5. If no active queue → random out-of-flow message, done
   6. Route based on whether it's a template button click or a Q&A reply
@@ -223,6 +223,11 @@ def handle_inbound(db: Session, account: WhatsAppAccount, msg: dict) -> None:
     service.questions = questions
     flag_modified(service, "questions")  # force SQLAlchemy to detect JSONB mutation
 
+    # Notify the client immediately — don't wait for full completion. If the
+    # customer stops replying partway through, whatever was answered so far
+    # must still have reached notify_url.
+    notify_queue.enqueue_notification(db, service, "answered", message=inbound)
+
     # 13. ADVANCE OR COMPLETE
     remaining = [q for q in questions if q.get("sent") == 0]
     if remaining:
@@ -336,45 +341,47 @@ def _resolve_service_from_context(db: Session, context_wamid: str | None) -> Ser
     return None
 
 
-def _has_outstanding_free_text(db: Session, conversation_id, exclude_service_id=None) -> bool:
-    """True if some active service in this conversation currently has a
-    dispatched-but-unanswered free-text question. Only one may exist at a time per
-    mobile number, since Meta gives no reply-threading for plain text messages."""
+def _find_free_text_blockers(db: Session, conversation_id, exclude_service_id) -> list[Service]:
+    """Return in_progress services in this conversation (other than
+    exclude_service_id) that currently have a dispatched-but-unanswered free-text
+    question. Only one such question should exist per mobile number at a time,
+    since Meta gives no reply-threading for plain text — see _fire_next_question."""
     # The app's session has autoflush=False (app/core/database.py), so a status
-    # change made moments earlier in the same transaction (e.g. this service's own
-    # answer being recorded, or another service just completing) isn't visible to
-    # this query until flushed.
+    # change made moments earlier in the same transaction isn't visible to this
+    # query until flushed.
     db.flush()
     candidates = db.query(Service).filter(
-        Service.conversation_id == conversation_id, Service.status == "in_progress"
+        Service.conversation_id == conversation_id,
+        Service.status == "in_progress",
+        Service.id != exclude_service_id,
     )
-    if exclude_service_id is not None:
-        candidates = candidates.filter(Service.id != exclude_service_id)
-    for svc in candidates.all():
-        for q in (svc.questions or []):
-            if q.get("answer_type") == 2 and q.get("dispatched") == 1 and q.get("sent") == 0:
-                return True
-    return False
+    return [
+        svc for svc in candidates.all()
+        if any(
+            q.get("answer_type") == 2 and q.get("dispatched") == 1 and q.get("sent") == 0
+            for q in (svc.questions or [])
+        )
+    ]
 
 
-def _release_free_text_slot(db: Session, account: WhatsAppAccount, conversation_id) -> None:
-    """Called whenever a service in this conversation reaches a terminal state
-    (completed/expired/failed). If another in_progress service in the same
-    conversation has a held free-text question next in line, fire it now."""
-    db.flush()  # see _has_outstanding_free_text — same autoflush=False caveat
-    candidates = (
-        db.query(Service)
-        .filter(Service.conversation_id == conversation_id, Service.status == "in_progress")
-        .order_by(Service.created_at)
-        .all()
-    )
-    for svc in candidates:
-        next_q = next((q for q in (svc.questions or []) if q.get("sent") == 0), None)
-        if next_q and next_q.get("answer_type") == 2 and next_q.get("dispatched") == 0:
-            mobile_no = (svc.data or {}).get("customer_mobile")
-            if mobile_no:
-                _fire_next_question(db, svc, account, mobile_no)
-            break
+def _supersede_stalled_free_text(db: Session, blocked_svc: Service, account: WhatsAppAccount) -> None:
+    """A newer service needs to fire its own free-text question, but `blocked_svc`
+    already has one outstanding for the same mobile number. Only one free-text
+    question can ever be routed at a time (no reply-threading for plain text), so
+    the newer order takes priority: the stalled older one is expired immediately
+    instead of blocking the new flow — a customer who went quiet on one order
+    shouldn't hold up every order placed after it."""
+    if blocked_svc.status != "in_progress":
+        return
+    queue_entry = db.query(MobileQueue).filter(MobileQueue.service_id == blocked_svc.id).first()
+    blocked_svc.status = "expired"
+    blocked_svc.expired_reason = "superseded"
+    if queue_entry:
+        queue_entry.status = "completed"
+    notify_queue.enqueue_notification(db, blocked_svc, "expired", note="superseded")
+    mobile_no = (blocked_svc.data or {}).get("customer_mobile", "")
+    if mobile_no:
+        queue_manager.advance_queue(db, mobile_no, blocked_svc.company_id, account)
 
 
 def _is_valid_response(msg_type: str, answer_type: int | None) -> bool:
@@ -408,9 +415,11 @@ def _fire_next_question(
 
     Every button/list question shows the order number as a native Meta footer.
     Free-text questions have no footer slot in Meta's API, so the order number is
-    appended into the body text instead. Free-text questions are additionally
-    serialized across concurrently active services for the same mobile — see
-    _has_outstanding_free_text — since Meta gives no reply-threading for plain text.
+    appended into the body text instead. Free-text questions fire immediately —
+    if another concurrently active service for the same mobile already has one
+    outstanding (Meta gives no reply-threading for plain text, so only one can be
+    routed at a time), that older service is superseded (expired) first rather
+    than holding this one back. See _supersede_stalled_free_text.
     """
     questions = service.questions or []
     next_q = next((q for q in questions if q.get("sent") == 0), None)
@@ -420,15 +429,13 @@ def _fire_next_question(
     answer_type = next_q.get("answer_type")
     question_text = next_q.get("question", "")
 
-    if answer_type == 2 and _has_outstanding_free_text(
-        db, service.conversation_id, exclude_service_id=service.id
-    ):
-        logger.debug(
-            "Holding free-text question seq=%s for service=%s — another free-text "
-            "question is outstanding for this mobile",
-            next_q.get("sequence"), service.service_id,
-        )
-        return
+    if answer_type == 2:
+        for blocker in _find_free_text_blockers(db, service.conversation_id, service.id):
+            logger.info(
+                "Superseding stalled free-text on service=%s to fire service=%s seq=%s",
+                blocker.service_id, service.service_id, next_q.get("sequence"),
+            )
+            _supersede_stalled_free_text(db, blocker, account)
 
     result = None
     msg_type_out = "text"
@@ -550,17 +557,6 @@ def _complete_service(
     # Advance queue — start next waiting service for this mobile
     if mobile_no:
         queue_manager.advance_queue(db, mobile_no, service.company_id, account)
-
-    # Another concurrent service on this mobile may have a free-text question
-    # held back waiting on this one — release it now that this service is done.
-    try:
-        _release_free_text_slot(db, account, service.conversation_id)
-    except Exception as exc:
-        log_error(
-            f"_release_free_text_slot failed after completion service={service.service_id}",
-            "conversation_engine._complete_service",
-            exc,
-        )
 
 
 def _is_download_invoice(payload: str) -> bool:

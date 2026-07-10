@@ -150,6 +150,34 @@ class TestEnqueueNotification:
         rows = db.query(OutboundNotification).order_by(OutboundNotification.created_at).all()
         assert rows[-1].payload["respondedOn"] == first_responded_on
 
+    def test_answered_fires_repeatedly_not_deduped(self, db):
+        comp = make_company(db, code="NQ09")
+        conv = make_conversation(db, comp.id, "91NQ09")
+        key = make_api_key(db, comp.id, key="nq09-key", notify_url="https://client.example/hook")
+        svc = make_service(db, conv.id, comp.id, api_key_id=key.id)
+
+        notify_queue.enqueue_notification(db, svc, "responded")
+        notify_queue.enqueue_notification(db, svc, "answered")
+        notify_queue.enqueue_notification(db, svc, "answered")
+        notify_queue.enqueue_notification(db, svc, "answered")
+        db.commit()
+
+        statuses = [
+            r.payload["status"] for r in
+            db.query(OutboundNotification).order_by(OutboundNotification.created_at).all()
+        ]
+        assert statuses == ["responded", "answered", "answered", "answered"]
+
+    def test_answered_after_terminal_is_noop(self, db):
+        comp = make_company(db, code="NQ10")
+        conv = make_conversation(db, comp.id, "91NQ10")
+        key = make_api_key(db, comp.id, key="nq10-key", notify_url="https://client.example/hook")
+        svc = make_service(db, conv.id, comp.id, api_key_id=key.id, status="completed")
+
+        notify_queue.enqueue_notification(db, svc, "answered")
+
+        assert db.query(OutboundNotification).count() == 0
+
     def test_service_level_event_has_no_message_context(self, db):
         comp = make_company(db, code="NQ05")
         conv = make_conversation(db, comp.id, "91NQ05")

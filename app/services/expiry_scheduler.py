@@ -136,15 +136,6 @@ def _expire_timed_out_services(db) -> int:
                         "expiry_scheduler._expire_timed_out_services",
                         exc,
                     )
-                try:
-                    from app.services import conversation_engine
-                    conversation_engine._release_free_text_slot(db, account, svc.conversation_id)
-                except Exception as exc:
-                    log_error(
-                        f"_release_free_text_slot failed after expiry service={svc.service_id}",
-                        "expiry_scheduler._expire_timed_out_services",
-                        exc,
-                    )
 
         expired_count += 1
 

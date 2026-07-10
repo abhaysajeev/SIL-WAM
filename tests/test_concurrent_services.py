@@ -1,13 +1,12 @@
 """
 Concurrent services per mobile number: enqueue_service no longer pre-empts,
-context.id-based reply routing, free-text serialization (hold/release), and
-order-number footer/body injection.
+context.id-based reply routing, free-text serialization (fire immediately,
+supersede a stalled blocker), and order-number footer/body injection.
 """
-from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from app.models.conversation import MobileQueue, Message, Service, ServiceResponse
-from app.services import conversation_engine, expiry_scheduler, queue_manager, wa_sender
+from app.services import conversation_engine, queue_manager, wa_sender
 from app.services.wa_sender import SendResult
 from tests.conftest import (
     make_api_key, make_company, make_conversation, make_message,
@@ -97,7 +96,7 @@ class TestFreeTextSerialization:
         make_queue_entry(db, svc, mobile_no=mobile_no, status="in_progress")
         return svc
 
-    def test_second_free_text_question_is_held(self, db):
+    def test_second_free_text_question_supersedes_first(self, db):
         comp = make_company(db, code="CS03")
         conv = make_conversation(db, comp.id, "919000000003")
         account = make_wa_account(db, comp.id)
@@ -111,12 +110,17 @@ class TestFreeTextSerialization:
         )
         make_queue_entry(db, svc_b, mobile_no="919000000003", status="in_progress")
 
-        with patch("app.services.wa_sender.send_text") as mock_send:
+        with patch("app.services.wa_sender.send_text", return_value=_SEND_OK) as mock_send:
             conversation_engine._fire_next_question(db, svc_b, account, "919000000003")
 
-        mock_send.assert_not_called()
-        db.refresh(svc_b)
-        assert svc_b.questions[0]["dispatched"] == 0
+        # The new service's question fires immediately — no holding.
+        mock_send.assert_called_once()
+        assert svc_b.questions[0]["dispatched"] == 1
+        # The stalled older service is superseded (expired) instead of blocking it.
+        assert svc_a.status == "expired"
+        assert svc_a.expired_reason == "superseded"
+        qe_a = db.query(MobileQueue).filter(MobileQueue.service_id == svc_a.id).first()
+        assert qe_a.status == "completed"
 
     def test_free_text_fires_when_nothing_outstanding(self, db):
         comp = make_company(db, code="CS04")
@@ -137,63 +141,6 @@ class TestFreeTextSerialization:
         # _fire_next_question doesn't commit (caller's job) — check the in-memory
         # mutation directly rather than db.refresh(), which would discard it.
         assert svc.questions[0]["dispatched"] == 1
-
-    def test_release_on_completion_fires_held_question(self, db):
-        comp = make_company(db, code="CS05")
-        conv = make_conversation(db, comp.id, "919000000005")
-        account = make_wa_account(db, comp.id)
-        svc_a = make_service(
-            db, conv.id, comp.id, service_id="A5", status="in_progress",
-            questions=[{"sequence": 1, "field_key": "q_a", "question": "Comments?",
-                        "answer_type": 2, "sent": 0, "dispatched": 1}],
-            mobile_no="919000000005",
-        )
-        qe_a = make_queue_entry(db, svc_a, mobile_no="919000000005", status="in_progress")
-        svc_b = make_service(
-            db, conv.id, comp.id, service_id="B5", status="in_progress",
-            questions=[{"sequence": 1, "field_key": "q_b", "question": "Feedback?",
-                        "answer_type": 2, "sent": 0, "dispatched": 0}],
-            mobile_no="919000000005",
-        )
-        make_queue_entry(db, svc_b, mobile_no="919000000005", status="in_progress")
-
-        with patch("app.services.wa_sender.send_text", return_value=_SEND_OK) as mock_send:
-            conversation_engine._complete_service(db, svc_a, qe_a, account)
-
-        mock_send.assert_called_once()
-        # _complete_service doesn't commit (caller's job) — check in-memory state.
-        assert svc_b.questions[0]["dispatched"] == 1
-
-    def test_release_on_expiry_fires_held_question(self, db):
-        comp = make_company(db, code="CS06")
-        conv = make_conversation(db, comp.id, "919000000006")
-        make_wa_account(db, comp.id)
-        past = datetime.now(timezone.utc) - timedelta(hours=48)
-        svc_a = make_service(
-            db, conv.id, comp.id, service_id="A6", status="in_progress",
-            questions=[{"sequence": 1, "field_key": "q_a", "question": "Comments?",
-                        "answer_type": 2, "sent": 0, "dispatched": 1}],
-            mobile_no="919000000006", created_at=past, template_expiry_hours=24,
-        )
-        svc_a.data = {"customer_mobile": "919000000006"}
-        db.commit()
-        make_queue_entry(db, svc_a, mobile_no="919000000006", status="in_progress")
-        svc_b = make_service(
-            db, conv.id, comp.id, service_id="B6", status="in_progress",
-            questions=[{"sequence": 1, "field_key": "q_b", "question": "Feedback?",
-                        "answer_type": 2, "sent": 0, "dispatched": 0}],
-            mobile_no="919000000006",
-        )
-        make_queue_entry(db, svc_b, mobile_no="919000000006", status="in_progress")
-
-        with patch("app.services.wa_sender.send_text", return_value=_SEND_OK) as mock_send:
-            # Use the test's own db session directly — run_once_now() opens a fresh
-            # SessionLocal() bound to the real dev DB, not the test DB (matches the
-            # convention already established in tests/test_expiry_scheduler.py).
-            expiry_scheduler._expire_timed_out_services(db)
-
-        mock_send.assert_called_once()
-        assert svc_b.questions[0]["dispatched"] == 1
 
 
 class TestFooterAndBodyAppend:

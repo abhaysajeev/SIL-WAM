@@ -114,7 +114,6 @@ def send_template_for_service(
         service.failed_reason = "send_error"
         _mark_queue_completed(db, service)
         notify_queue.enqueue_notification(db, service, "failed", note="send_error")
-        _release_free_text(db, service, account)
         return
 
     template = db.query(WhatsAppTemplate).filter(
@@ -127,7 +126,6 @@ def send_template_for_service(
         service.failed_reason = "send_error"
         _mark_queue_completed(db, service)
         notify_queue.enqueue_notification(db, service, "failed", note="send_error")
-        _release_free_text(db, service, account)
         return
 
     result = wa_sender.send_template(
@@ -156,7 +154,6 @@ def send_template_for_service(
             service.completed_at = datetime.now(timezone.utc)
             _mark_queue_completed(db, service)
             notify_queue.enqueue_notification(db, service, "completed")
-            _release_free_text(db, service, account)
     else:
         err = result.error or ""
         if "131026" in err:
@@ -174,7 +171,6 @@ def send_template_for_service(
         service.status = "failed"
         _mark_queue_completed(db, service)
         notify_queue.enqueue_notification(db, service, "failed", note=service.failed_reason)
-        _release_free_text(db, service, account)
 
 
 def _mark_queue_completed(db: Session, service: Service) -> None:
@@ -185,24 +181,6 @@ def _mark_queue_completed(db: Session, service: Service) -> None:
     ).first()
     if entry:
         entry.status = "completed"
-
-
-def _release_free_text(db: Session, service: Service, account: WhatsAppAccount) -> None:
-    """
-    Best-effort: this service just reached a terminal state (completed/failed).
-    If another concurrent service on the same mobile has a free-text question held
-    back (see conversation_engine._has_outstanding_free_text), fire it now. Local
-    import avoids a circular dependency (conversation_engine imports this module).
-    """
-    try:
-        from app.services import conversation_engine
-        conversation_engine._release_free_text_slot(db, account, service.conversation_id)
-    except Exception as exc:
-        log_error(
-            f"_release_free_text failed for service={service.service_id}",
-            "queue_manager._release_free_text",
-            exc,
-        )
 
 
 def _get_mobile(service: Service) -> str | None:

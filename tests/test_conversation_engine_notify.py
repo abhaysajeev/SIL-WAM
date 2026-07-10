@@ -87,6 +87,65 @@ class TestRespondedNotification:
         assert statuses.count("responded") == 1
 
 
+class TestAnsweredNotification:
+    """handle_inbound must fire "answered" after each recorded ServiceResponse,
+    not just once at full completion — so partial progress reaches the client
+    even if the customer stops replying partway through."""
+
+    def _setup(self, db):
+        comp = make_company(db, code="CEANSWERED")
+        key = make_api_key(db, comp.id, key="ce-answered-key", notify_url="https://client.example/hook")
+        conv = make_conversation(db, comp.id, "919999900021")
+        account = make_wa_account(db, comp.id)
+        svc = make_service(
+            db, conv.id, comp.id, api_key_id=key.id,
+            questions=[dict(q) for q in _QUESTIONS],
+        )
+        make_queue_entry(db, svc, mobile_no="919999900021", status="in_progress")
+        make_message(db, svc, wamid=_TEMPLATE_WAMID, message_type="template")
+        return svc, account
+
+    def test_answered_fires_after_each_question_with_growing_responses(self, db):
+        svc, account = self._setup(db)
+
+        # Tap the template CTA — fires "responded" and dispatches Q1 (answer_type=0 → buttons).
+        with patch("app.services.wa_sender.send_interactive_buttons",
+                   return_value=SendResult(ok=True, meta_message_id="wamid.q1sent", error=None)):
+            handle_inbound(db, account, _button_tap_msg(wamid="wamid.tap1", context_wamid=_TEMPLATE_WAMID))
+
+        # Answer Q1 — fires "answered" and dispatches Q2 (answer_type=1, rating_scale=5 → list message).
+        q1_reply = {
+            "id": "wamid.q1reply",
+            "from": "919999900021",
+            "type": "interactive",
+            "interactive": {"type": "button_reply", "button_reply": {"id": "q1_opt0", "title": "Yes"}},
+            "context": {"id": "wamid.q1sent"},
+        }
+        with patch("app.services.wa_sender.send_list_message",
+                   return_value=SendResult(ok=True, meta_message_id="wamid.q2sent", error=None)):
+            handle_inbound(db, account, q1_reply)
+
+        # Answer Q2 — the last question, so "answered" fires followed by "completed".
+        q2_reply = {
+            "id": "wamid.q2reply",
+            "from": "919999900021",
+            "type": "interactive",
+            "interactive": {"type": "list_reply", "list_reply": {"id": "q2_r1", "title": "1"}},
+            "context": {"id": "wamid.q2sent"},
+        }
+        handle_inbound(db, account, q2_reply)
+
+        rows = db.query(OutboundNotification).order_by(OutboundNotification.created_at).all()
+        statuses = [r.payload["status"] for r in rows]
+        assert statuses == ["responded", "answered", "answered", "completed"]
+
+        answered_rows = [r for r in rows if r.payload["status"] == "answered"]
+        assert len(answered_rows[0].payload["responses"]) == 1
+        assert answered_rows[0].payload["responses"][0]["field_key"] == "q1"
+        assert len(answered_rows[1].payload["responses"]) == 2
+        assert answered_rows[1].payload["responses"][1]["field_key"] == "q2"
+
+
 class TestHandleStatusSuppressionAfterTerminal:
     def _setup(self, db, service_status, unique="1"):
         comp = make_company(db, code=f"CESTATUS{unique}")

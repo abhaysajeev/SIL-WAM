@@ -4,7 +4,10 @@ app/services/notify_queue.py — enqueue outbound status notifications for clien
 Called from every place a Service or one of its Messages changes state that a
 client cares about:
   - conversation_engine.handle_status()     → message-level: sent | delivered | read
-  - conversation_engine.handle_inbound()    → service-level: responded (first CTA tap)
+  - conversation_engine.handle_inbound()    → service-level: responded (first CTA tap),
+                                               answered (fires once per recorded ServiceResponse,
+                                               so partial progress is visible even if the
+                                               customer stops replying before completion)
   - conversation_engine._complete_service() → service-level: completed
   - expiry_scheduler / queue_manager        → service-level: expired | failed
 
@@ -16,31 +19,43 @@ Only models are imported here (no service-layer imports) so this module can be
 safely imported from conversation_engine, queue_manager, and expiry_scheduler
 without circular-import risk.
 """
+from datetime import timezone
+from zoneinfo import ZoneInfo
+
 from sqlalchemy.orm import Session
 
 from app.models.api_key import CompanyApiKey
 from app.models.conversation import Message, Service, ServiceResponse
 from app.models.outbound_notification import OutboundNotification
 
+# respondedOn in the outbound payload is rendered in Dubai local time (UTC+4, no
+# DST) regardless of how it's stored — the DB column is UTC (DateTime(timezone=True)).
+_DUBAI_TZ = ZoneInfo("Asia/Dubai")
+
 # The status field is shown as a stable dashboard indicator on the client's side —
 # it must only ever move forward, never back. sent/delivered/read for individual
 # question messages must not reset it after the customer has already engaged
 # (responded) or the service has already reached a terminal state.
+#
+# "answered" is the one exception to "each status fires at most once": it fires
+# once per recorded ServiceResponse, so it's exempted from the equal-rank check
+# in enqueue_notification below rather than being deduped like the others.
 _STATUS_RANK = {
     "sent":      1,
     "delivered": 2,
     "read":      3,
     "responded": 4,
-    "completed": 5,
-    "expired":   5,
-    "failed":    5,
+    "answered":  5,
+    "completed": 6,
+    "expired":   6,
+    "failed":    6,
 }
 
 
 def enqueue_notification(
     db: Session,
     service: Service,
-    event_status: str,   # "sent" | "delivered" | "read" | "responded" | "completed" | "expired" | "failed"
+    event_status: str,   # "sent" | "delivered" | "read" | "responded" | "answered" | "completed" | "expired" | "failed"
     *,
     message: Message | None = None,
     note: str = "",
@@ -52,6 +67,8 @@ def enqueue_notification(
     Also a no-op if this event would move the client-visible status backward —
     see _STATUS_RANK. Once "responded" has fired, a later question's own
     sent/delivered/read must not revert the dashboard status to an earlier stage.
+    "answered" is exempt from that check — it's expected to fire once per question,
+    not once per service.
 
     note is accepted but not yet surfaced in the payload (message stays null) —
     client hasn't finalized what should populate it (e.g. stray/off-flow replies).
@@ -72,7 +89,7 @@ def enqueue_notification(
     ):
         return
 
-    if _STATUS_RANK.get(event_status, 0) <= _max_notified_rank(db, service.id):
+    if event_status != "answered" and _STATUS_RANK.get(event_status, 0) <= _max_notified_rank(db, service.id):
         return
 
     payload = _build_payload(db, service, event_status, message)
@@ -83,6 +100,14 @@ def enqueue_notification(
         notify_url = api_key.notify_url,
         payload    = payload,
     ))
+
+
+def _format_dubai(dt) -> str:
+    """Render a stored UTC timestamp as Dubai local time (UTC+4, no DST) in the
+    client-facing format: DD/MM/YYYY HH:MM:SS UTC+4:00."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_DUBAI_TZ).strftime("%d/%m/%Y %H:%M:%S") + " UTC+4:00"
 
 
 def _max_notified_rank(db: Session, service_id) -> int:
@@ -123,7 +148,8 @@ def _build_payload(
     # respondedOn is fixed to the customer's first-ever inbound interaction with this
     # service (tapping the template's CTA button counts, same as answering a question)
     # — same value repeated on every subsequent notification, not "when this event
-    # happened". Null until the customer engages at all.
+    # happened". Null until the customer engages at all. Rendered in Dubai local time
+    # (DD/MM/YYYY HH:MM:SS UTC+4:00) — see _format_dubai.
     first_inbound = (
         db.query(Message.created_at)
         .filter(
@@ -134,7 +160,7 @@ def _build_payload(
         .order_by(Message.created_at.asc())
         .first()
     )
-    responded_on = first_inbound[0].isoformat() if first_inbound else None
+    responded_on = _format_dubai(first_inbound[0]) if first_inbound else None
 
     return {
         "service_id":   service.service_id,

@@ -51,7 +51,7 @@ class Service(Base):
     Replaces the old sales_orders table.
 
     status values:   waiting | in_progress | completed | expired | failed
-    expired_reason:  timeout
+    expired_reason:  timeout | superseded
     failed_reason:   whatsapp_number_invalid | send_error
 
     Concurrency is unlimited: multiple services can be status="in_progress" for
