@@ -10,7 +10,7 @@ No FastAPI imports. No HTTPException. All failures logged, never raised.
 """
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,14 @@ from app.services import notify_queue, wa_sender
 from app.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
+
+# send_error is retried this many times total (1 original attempt + retries below)
+# before becoming terminal. whatsapp_number_invalid never retries — see
+# _fail_or_schedule_retry. Backoff is short (30s, then 2min) because a real customer
+# may be waiting mid-flow, unlike notify_scheduler's webhook retries which can wait
+# up to an hour with no UX cost.
+_MAX_SEND_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = [30, 120]  # index = attempts made so far, 0-indexed
 
 
 def enqueue_service(db: Session, service: Service, account: WhatsAppAccount) -> str:
@@ -103,17 +111,17 @@ def send_template_for_service(
 
     Called by send_scheduler, not the request path — this is the one place that
     actually talks to the Meta Graph API. template_sent is set True unconditionally
-    up front so a claimed row is never retried automatically, regardless of outcome.
+    up front so a claimed row is never picked up twice concurrently; a send_error
+    failure resets it back to False (with next_retry_at set) to re-enter the claim
+    pool for a bounded number of retries — see _fail_or_schedule_retry.
     """
     service.template_sent = True
+    service.send_attempts += 1
 
     mobile_no = _get_mobile(service)
     if not mobile_no:
         logger.error("send_template_for_service: no customer_mobile in service.data id=%s", service.id)
-        service.status = "failed"
-        service.failed_reason = "send_error"
-        _mark_queue_completed(db, service)
-        notify_queue.enqueue_notification(db, service, "failed", note="send_error")
+        _fail_or_schedule_retry(db, service, "send_error")
         return
 
     template = db.query(WhatsAppTemplate).filter(
@@ -122,10 +130,7 @@ def send_template_for_service(
 
     if not template:
         logger.error("send_template_for_service: template not found id=%s", service.template_id)
-        service.status = "failed"
-        service.failed_reason = "send_error"
-        _mark_queue_completed(db, service)
-        notify_queue.enqueue_notification(db, service, "failed", note="send_error")
+        _fail_or_schedule_retry(db, service, "send_error")
         return
 
     result = wa_sender.send_template(
@@ -157,20 +162,47 @@ def send_template_for_service(
     else:
         err = result.error or ""
         if "131026" in err:
-            service.failed_reason = "whatsapp_number_invalid"
+            # Permanent — retrying the same number would just fail identically every
+            # time. Client must submit a corrected number via the retry endpoint.
             logger.warning(
                 "Invalid WhatsApp number mobile=%s service=%s", mobile_no, service.service_id
             )
+            service.failed_reason = "whatsapp_number_invalid"
+            service.status = "failed"
+            _mark_queue_completed(db, service)
+            notify_queue.enqueue_notification(db, service, "failed", note=service.failed_reason)
         else:
-            service.failed_reason = "send_error"
             log_error(
                 f"Template send failed for service {service.service_id}",
                 f"queue_manager.send_template_for_service → {mobile_no}",
                 Exception(err),
             )
+            _fail_or_schedule_retry(db, service, "send_error")
+
+
+def _fail_or_schedule_retry(db: Session, service: Service, reason: str) -> None:
+    """
+    Called for a retryable (send_error) failure. Schedules another attempt if the
+    cap hasn't been reached yet; otherwise finalizes the service as terminally
+    failed, same as a non-retryable (whatsapp_number_invalid) failure.
+
+    service.send_attempts is incremented once per real attempt at the top of
+    send_template_for_service, before any failure branch is reached.
+    """
+    service.failed_reason = reason
+    if service.send_attempts < _MAX_SEND_ATTEMPTS:
+        delay = _RETRY_BACKOFF_SECONDS[service.send_attempts - 1]
+        service.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
+        service.template_sent = False  # re-enter send_scheduler's claim pool
+        logger.info(
+            "Scheduling retry %d/%d for service=%s in %ds",
+            service.send_attempts, _MAX_SEND_ATTEMPTS, service.service_id, delay,
+        )
+        # status stays "in_progress" — not done yet, don't touch the queue entry.
+    else:
         service.status = "failed"
         _mark_queue_completed(db, service)
-        notify_queue.enqueue_notification(db, service, "failed", note=service.failed_reason)
+        notify_queue.enqueue_notification(db, service, "failed", note=reason)
 
 
 def _mark_queue_completed(db: Session, service: Service) -> None:

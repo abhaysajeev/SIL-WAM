@@ -36,7 +36,7 @@ router = APIRouter(
     dependencies=[Depends(require("companies", "read"))],
 )
 
-GRAPH_BASE = "https://graph.facebook.com/v21.0"
+GRAPH_BASE = "https://graph.facebook.com/v22.0"
 
 
 def _get_company_or_404(company_id: uuid.UUID, db: Session) -> Company:
@@ -160,6 +160,7 @@ def meta_callback(
                     "client_id":     settings.FB_APP_ID,
                     "client_secret": settings.META_APP_SECRET,
                     "code":          payload.code,
+                    "redirect_uri":  "",
                 },
             )
         if token_res.status_code != 200:
@@ -430,6 +431,20 @@ def refresh_whatsapp_status(
                 _raise_if_meta_auth_error(waba_res.json())
                 acc.connection_status = "error"
 
+        # Self-heal: re-subscribe on every refresh, not just at initial connect.
+        # Accounts connected via manual-setup before this subscription step existed
+        # (or where subscription failed silently at connect time) are otherwise
+        # stuck forever — sends work, but inbound replies never arrive and nothing
+        # errors anywhere to flag it. Idempotent and non-fatal if it fails.
+        if acc.connection_status == "active":
+            with httpx.Client(timeout=15) as client:
+                sub_res = client.post(
+                    f"{GRAPH_BASE}/{acc.waba_id}/subscribed_apps",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+            if sub_res.status_code != 200:
+                logger.warning("WABA re-subscription failed (non-fatal): %s", sub_res.text)
+
         acc.last_sync_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(acc)
@@ -517,6 +532,20 @@ def manual_setup(
                 status_code=400,
                 detail=msg or "Could not verify credentials with Meta. Check your WABA ID and token.",
             )
+
+        # Step 1b — subscribe app to WABA — required to receive webhooks. Non-fatal:
+        # a subscription hiccup shouldn't block saving otherwise-valid credentials,
+        # but it means messages will send fine while inbound replies silently vanish
+        # until "Refresh Status" (which retries this) or manual-setup is re-run.
+        with httpx.Client(timeout=15) as client:
+            sub_res = client.post(
+                f"{GRAPH_BASE}/{waba_id}/subscribed_apps",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        if sub_res.status_code != 200:
+            logger.warning("WABA subscription failed (non-fatal): %s", sub_res.text)
+        else:
+            logger.info("WABA %s subscribed to app successfully", waba_id)
 
         # Try to fetch richer WABA fields separately — non-fatal if unavailable (sandbox/test tokens)
         waba_data: dict = {}

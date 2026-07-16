@@ -5,11 +5,16 @@ Authentication: X-API-Key header (get_api_company dependency).
 No JWT / no RBAC matrix. The API key scopes all operations to the company.
 
 Endpoints:
-  POST   /client-api/v1/services                       — ingest a new service flow
-  GET    /client-api/v1/services/{service_id}          — poll service status + results
-  PATCH  /client-api/v1/services/{service_id}/retry    — retry after invalid WA number
+  POST   /client-api/v1/services                          — ingest a new service flow
+  GET    /client-api/v1/services/{service_id}             — poll service status + results
+  PATCH  /client-api/v1/services/{reference_id}/retry     — retry after invalid WA number
+                                                              (reference_id is the internal
+                                                              UUID returned as "reference_id"
+                                                              in the ingest/retry response,
+                                                              not the client's own service_id)
 """
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -228,21 +233,23 @@ def get_service(
     )
 
 
-# ── PATCH /services/{service_id}/retry ───────────────────────────────────────
+# ── PATCH /services/{reference_id}/retry ─────────────────────────────────────
+#    reference_id is our internal Service.id UUID (returned as "reference_id" in
+#    every ingest/retry response) — not the client's own service_id string.
 
-@router.patch("/services/{service_id}/retry", response_model=ServiceIngestResponse)
+@router.patch("/services/{reference_id}/retry", response_model=ServiceIngestResponse)
 def retry_service(
-    service_id: str,
+    reference_id: uuid.UUID,
     payload: ServiceRetryRequest,
     company: Company = Depends(get_api_company),
     db: Session = Depends(get_db),
 ):
     service = db.query(Service).filter(
-        Service.service_id == service_id,
+        Service.id == reference_id,
         Service.company_id == company.id,
     ).first()
     if not service:
-        raise HTTPException(404, f"service_id '{service_id}' not found")
+        raise HTTPException(404, f"reference_id '{reference_id}' not found")
 
     if service.status != "failed" or service.failed_reason != "whatsapp_number_invalid":
         raise HTTPException(
@@ -265,6 +272,8 @@ def retry_service(
     service.status        = "waiting"
     service.failed_reason = None
     service.template_sent = False
+    service.send_attempts = 0
+    service.next_retry_at = None
 
     # Update or create conversation for new mobile
     conv = db.query(Conversation).filter(
@@ -285,14 +294,14 @@ def retry_service(
     except Exception as exc:
         db.rollback()
         log_error(
-            f"Service retry failed service_id={service_id}",
-            "PATCH /client-api/v1/services/{service_id}/retry",
+            f"Service retry failed reference_id={reference_id}",
+            "PATCH /client-api/v1/services/{reference_id}/retry",
             exc,
         )
         raise HTTPException(500, "Internal error during retry")
 
     return ServiceIngestResponse(
-        service_id=service_id,
+        service_id=service.service_id,
         reference_id=service.id,
         status=queue_status,
     )

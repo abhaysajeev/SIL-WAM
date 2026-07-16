@@ -1,9 +1,13 @@
 """client-api/v1/services — ingest/get/retry endpoints, X-API-Key auth."""
+import uuid
 from unittest.mock import patch
 
 from app.models.conversation import Service
 from app.services.wa_sender import SendResult
-from tests.conftest import make_api_key, make_company, make_wa_account, make_wa_template
+from tests.conftest import (
+    make_api_key, make_company, make_conversation, make_queue_entry,
+    make_service, make_wa_account, make_wa_template,
+)
 
 _MOCK_SEND = SendResult(ok=True, meta_message_id="wamid.clienttest", error=None)
 
@@ -136,3 +140,83 @@ class TestGetService:
         _setup(db)
         r = client.get("/client-api/v1/services/does-not-exist", headers=_headers())
         assert r.status_code == 404
+
+
+class TestRetryEndpoint:
+    """PATCH /services/{reference_id}/retry — keyed by the internal reference_id
+    (Service.id UUID), not the client's own service_id string."""
+
+    def _failed_invalid_number_service(self, db, comp, key, service_id, mobile_no):
+        conv = make_conversation(db, comp.id, mobile_no)
+        template = make_wa_template(db, comp.id, name="order_confirm")
+        svc = make_service(
+            db, conv.id, comp.id, service_id=service_id, status="failed",
+            mobile_no=mobile_no, api_key_id=key.id, template_sent=True,
+        )
+        svc.template_id = template.id
+        svc.failed_reason = "whatsapp_number_invalid"
+        svc.send_attempts = 1
+        db.commit()
+        make_queue_entry(db, svc, mobile_no=mobile_no, status="completed")
+        return svc
+
+    def test_retry_by_reference_id_succeeds_and_resets_attempts(self, client, db):
+        comp, key = _setup(db)
+        svc = self._failed_invalid_number_service(db, comp, key, "ORD-RETRY-1", "919000000099")
+
+        with patch("app.services.wa_sender.send_template", return_value=_MOCK_SEND):
+            r = client.patch(
+                f"/client-api/v1/services/{svc.id}/retry",
+                json={"customer_mobile": "919000000098"},
+                headers=_headers(),
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["reference_id"] == str(svc.id)
+        assert body["service_id"] == svc.service_id
+
+        db.refresh(svc)
+        assert svc.status in ("in_progress", "waiting")
+        assert svc.failed_reason is None
+        assert svc.send_attempts == 0          # fresh retry budget after correction
+        assert svc.next_retry_at is None
+
+    def test_old_service_id_style_url_no_longer_matches(self, client, db):
+        comp, key = _setup(db)
+        svc = self._failed_invalid_number_service(db, comp, key, "ORD-RETRY-2", "919000000097")
+
+        # svc.service_id is a plain string ("ORD-RETRY-2"), not a UUID — the path
+        # param is now typed uuid.UUID, so this must fail validation, not 200.
+        r = client.patch(
+            f"/client-api/v1/services/{svc.service_id}/retry",
+            json={"customer_mobile": "919000000096"},
+            headers=_headers(),
+        )
+        assert r.status_code == 422
+
+    def test_unknown_reference_id_returns_404(self, client, db):
+        _setup(db)
+        r = client.patch(
+            f"/client-api/v1/services/{uuid.uuid4()}/retry",
+            json={"customer_mobile": "919000000095"},
+            headers=_headers(),
+        )
+        assert r.status_code == 404
+
+    def test_send_error_reason_is_rejected(self, client, db):
+        comp, key = _setup(db)
+        conv = make_conversation(db, comp.id, "919000000094")
+        svc = make_service(
+            db, conv.id, comp.id, service_id="ORD-RETRY-3", status="failed",
+            mobile_no="919000000094", api_key_id=key.id, template_sent=True,
+        )
+        svc.failed_reason = "send_error"
+        db.commit()
+
+        r = client.patch(
+            f"/client-api/v1/services/{svc.id}/retry",
+            json={"customer_mobile": "919000000093"},
+            headers=_headers(),
+        )
+        assert r.status_code == 409

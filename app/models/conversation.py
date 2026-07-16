@@ -54,6 +54,10 @@ class Service(Base):
     expired_reason:  timeout | superseded
     failed_reason:   whatsapp_number_invalid | send_error
 
+    send_error is retried automatically (see queue_manager._fail_or_schedule_retry)
+    up to _MAX_SEND_ATTEMPTS before becoming terminal; whatsapp_number_invalid never
+    auto-retries — client must submit a corrected number via the retry endpoint.
+
     Concurrency is unlimited: multiple services can be status="in_progress" for
     the same (company_id, mobile_no) at once — see queue_manager.enqueue_service.
     """
@@ -79,6 +83,11 @@ class Service(Base):
     # A service can be status="in_progress" with template_sent=False — it's the active
     # flow for its mobile number but the actual Graph API call is still pending pickup.
     template_sent        = Column(Boolean, nullable=False, default=False, index=True)
+    # Count of send attempts made so far — drives the retry cap in queue_manager.
+    send_attempts        = Column(Integer, nullable=False, default=0)
+    # When a retryable send_error is eligible to be re-attempted. NULL = eligible now
+    # (first attempt, or no retry pending). send_scheduler's claim query checks this.
+    next_retry_at        = Column(DateTime(timezone=True), nullable=True, index=True)
     expired_reason       = Column(String(50), nullable=True)
     failed_reason        = Column(String(100), nullable=True)
     # Client-owned payload stored as-is: order details, customer info, etc.

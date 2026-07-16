@@ -14,8 +14,10 @@ The scheduler is a BackgroundScheduler (runs in a daemon thread), same pattern
 as expiry_scheduler. Each job invocation opens its own DB session.
 """
 import logging
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from sqlalchemy import or_
 
 from app.core.database import SessionLocal
 from app.models.conversation import Service
@@ -80,11 +82,15 @@ def _send_one_pending(db) -> bool:
 
     Returns True if a service was claimed and processed, False if none pending.
     """
+    now = datetime.now(timezone.utc)
     service = (
         db.query(Service)
         .filter(
             Service.status == "in_progress",
             Service.template_sent.is_(False),
+            # NULL = eligible immediately (first attempt, or no retry pending);
+            # otherwise only eligible once its backoff window has elapsed.
+            or_(Service.next_retry_at.is_(None), Service.next_retry_at <= now),
         )
         .order_by(Service.created_at)
         .with_for_update(skip_locked=True)
@@ -103,8 +109,8 @@ def _send_one_pending(db) -> bool:
             service.company_id, service.service_id,
         )
         service.template_sent = True
-        service.status = "failed"
-        service.failed_reason = "send_error"
+        service.send_attempts += 1
+        queue_manager._fail_or_schedule_retry(db, service, "send_error")
     else:
         try:
             queue_manager.send_template_for_service(db, service, account)
@@ -114,9 +120,10 @@ def _send_one_pending(db) -> bool:
                 "send_scheduler._send_one_pending",
                 exc,
             )
-            service.template_sent = True
-            service.status = "failed"
-            service.failed_reason = "send_error"
+            # send_template_for_service already set template_sent=True and
+            # incremented send_attempts as its very first action, before any
+            # exception-prone code — don't double-count that here.
+            queue_manager._fail_or_schedule_retry(db, service, "send_error")
 
     db.commit()
     return True
