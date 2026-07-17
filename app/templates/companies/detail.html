@@ -1599,7 +1599,12 @@
   window.addEventListener('message', function (event) {
     // Accept both www.facebook.com and facebook.com origins
     if (!event.origin.includes('facebook.com')) return;
+    // event.data arrives as a JSON string, not an object — must be parsed first
+    // or d.type is always undefined and this listener silently never fires.
     var d = event.data;
+    if (typeof d === 'string') {
+      try { d = JSON.parse(d); } catch (e) { return; }
+    }
     if (!d || d.type !== 'WA_EMBEDDED_SIGNUP') return;
 
     if (d.event === 'FINISH' || d.event === 'FINISH_ONLY_WABA') {
@@ -1619,47 +1624,58 @@
     }
   });
 
-  /* Launch button */
+  /* Launch button — our own OAuth flow in a popup window.
+     The JS-SDK popup (FB.login) is deliberately not used: Meta never emits the
+     WA_EMBEDDED_SIGNUP event in this setup, and the popup's fallback code is
+     bound to the SDK's internal redirect target so it can never be exchanged
+     server-side (OAuth 36008). /meta/oauth/start runs the same dialog with
+     our own redirect_uri — the exchange works. The callback page posts a
+     META_OAUTH_RESULT message back to this page and closes the popup. */
+  var metaPopup = null;
+  var metaPopupPoll = null;
+
+  function resetLaunchBtn() {
+    if (metaPopupPoll) { clearInterval(metaPopupPoll); metaPopupPoll = null; }
+    launchMetaBtn && launchMetaBtn.classList.remove('loading');
+    launchMetaBtn && (launchMetaBtn.disabled = false);
+  }
+
   launchMetaBtn && launchMetaBtn.addEventListener('click', function () {
-    if (typeof FB === 'undefined') {
-      showStepError(1, 'Meta SDK not loaded. Check your connection and try again.');
+    var w = 760, h = 850;
+    var left = Math.max(0, (screen.width - w) / 2);
+    var top = Math.max(0, (screen.height - h) / 2);
+    metaPopup = window.open(
+      '/meta/oauth/start/' + COMPANY_ID,
+      'metaSignup',
+      'width=' + w + ',height=' + h + ',left=' + left + ',top=' + top +
+      ',menubar=no,toolbar=no,location=yes,status=no,scrollbars=yes'
+    );
+    if (!metaPopup) {
+      showStepError(1, 'Popup was blocked by the browser. Allow popups for this site and try again.');
       return;
     }
-    clearStepError(1);
     launchMetaBtn.classList.add('loading');
     launchMetaBtn.disabled = true;
+    // Re-enable the button if the user closes the popup without finishing.
+    metaPopupPoll = setInterval(function () {
+      if (metaPopup && metaPopup.closed) resetLaunchBtn();
+    }, 800);
+  });
 
-    // Timeout safety net — if popup closes without any message, unblock after 60s
-    var loginTimeout = setTimeout(function () {
-      if (launchMetaBtn.classList.contains('loading')) {
-        launchMetaBtn.classList.remove('loading');
-        launchMetaBtn.disabled = false;
-        showStepError(1, 'The Meta popup closed without completing. Please try again.');
-      }
-    }, 60000);
-
-    FB.login(function (response) {
-      clearTimeout(loginTimeout);
-      // Fallback: if EBS message event didn't fire but FB login returned a code
-      if (response.authResponse && response.authResponse.code) {
-        launchMetaBtn.classList.remove('loading');
-        launchMetaBtn.disabled = false;
-        handleMetaCode(response.authResponse.code, null, null);
-      } else if (!response.authResponse) {
-        // User cancelled or popup blocked
-        launchMetaBtn.classList.remove('loading');
-        launchMetaBtn.disabled = false;
-        if (response.status !== 'connected') {
-          showStepError(1, 'Login was cancelled or not completed. Please try again.');
-        }
-      }
-      // If authResponse exists but no code: EBS message event will handle it
-    }, {
-      config_id:                      META_CONFIG_ID,
-      response_type:                  'code',
-      override_default_response_type: true,
-      extras:                         { sessionInfoVersion: 3 },
-    });
+  /* Result from our own /meta/oauth/callback popup (same-origin message) */
+  window.addEventListener('message', function (event) {
+    if (event.origin !== window.location.origin) return;
+    var d = event.data;
+    if (!d || d.type !== 'META_OAUTH_RESULT') return;
+    resetLaunchBtn();
+    if (d.ok) {
+      isOnboarding = false;  // disarm the beforeunload guard before reloading
+      clearLocal();
+      window.location.hash = '#whatsapp';
+      window.location.reload();
+    } else {
+      showStepError(1, (d.title || 'Meta connection failed') + ' — details are in the signup window.');
+    }
   });
 
   /* ── Finish ───────────────────────────────────────────── */

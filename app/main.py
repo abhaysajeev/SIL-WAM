@@ -51,6 +51,7 @@ from app.routes.services_pages import router as services_pages_router
 from app.routes.conversations_pages import router as conversations_pages_router
 from app.routes.webhook_config_pages import router as webhook_config_pages_router
 from app.routes.demo_pages import router as demo_pages_router
+from app.routes.meta_oauth_pages import router as meta_oauth_pages_router
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -157,6 +158,7 @@ app.include_router(services_pages_router)
 app.include_router(conversations_pages_router)
 app.include_router(webhook_config_pages_router)
 app.include_router(demo_pages_router)
+app.include_router(meta_oauth_pages_router)
 
 
 @app.get("/", response_class=HTMLResponse)

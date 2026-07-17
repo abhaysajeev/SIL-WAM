@@ -156,11 +156,14 @@ def meta_callback(
         with httpx.Client(timeout=15) as client:
             token_res = client.get(
                 f"{GRAPH_BASE}/oauth/access_token",
+                # No redirect_uri here: codes delivered via the WA_EMBEDDED_SIGNUP
+                # message event are exchanged with client_id+client_secret+code only.
+                # Sending redirect_uri (even empty) fails the exchange with OAuth
+                # subcode 36008 because the dialog never used one for these codes.
                 params={
                     "client_id":     settings.FB_APP_ID,
                     "client_secret": settings.META_APP_SECRET,
                     "code":          payload.code,
-                    "redirect_uri":  "",
                 },
             )
         if token_res.status_code != 200:
@@ -192,143 +195,10 @@ def meta_callback(
 
         token_expiry = datetime.now(timezone.utc) + timedelta(days=60)
 
-        # waba_id and phone_number_id come from the EBS message event.
-        # If absent (regular FB login fallback), query them from the Graph API.
-        waba_id = payload.waba_id
-        phone_number_id = payload.phone_number_id
-
-        if not waba_id:
-            # Fallback: query WABA list
-            with httpx.Client(timeout=15) as client:
-                waba_list_res = client.get(
-                    f"{GRAPH_BASE}/me/whatsapp_business_accounts",
-                    params={"fields": "id,name", "access_token": access_token},
-                )
-            if waba_list_res.status_code == 200:
-                waba_list = waba_list_res.json().get("data", [])
-                if waba_list:
-                    waba_id = waba_list[0]["id"]
-                else:
-                    raise HTTPException(status_code=400, detail="No WhatsApp Business Account found for this account.")
-            else:
-                raise HTTPException(status_code=400, detail="Could not retrieve WhatsApp Business Account.")
-
-        if not phone_number_id and waba_id:
-            # Fallback: query phone numbers for the WABA
-            with httpx.Client(timeout=15) as client:
-                phones_fallback = client.get(
-                    f"{GRAPH_BASE}/{waba_id}/phone_numbers",
-                    params={"fields": "id,display_phone_number,verified_name,status", "access_token": access_token},
-                )
-            if phones_fallback.status_code == 200:
-                phones = phones_fallback.json().get("data", [])
-                if phones:
-                    phone_number_id = phones[0]["id"]
-
-        # 3. Fetch phone number details
-        if not phone_number_id:
-            raise HTTPException(
-                status_code=400,
-                detail="No phone number found on your WhatsApp Business Account. Add a verified phone number in Meta Business Manager before connecting.",
-            )
-
-        display_phone_number = None
-        phone_status = "unknown"
-        business_name = ""
-        with httpx.Client(timeout=15) as client:
-            phone_res = client.get(
-                f"{GRAPH_BASE}/{phone_number_id}",
-                params={
-                    "fields":       "id,display_phone_number,verified_name,status,quality_rating",
-                    "access_token": access_token,
-                },
-            )
-        if phone_res.status_code == 200:
-            phone_data = phone_res.json()
-            display_phone_number = phone_data.get("display_phone_number")
-            business_name        = phone_data.get("verified_name", "")
-            phone_status         = phone_data.get("status", "unknown")
-        else:
-            logger.warning("Phone number fetch failed: %s", phone_res.text)
-
-        # 4. Fetch WABA details — name and on_behalf_of_business_info (business_id)
-        business_id = None
-        with httpx.Client(timeout=15) as client:
-            waba_res = client.get(
-                f"{GRAPH_BASE}/{waba_id}",
-                params={
-                    "fields":       "id,name,on_behalf_of_business_info,ownership_type",
-                    "access_token": access_token,
-                },
-            )
-        if waba_res.status_code == 200:
-            waba_data = waba_res.json()
-            if not business_name:
-                business_name = waba_data.get("name", "")
-            # on_behalf_of_business_info is a nested object with an "id" field
-            obo = waba_data.get("on_behalf_of_business_info") or {}
-            business_id = obo.get("id")
-        else:
-            logger.warning("WABA details fetch failed: %s", waba_res.text)
-
-        # 5. Subscribe app to WABA — required to receive webhooks and make API calls
-        with httpx.Client(timeout=15) as client:
-            sub_res = client.post(
-                f"{GRAPH_BASE}/{waba_id}/subscribed_apps",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-        if sub_res.status_code != 200:
-            logger.warning("WABA subscription failed (non-fatal): %s", sub_res.text)
-        else:
-            logger.info("WABA %s subscribed to app successfully", waba_id)
-
-        # Determine connection status from phone status
-        connection_status = "active" if phone_status == "CONNECTED" else "pending"
-
-        # 6. Upsert WhatsAppAccount
-        encrypted_token = encrypt_token(access_token)
-        acc = db.query(WhatsAppAccount).filter(
-            WhatsAppAccount.company_id == company_id
-        ).first()
-        now = datetime.now(timezone.utc)
-        if acc:
-            acc.waba_id = waba_id
-            acc.phone_number_id = phone_number_id
-            acc.display_phone_number = display_phone_number
-            acc.business_name = business_name
-            acc.business_id = business_id
-            acc.access_token_encrypted = encrypted_token
-            acc.token_expiry = token_expiry
-            acc.connection_status = connection_status
-            acc.last_sync_at = now
-        else:
-            acc = WhatsAppAccount(
-                company_id=company_id,
-                waba_id=waba_id,
-                phone_number_id=phone_number_id,
-                display_phone_number=display_phone_number,
-                business_name=business_name,
-                business_id=business_id,
-                access_token_encrypted=encrypted_token,
-                token_expiry=token_expiry,
-                connection_status=connection_status,
-                last_sync_at=now,
-            )
-            db.add(acc)
-
-        # 6. Complete any active onboarding session
-        session = db.query(WhatsAppOnboardingSession).filter(
-            WhatsAppOnboardingSession.company_id == company_id,
-            WhatsAppOnboardingSession.status == "in_progress",
-        ).order_by(WhatsAppOnboardingSession.created_at.desc()).first()
-        if session:
-            session.status = "completed"
-            session.last_completed_step = 5
-            session.current_step = 5
-
-        db.commit()
-        db.refresh(acc)
-        return {"success": True, "account": _account_to_dict(acc)}
+        return _finalize_meta_connection(
+            db, company_id, access_token, token_expiry,
+            payload.waba_id, payload.phone_number_id,
+        )
 
     except HTTPException:
         raise
@@ -341,6 +211,158 @@ def meta_callback(
             request=request,
         )
         raise HTTPException(status_code=500, detail="Connection failed. Please try again.")
+
+
+def _finalize_meta_connection(
+    db: Session,
+    company_id: uuid.UUID,
+    access_token: str,
+    token_expiry: datetime,
+    waba_id: str = None,
+    phone_number_id: str = None,
+) -> dict:
+    """
+    Shared tail of the Meta connection flow — everything after an access
+    token is in hand. Used by the JS-SDK popup callback (POST
+    /{company_id}/callback) and the full-page redirect flow
+    (GET /meta/oauth/callback). Resolves the WABA / phone number when not
+    supplied, fetches their details, subscribes the app to the WABA
+    (required for inbound webhooks), and upserts the account row.
+    Raises HTTPException on unrecoverable failures; callers handle logging.
+    """
+
+    if not waba_id:
+        # Fallback: query WABA list
+        with httpx.Client(timeout=15) as client:
+            waba_list_res = client.get(
+                f"{GRAPH_BASE}/me/whatsapp_business_accounts",
+                params={"fields": "id,name", "access_token": access_token},
+            )
+        if waba_list_res.status_code == 200:
+            waba_list = waba_list_res.json().get("data", [])
+            if waba_list:
+                waba_id = waba_list[0]["id"]
+            else:
+                raise HTTPException(status_code=400, detail="No WhatsApp Business Account found for this account.")
+        else:
+            raise HTTPException(status_code=400, detail="Could not retrieve WhatsApp Business Account.")
+
+    if not phone_number_id and waba_id:
+        # Fallback: query phone numbers for the WABA
+        with httpx.Client(timeout=15) as client:
+            phones_fallback = client.get(
+                f"{GRAPH_BASE}/{waba_id}/phone_numbers",
+                params={"fields": "id,display_phone_number,verified_name,status", "access_token": access_token},
+            )
+        if phones_fallback.status_code == 200:
+            phones = phones_fallback.json().get("data", [])
+            if phones:
+                phone_number_id = phones[0]["id"]
+
+    # 3. Fetch phone number details
+    if not phone_number_id:
+        raise HTTPException(
+            status_code=400,
+            detail="No phone number found on your WhatsApp Business Account. Add a verified phone number in Meta Business Manager before connecting.",
+        )
+
+    display_phone_number = None
+    phone_status = "unknown"
+    business_name = ""
+    with httpx.Client(timeout=15) as client:
+        phone_res = client.get(
+            f"{GRAPH_BASE}/{phone_number_id}",
+            params={
+                "fields":       "id,display_phone_number,verified_name,status,quality_rating",
+                "access_token": access_token,
+            },
+        )
+    if phone_res.status_code == 200:
+        phone_data = phone_res.json()
+        display_phone_number = phone_data.get("display_phone_number")
+        business_name        = phone_data.get("verified_name", "")
+        phone_status         = phone_data.get("status", "unknown")
+    else:
+        logger.warning("Phone number fetch failed: %s", phone_res.text)
+
+    # 4. Fetch WABA details — name and on_behalf_of_business_info (business_id)
+    business_id = None
+    with httpx.Client(timeout=15) as client:
+        waba_res = client.get(
+            f"{GRAPH_BASE}/{waba_id}",
+            params={
+                "fields":       "id,name,on_behalf_of_business_info,ownership_type",
+                "access_token": access_token,
+            },
+        )
+    if waba_res.status_code == 200:
+        waba_data = waba_res.json()
+        if not business_name:
+            business_name = waba_data.get("name", "")
+        # on_behalf_of_business_info is a nested object with an "id" field
+        obo = waba_data.get("on_behalf_of_business_info") or {}
+        business_id = obo.get("id")
+    else:
+        logger.warning("WABA details fetch failed: %s", waba_res.text)
+
+    # 5. Subscribe app to WABA — required to receive webhooks and make API calls
+    with httpx.Client(timeout=15) as client:
+        sub_res = client.post(
+            f"{GRAPH_BASE}/{waba_id}/subscribed_apps",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    if sub_res.status_code != 200:
+        logger.warning("WABA subscription failed (non-fatal): %s", sub_res.text)
+    else:
+        logger.info("WABA %s subscribed to app successfully", waba_id)
+
+    # Determine connection status from phone status
+    connection_status = "active" if phone_status == "CONNECTED" else "pending"
+
+    # 6. Upsert WhatsAppAccount
+    encrypted_token = encrypt_token(access_token)
+    acc = db.query(WhatsAppAccount).filter(
+        WhatsAppAccount.company_id == company_id
+    ).first()
+    now = datetime.now(timezone.utc)
+    if acc:
+        acc.waba_id = waba_id
+        acc.phone_number_id = phone_number_id
+        acc.display_phone_number = display_phone_number
+        acc.business_name = business_name
+        acc.business_id = business_id
+        acc.access_token_encrypted = encrypted_token
+        acc.token_expiry = token_expiry
+        acc.connection_status = connection_status
+        acc.last_sync_at = now
+    else:
+        acc = WhatsAppAccount(
+            company_id=company_id,
+            waba_id=waba_id,
+            phone_number_id=phone_number_id,
+            display_phone_number=display_phone_number,
+            business_name=business_name,
+            business_id=business_id,
+            access_token_encrypted=encrypted_token,
+            token_expiry=token_expiry,
+            connection_status=connection_status,
+            last_sync_at=now,
+        )
+        db.add(acc)
+
+    # 6. Complete any active onboarding session
+    session = db.query(WhatsAppOnboardingSession).filter(
+        WhatsAppOnboardingSession.company_id == company_id,
+        WhatsAppOnboardingSession.status == "in_progress",
+    ).order_by(WhatsAppOnboardingSession.created_at.desc()).first()
+    if session:
+        session.status = "completed"
+        session.last_completed_step = 5
+        session.current_step = 5
+
+    db.commit()
+    db.refresh(acc)
+    return {"success": True, "account": _account_to_dict(acc)}
 
 
 # ── DELETE disconnect ─────────────────────────────────────────
