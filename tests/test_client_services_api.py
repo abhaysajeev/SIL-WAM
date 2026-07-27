@@ -143,7 +143,7 @@ class TestGetService:
 
 
 class TestRetryEndpoint:
-    """PATCH /services/{reference_id}/retry — keyed by the internal reference_id
+    """POST /services/{reference_id}/retry — keyed by the internal reference_id
     (Service.id UUID), not the client's own service_id string."""
 
     def _failed_invalid_number_service(self, db, comp, key, service_id, mobile_no):
@@ -165,7 +165,7 @@ class TestRetryEndpoint:
         svc = self._failed_invalid_number_service(db, comp, key, "ORD-RETRY-1", "919000000099")
 
         with patch("app.services.wa_sender.send_template", return_value=_MOCK_SEND):
-            r = client.patch(
+            r = client.post(
                 f"/client-api/v1/services/{svc.id}/retry",
                 json={"customer_mobile": "919000000098"},
                 headers=_headers(),
@@ -188,7 +188,7 @@ class TestRetryEndpoint:
 
         # svc.service_id is a plain string ("ORD-RETRY-2"), not a UUID — the path
         # param is now typed uuid.UUID, so this must fail validation, not 200.
-        r = client.patch(
+        r = client.post(
             f"/client-api/v1/services/{svc.service_id}/retry",
             json={"customer_mobile": "919000000096"},
             headers=_headers(),
@@ -197,7 +197,7 @@ class TestRetryEndpoint:
 
     def test_unknown_reference_id_returns_404(self, client, db):
         _setup(db)
-        r = client.patch(
+        r = client.post(
             f"/client-api/v1/services/{uuid.uuid4()}/retry",
             json={"customer_mobile": "919000000095"},
             headers=_headers(),
@@ -214,7 +214,7 @@ class TestRetryEndpoint:
         svc.failed_reason = "send_error"
         db.commit()
 
-        r = client.patch(
+        r = client.post(
             f"/client-api/v1/services/{svc.id}/retry",
             json={"customer_mobile": "919000000093"},
             headers=_headers(),

@@ -7,7 +7,7 @@ No JWT / no RBAC matrix. The API key scopes all operations to the company.
 Endpoints:
   POST   /client-api/v1/services                          — ingest a new service flow
   GET    /client-api/v1/services/{service_id}             — poll service status + results
-  PATCH  /client-api/v1/services/{reference_id}/retry     — retry after invalid WA number
+  POST   /client-api/v1/services/{reference_id}/retry     — retry after invalid WA number
                                                               (reference_id is the internal
                                                               UUID returned as "reference_id"
                                                               in the ingest/retry response,
@@ -233,11 +233,11 @@ def get_service(
     )
 
 
-# ── PATCH /services/{reference_id}/retry ─────────────────────────────────────
+# ── POST /services/{reference_id}/retry ──────────────────────────────────────
 #    reference_id is our internal Service.id UUID (returned as "reference_id" in
 #    every ingest/retry response) — not the client's own service_id string.
 
-@router.patch("/services/{reference_id}/retry", response_model=ServiceIngestResponse)
+@router.post("/services/{reference_id}/retry", response_model=ServiceIngestResponse)
 def retry_service(
     reference_id: uuid.UUID,
     payload: ServiceRetryRequest,
@@ -295,7 +295,7 @@ def retry_service(
         db.rollback()
         log_error(
             f"Service retry failed reference_id={reference_id}",
-            "PATCH /client-api/v1/services/{reference_id}/retry",
+            "POST /client-api/v1/services/{reference_id}/retry",
             exc,
         )
         raise HTTPException(500, "Internal error during retry")

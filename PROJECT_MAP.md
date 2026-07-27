@@ -157,7 +157,8 @@ External systems (e.g. the .NET SFA) authenticate with `X-API-Key` and:
 - `POST /services` — ingest a new service/order → enqueued via `queue_manager`,
   template send happens asynchronously via `send_scheduler`.
 - `GET /services/{service_id}` — poll status.
-- `PATCH /services/{service_id}/retry` — retry a failed service.
+- `POST /services/{reference_id}/retry` — retry a failed service (reference_id is the
+  internal Service.id UUID, not the client's service_id).
 
 Status changes flow back out via `outbound_notifications` → `notify_scheduler` → the
 `notify_url` recorded on the `CompanyApiKey` that ingested the service (dashboard
