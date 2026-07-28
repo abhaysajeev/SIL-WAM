@@ -16,7 +16,10 @@ def _validate_mobile(v: str) -> str:
             f"customer_mobile '{cleaned}' is not a valid phone number "
             "(must be 7–15 digits, optional leading +, no spaces or dashes)"
         )
-    return cleaned
+    # Normalize to digits-only — Meta's inbound webhook `from` field never
+    # includes a leading '+', so Conversation.mobile_no must be stored the same
+    # way or inbound replies can't be matched back to the right conversation.
+    return cleaned.lstrip("+")
 
 
 # ── Inbound: client places a service request ──────────────────────────────────
@@ -53,7 +56,7 @@ class ServiceIngestRequest(BaseModel):
         mobile = v.get("customer_mobile")
         if not mobile:
             raise ValueError("data.customer_mobile is required")
-        _validate_mobile(str(mobile))
+        v["customer_mobile"] = _validate_mobile(str(mobile))
         return v
 
 

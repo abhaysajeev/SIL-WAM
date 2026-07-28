@@ -30,6 +30,7 @@ from app.schemas.service import (
     ServiceIngestResponse,
     ServiceResponseItem,
     ServiceRetryRequest,
+    _validate_mobile,
 )
 from app.services import queue_manager
 from app.utils.error_logger import log_error
@@ -136,6 +137,14 @@ def ingest_service(
         customer_mobile = _get_nested(resolver_ctx, template.mobile_mapping)
     else:
         customer_mobile = str(service_data.get("customer_mobile", ""))
+
+    # Normalize regardless of which path produced it — Meta's inbound webhook `from`
+    # field never includes a leading '+', so Conversation.mobile_no must match that
+    # format or inbound replies can't be routed back to the right conversation/service.
+    try:
+        customer_mobile = _validate_mobile(customer_mobile)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
     service_data["customer_mobile"] = customer_mobile
 

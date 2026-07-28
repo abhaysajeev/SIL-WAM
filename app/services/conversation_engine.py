@@ -83,21 +83,9 @@ def handle_inbound(db: Session, account: WhatsAppAccount, msg: dict) -> None:
     elif msg_type == "text":
         service = _resolve_service_from_context(db, context_wamid)  # rare, but honor if Meta attaches it
         if service is None:
-            candidates = (
-                db.query(Service)
-                .filter(Service.conversation_id == conv.id, Service.status == "in_progress")
-                .all()
-            )
-            awaiting = [
-                s for s in candidates
-                if any(
-                    q.get("answer_type") == 2 and q.get("dispatched") == 1 and q.get("sent") == 0
-                    for q in (s.questions or [])
-                )
-            ]
-            if len(awaiting) == 1:
-                service = awaiting[0]
-            # 0 or >1 awaiting → ambiguous/none → stays out-of-flow, matching prior behavior
+            service, stale = _resolve_awaiting_free_text_service(db, conv.id)
+            for blocker in stale:
+                _supersede_stalled_free_text(db, blocker, account)
 
     # No status filter here — a duplicate/retried webhook for an already-completed
     # service must still find this row (its status is now "completed", not
@@ -350,11 +338,16 @@ def _find_free_text_blockers(db: Session, conversation_id, exclude_service_id) -
     # change made moments earlier in the same transaction isn't visible to this
     # query until flushed.
     db.flush()
+    # FOR UPDATE: without this, two overlapping transactions firing free-text
+    # questions for the same conversation can both read "0 blockers" before
+    # either commits, leaving two services simultaneously dispatched/unanswered
+    # — the race this function exists to prevent. The lock is scoped to this one
+    # conversation's in_progress rows, so unrelated customers are never blocked.
     candidates = db.query(Service).filter(
         Service.conversation_id == conversation_id,
         Service.status == "in_progress",
         Service.id != exclude_service_id,
-    )
+    ).with_for_update()
     return [
         svc for svc in candidates.all()
         if any(
@@ -362,6 +355,58 @@ def _find_free_text_blockers(db: Session, conversation_id, exclude_service_id) -
             for q in (svc.questions or [])
         )
     ]
+
+
+def _resolve_awaiting_free_text_service(
+    db: Session, conversation_id
+) -> tuple[Service | None, list[Service]]:
+    """Resolve which in_progress service a plain-text reply (with no context.id)
+    belongs to, when exactly-one-awaiting can't be assumed.
+
+    Locks this conversation's in_progress services (see _find_free_text_blockers)
+    so this never races with a concurrent _fire_next_question call for the same
+    customer. Fire-time superseding normally keeps at most one service awaiting
+    free text, but historical/stale state or a closed race window can still leave
+    more than one — rather than dropping the reply as ambiguous, the most
+    recently dispatched question wins (the customer's latest message is never
+    held hostage by a stale, forgotten order) and the rest are returned for the
+    caller to supersede via _supersede_stalled_free_text.
+    """
+    db.flush()
+    candidates = (
+        db.query(Service)
+        .filter(Service.conversation_id == conversation_id, Service.status == "in_progress")
+        .with_for_update()
+        .all()
+    )
+    awaiting = [
+        s for s in candidates
+        if any(
+            q.get("answer_type") == 2 and q.get("dispatched") == 1 and q.get("sent") == 0
+            for q in (s.questions or [])
+        )
+    ]
+    if not awaiting:
+        return None, []
+    if len(awaiting) == 1:
+        return awaiting[0], []
+
+    def _last_dispatched_at(svc: Service):
+        msg = (
+            db.query(Message.sent_at)
+            .filter(
+                Message.service_id == svc.id,
+                Message.direction == "outbound",
+                Message.is_flow_message.is_(True),
+            )
+            .order_by(Message.sent_at.desc())
+            .first()
+        )
+        return msg[0] if msg and msg[0] else svc.created_at
+
+    awaiting.sort(key=_last_dispatched_at, reverse=True)
+    winner, *stale = awaiting
+    return winner, stale
 
 
 def _supersede_stalled_free_text(db: Session, blocked_svc: Service, account: WhatsAppAccount) -> None:
