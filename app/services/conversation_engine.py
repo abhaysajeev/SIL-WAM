@@ -226,6 +226,12 @@ def handle_inbound(db: Session, account: WhatsAppAccount, msg: dict) -> None:
     db.commit()
 
 
+# Meta error codes that mean "this number is not a valid/reachable WhatsApp number" —
+# mirrors the synchronous check in queue_manager.send_template_for_service so both the
+# immediate-rejection and delayed-status-webhook paths classify failures the same way.
+_INVALID_NUMBER_ERROR_CODES = {131026}
+
+
 def handle_status(db: Session, status: dict, account: WhatsAppAccount) -> None:
     """Update message delivery/read status from a Meta status receipt."""
     wamid     = status.get("id")
@@ -254,11 +260,28 @@ def handle_status(db: Session, status: dict, account: WhatsAppAccount) -> None:
     if msg.service_id:
         service = db.query(Service).filter(Service.id == msg.service_id).first()
         if service:
+            note = ""
+            # A "failed" status can arrive here even though the synchronous send call
+            # returned ok=True (Meta accepted the send, then rejected it moments later
+            # via this async receipt) — queue_manager's send-time check never sees this
+            # case, so the service is still sitting "in_progress" until we react here.
+            if state == "failed" and service.status == "in_progress":
+                error_codes = {e.get("code") for e in status.get("errors", [])}
+                failed_reason = (
+                    "whatsapp_number_invalid"
+                    if error_codes & _INVALID_NUMBER_ERROR_CODES
+                    else "send_error"
+                )
+                service.status = "failed"
+                service.failed_reason = failed_reason
+                queue_manager._mark_queue_completed(db, service)
+                note = failed_reason
+
             # notify_queue.enqueue_notification enforces monotonic status progression
             # (sent < delivered < read < responded < completed) — a question's own
             # delivery receipts arriving after "responded"/"completed" already fired
             # are automatically suppressed there, not re-checked here.
-            notify_queue.enqueue_notification(db, service, state, message=msg)
+            notify_queue.enqueue_notification(db, service, state, message=msg, note=note)
 
     try:
         db.commit()

@@ -70,8 +70,9 @@ def enqueue_notification(
     "answered" is exempt from that check — it's expected to fire once per question,
     not once per service.
 
-    note is accepted but not yet surfaced in the payload (message stays null) —
-    client hasn't finalized what should populate it (e.g. stray/off-flow replies).
+    note is surfaced in the payload as "reason" — used for the failed_reason string
+    (e.g. "whatsapp_number_invalid", "send_error") so clients can branch on why a
+    service failed without polling GET /services/{service_id}.
     """
     if not service.api_key_id:
         return
@@ -92,7 +93,7 @@ def enqueue_notification(
     if event_status != "answered" and _STATUS_RANK.get(event_status, 0) <= _max_notified_rank(db, service.id):
         return
 
-    payload = _build_payload(db, service, event_status, message)
+    payload = _build_payload(db, service, event_status, message, note)
 
     db.add(OutboundNotification(
         service_id = service.id,
@@ -130,6 +131,7 @@ def _build_payload(
     service: Service,
     event_status: str,
     message: Message | None,
+    note: str = "",
 ) -> dict:
     # The app's session has autoflush=False (app/core/database.py), so when this
     # runs in the same transaction as the ServiceResponse that just triggered a
@@ -166,6 +168,7 @@ def _build_payload(
         "service_id":   service.service_id,
         "reference_id": str(service.id),
         "status":       event_status,
+        "reason":       note or None,
         "respondedOn":  responded_on,
         "message":      None,
         # Which specific message (template / a given question) this event is about.
