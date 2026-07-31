@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -17,6 +17,12 @@ class Role(Base):
     is_system = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # Declared so `alembic revision --autogenerate` matches what the database
+    # actually contains. Alembic compares by NAME: anything present in the DB but
+    # not declared here is reported as an orphan and proposed for DROP.
+    __table_args__ = (
+        UniqueConstraint("name", name="roles_name_key"),
+    )
 
 class RolePagePermission(Base):
     __tablename__ = "role_page_permission"

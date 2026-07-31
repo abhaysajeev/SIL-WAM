@@ -17,6 +17,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -42,6 +43,8 @@ class Conversation(Base):
 
     __table_args__ = (
         UniqueConstraint("mobile_no", "company_id", name="uq_conversation_mobile_company"),
+        # Declared so autogenerate matches the database — see app/models/company.py.
+        Index("ix_conversations_mobile_no", "mobile_no"),
     )
 
 
@@ -177,3 +180,9 @@ class Message(Base):
     delivered_at    = Column(DateTime(timezone=True), nullable=True)
     read_at         = Column(DateTime(timezone=True), nullable=True)
     created_at      = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Redundant with ix_messages_wamid (both UNIQUE on wamid) but present in the
+    # database, so it must be declared or autogenerate proposes dropping it.
+    __table_args__ = (
+        UniqueConstraint("wamid", name="uq_messages_wamid"),
+    )

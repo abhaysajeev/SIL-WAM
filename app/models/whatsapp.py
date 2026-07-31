@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
@@ -11,8 +11,11 @@ class WhatsAppAccount(Base):
     __tablename__ = "whatsapp_accounts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Uniqueness is enforced by uq_whatsapp_accounts_company_id below, not by the
+    # column — the database's ix_whatsapp_accounts_company_id is a plain index, and
+    # unique=True here would make autogenerate try to convert it every run.
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"),
-                        unique=True, nullable=False, index=True)
+                        nullable=False, index=True)
     waba_id = Column(String(100), nullable=True)
     phone_number_id = Column(String(100), nullable=True)
     display_phone_number = Column(String(50), nullable=True)
@@ -25,13 +28,20 @@ class WhatsAppAccount(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    # Declared so autogenerate matches the database — see app/models/company.py.
+    __table_args__ = (
+        UniqueConstraint("company_id", name="uq_whatsapp_accounts_company_id"),
+    )
 
 class WhatsAppOnboardingSession(Base):
     __tablename__ = "whatsapp_onboarding_sessions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # No index=True: the database indexes (company_id, status) compositely, which
+    # already covers company_id lookups as a prefix. Declaring a single-column
+    # index here would make autogenerate try to create one on every run.
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"),
-                        nullable=False, index=True)
+                        nullable=False)
     current_step = Column(Integer, nullable=False, default=1)
     status = Column(String(20), nullable=False, default="in_progress")
     last_completed_step = Column(Integer, nullable=False, default=0)
@@ -39,6 +49,10 @@ class WhatsAppOnboardingSession(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    # Declared so autogenerate matches the database — see app/models/company.py.
+    __table_args__ = (
+        Index("ix_whatsapp_onboarding_company_status", "company_id", "status"),
+    )
 
 class WhatsAppTemplate(Base):
     __tablename__ = "whatsapp_templates"
@@ -60,3 +74,14 @@ class WhatsAppTemplate(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     synced_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Declared so autogenerate matches the database — see app/models/company.py.
+    # uq_whatsapp_templates_company_name_lang is load-bearing: without it a company
+    # could hold two APPROVED templates with the same name and language, and
+    # client_services_api.ingest_service resolves templates with .first() — it would
+    # silently pick one at random.
+    __table_args__ = (
+        Index("ix_whatsapp_templates_company_status", "company_id", "status"),
+        UniqueConstraint("company_id", "name", "language",
+                         name="uq_whatsapp_templates_company_name_lang"),
+    )

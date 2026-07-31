@@ -3,6 +3,7 @@ import uuid
 from unittest.mock import patch
 
 from app.models.conversation import Service
+from app.models.whatsapp import WhatsAppTemplate
 from app.services.wa_sender import SendResult
 from tests.conftest import (
     make_api_key, make_company, make_conversation, make_queue_entry,
@@ -148,7 +149,19 @@ class TestRetryEndpoint:
 
     def _failed_invalid_number_service(self, db, comp, key, service_id, mobile_no):
         conv = make_conversation(db, comp.id, mobile_no)
-        template = make_wa_template(db, comp.id, name="order_confirm")
+        # Reuse the template _setup() already created. Creating a second
+        # "order_confirm"/en_US for the same company violates
+        # uq_whatsapp_templates_company_name_lang, which production has always
+        # enforced — the test schema simply didn't declare it until now.
+        template = (
+            db.query(WhatsAppTemplate)
+            .filter(
+                WhatsAppTemplate.company_id == comp.id,
+                WhatsAppTemplate.name == "order_confirm",
+                WhatsAppTemplate.language == "en_US",
+            )
+            .first()
+        ) or make_wa_template(db, comp.id, name="order_confirm")
         svc = make_service(
             db, conv.id, comp.id, service_id=service_id, status="failed",
             mobile_no=mobile_no, api_key_id=key.id, template_sent=True,

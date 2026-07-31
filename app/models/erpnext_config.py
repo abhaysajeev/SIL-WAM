@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, String, ForeignKey
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -31,3 +31,10 @@ class ERPNextConfig(Base):
     is_active  = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Declared so `alembic revision --autogenerate` matches what the database
+    # actually contains. Alembic compares by NAME: anything present in the DB but
+    # not declared here is reported as an orphan and proposed for DROP.
+    __table_args__ = (
+        UniqueConstraint("company_id", name="erpnext_configs_company_id_key"),
+    )
