@@ -283,6 +283,10 @@ def retry_service(
     service.template_sent = False
     service.send_attempts = 0
     service.next_retry_at = None
+    # Opens a new notification generation. Without this the previous attempt's
+    # terminal "failed" would outrank every status of the retry, and the client
+    # would never be told the corrected number succeeded.
+    service.attempt_no    = (service.attempt_no or 0) + 1
 
     # Update or create conversation for new mobile
     conv = db.query(Conversation).filter(

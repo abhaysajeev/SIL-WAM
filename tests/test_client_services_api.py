@@ -181,6 +181,31 @@ class TestRetryEndpoint:
         assert svc.failed_reason is None
         assert svc.send_attempts == 0          # fresh retry budget after correction
         assert svc.next_retry_at is None
+        # Opens a new notification generation — without this the previous
+        # attempt's terminal "failed" outranks and silences the whole retry.
+        # See tests/test_retry_notifications.py.
+        assert svc.attempt_no == 1
+
+    def test_retry_twice_increments_attempt_each_time(self, client, db):
+        """Each retry opens its own generation, so a second retry also notifies."""
+        comp, key = _setup(db)
+        svc = self._failed_invalid_number_service(db, comp, key, "ORD-RETRY-2", "919000000097")
+
+        for expected in (1, 2):
+            with patch("app.services.wa_sender.send_template", return_value=_MOCK_SEND):
+                r = client.post(
+                    f"/client-api/v1/services/{svc.id}/retry",
+                    json={"customer_mobile": f"91900000009{expected}"},
+                    headers=_headers(),
+                )
+            assert r.status_code == 200
+            db.refresh(svc)
+            assert svc.attempt_no == expected
+
+            # Put it back into the retryable state for the next loop.
+            svc.status = "failed"
+            svc.failed_reason = "whatsapp_number_invalid"
+            db.commit()
 
     def test_old_service_id_style_url_no_longer_matches(self, client, db):
         comp, key = _setup(db)

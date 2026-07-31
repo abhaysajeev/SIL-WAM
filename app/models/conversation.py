@@ -84,7 +84,15 @@ class Service(Base):
     # flow for its mobile number but the actual Graph API call is still pending pickup.
     template_sent        = Column(Boolean, nullable=False, default=False, index=True)
     # Count of send attempts made so far — drives the retry cap in queue_manager.
+    # Reset to 0 by the client retry endpoint; see attempt_no for the durable counter.
     send_attempts        = Column(Integer, nullable=False, default=0)
+    # Which client-initiated delivery attempt this service is on. 0 = original,
+    # incremented once per successful POST /services/{id}/retry. Unlike
+    # send_attempts this is never reset, so it identifies the current attempt for
+    # the whole lifetime of the service. Outbound notifications are stamped with
+    # it so a retry replays the full status lifecycle to the client instead of
+    # being suppressed by the previous attempt's terminal "failed".
+    attempt_no           = Column(Integer, nullable=False, default=0, server_default="0")
     # When a retryable send_error is eligible to be re-attempted. NULL = eligible now
     # (first attempt, or no retry pending). send_scheduler's claim query checks this.
     next_retry_at        = Column(DateTime(timezone=True), nullable=True, index=True)

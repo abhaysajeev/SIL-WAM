@@ -90,13 +90,18 @@ def enqueue_notification(
     ):
         return
 
-    if event_status != "answered" and _STATUS_RANK.get(event_status, 0) <= _max_notified_rank(db, service.id):
+    attempt_no = service.attempt_no or 0
+
+    if event_status != "answered" and _STATUS_RANK.get(event_status, 0) <= _max_notified_rank(
+        db, service.id, attempt_no
+    ):
         return
 
-    payload = _build_payload(db, service, event_status, message, note)
+    payload = _build_payload(db, service, event_status, message, note, attempt_no)
 
     db.add(OutboundNotification(
-        service_id = service.id,
+        service_id      = service.id,
+        service_attempt = attempt_no,
         message_id = message.id if message else None,
         notify_url = api_key.notify_url,
         payload    = payload,
@@ -111,15 +116,28 @@ def _format_dubai(dt) -> str:
     return dt.astimezone(_DUBAI_TZ).strftime("%d/%m/%Y %H:%M:%S") + " UTC+4:00"
 
 
-def _max_notified_rank(db: Session, service_id) -> int:
-    """Highest _STATUS_RANK already enqueued for this service. 0 if none yet."""
+def _max_notified_rank(db: Session, service_id, attempt_no: int) -> int:
+    """
+    Highest _STATUS_RANK already enqueued for this service *on this attempt*.
+    0 if none yet.
+
+    Scoped to the attempt on purpose. A service that failed and was then retried
+    starts a fresh lifecycle, and its previous attempt ended on a terminal
+    "failed" (rank 6) — ranking against that would suppress every status of the
+    new attempt, including its own "completed" (also rank 6). The client would
+    be told the retry happened only if the customer answered, and would never
+    learn it completed.
+    """
     # Same autoflush=False caveat as _build_payload — flush so a status just
     # enqueued earlier in this same transaction (e.g. "responded" moments ago)
     # is visible here too.
     db.flush()
     rows = (
         db.query(OutboundNotification.payload)
-        .filter(OutboundNotification.service_id == service_id)
+        .filter(
+            OutboundNotification.service_id == service_id,
+            OutboundNotification.service_attempt == attempt_no,
+        )
         .all()
     )
     ranks = [_STATUS_RANK.get(p["status"], 0) for (p,) in rows]
@@ -132,6 +150,7 @@ def _build_payload(
     event_status: str,
     message: Message | None,
     note: str = "",
+    attempt_no: int = 0,
 ) -> dict:
     # The app's session has autoflush=False (app/core/database.py), so when this
     # runs in the same transaction as the ServiceResponse that just triggered a
@@ -169,6 +188,10 @@ def _build_payload(
         "reference_id": str(service.id),
         "status":       event_status,
         "reason":       note or None,
+        # 0 for the original send, 1+ after each client retry. Lets the client
+        # tell a retry's lifecycle apart from the original attempt's, since both
+        # carry the same service_id and reference_id.
+        "attempt":      attempt_no,
         "respondedOn":  responded_on,
         "message":      None,
         # Which specific message (template / a given question) this event is about.

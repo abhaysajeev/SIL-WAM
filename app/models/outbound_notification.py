@@ -27,7 +27,14 @@ class OutboundNotification(Base):
     notify_url      = Column(String(500), nullable=False)  # snapshotted from CompanyApiKey at enqueue time
     payload         = Column(JSONB, nullable=False)
     status          = Column(String(20), nullable=False, default="pending", index=True)  # pending|delivered|failed
+    # HTTP POST retries against notify_url — NOT related to service retries below.
     attempts        = Column(Integer, nullable=False, default=0)
+    # Which delivery attempt of the service this notification belongs to, copied
+    # from Service.attempt_no at enqueue time. The monotonic status-progression
+    # guard in notify_queue ranks only within a single attempt, so a retried
+    # service replays its whole lifecycle instead of being silenced by the
+    # "failed" notification from the previous attempt.
+    service_attempt = Column(Integer, nullable=False, default=0, server_default="0", index=True)
     last_error      = Column(Text, nullable=True)
     next_attempt_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
     created_at      = Column(DateTime(timezone=True), server_default=func.now())
