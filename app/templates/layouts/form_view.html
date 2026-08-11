@@ -114,7 +114,14 @@
 
         {% elif field.type == 'select_company' %}
           <select id="f_{{ field.name }}" name="{{ field.name }}" class="dv-select">
+            {# "All companies" only makes sense where a blank company means
+               admin tier (users). Where the field is required the record must
+               belong to exactly one company, so offer a prompt instead. #}
+            {% if field.get('required') %}
+            <option value="">— Select a company —</option>
+            {% else %}
             <option value="">— All companies (admin tier) —</option>
+            {% endif %}
             {% for c in companies %}
             <option value="{{ c.id }}"
               {% if record and record[field.name] and record[field.name]|string == c.id|string %}selected{% endif %}>

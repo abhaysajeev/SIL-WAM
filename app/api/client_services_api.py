@@ -19,6 +19,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core import template_body
 from app.core.database import get_db
 from app.core.deps import get_api_company, get_api_key_and_company
 from app.models.company import Company
@@ -69,6 +70,35 @@ def _resolve_cta_urls(data: dict, cta_mapping: dict) -> dict[str, str]:
     if not cta_mapping:
         return {}
     return {btn_idx: _get_nested(data, dot_path) for btn_idx, dot_path in cta_mapping.items()}
+
+
+def _resolve_header_media(data: dict, template) -> dict | None:
+    """
+    Build the header media descriptor for a template with an IMAGE/DOCUMENT/VIDEO header.
+
+    Raises HTTPException(422) when the mapped path resolves to nothing. Failing here is
+    the point: the alternative is a 201 followed minutes later by a send Meta rejects
+    because it could not fetch a blank URL, which the client only ever learns about from
+    a delivery callback.
+    """
+    fmt = template_body.header_format(template.components)
+    if fmt not in template_body.MEDIA_HEADER_FORMATS:
+        return None
+    if not template.header_mapping:
+        raise HTTPException(
+            422,
+            f"Template '{template.name}' has a {fmt} header but no header mapping is "
+            "configured — set one in the admin panel before sending.",
+        )
+
+    url = _get_nested(data, template.header_mapping).strip()
+    if not url:
+        raise HTTPException(
+            422,
+            f"Template '{template.name}' needs a {fmt.lower()} URL at "
+            f"'{template.header_mapping}', but that field is missing or empty.",
+        )
+    return {"format": fmt.lower(), "link": url}
 
 
 # ── POST /services ────────────────────────────────────────────────────────────
@@ -156,6 +186,10 @@ def ingest_service(
     if cta_urls is None and template.cta_mapping:
         cta_urls = _resolve_cta_urls(resolver_ctx, template.cta_mapping)
 
+    # Media headers carry a per-send URL Meta fetches itself; resolve and freeze it
+    # alongside the params rather than re-deriving at send time.
+    header_media = _resolve_header_media(resolver_ctx, template)
+
     # 5. Get or create Conversation
     conv = db.query(Conversation).filter(
         Conversation.company_id == company.id,
@@ -175,6 +209,7 @@ def ingest_service(
         template_id           = template.id,
         template_params       = template_params,
         cta_urls              = cta_urls,
+        header_media          = header_media,
         template_expiry_hours = payload.template_expiry_hours,
         questions             = questions if questions else None,
         data                  = service_data,

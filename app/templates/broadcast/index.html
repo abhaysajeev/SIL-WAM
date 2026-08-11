@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Broadcast Messages — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<style>
+  .bc-header { margin-bottom: 24px; }
+  .bc-title {
+    font-family: var(--f-disp);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--black);
+    letter-spacing: -.03em;
+  }
+  .bc-sub { font-size: 13px; color: var(--muted); margin-top: 3px; }
+
+  .bc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+  }
+
+  .bc-card {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-card);
+    padding: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color .18s var(--ease), box-shadow .18s ease;
+    animation: cardIn .3s var(--ease) both;
+  }
+  .bc-card:nth-child(2) { animation-delay: 50ms; }
+  .bc-card:nth-child(3) { animation-delay: 100ms; }
+
+  /* Only live cards react to the pointer — a disabled card that lights up on
+     hover reads as broken rather than "not yet". */
+  a.bc-card:hover {
+    border-color: var(--green);
+    box-shadow: var(--shadow-lift);
+  }
+
+  .bc-card-icon {
+    width: 40px; height: 40px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--green-tint);
+    color: var(--green-dark);
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .bc-card-name {
+    font-family: var(--f-disp);
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--black);
+    letter-spacing: -.02em;
+  }
+  .bc-card-desc { font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+
+  .bc-card-cta {
+    margin-top: auto;
+    padding-top: 6px;
+    font-family: var(--f-mono);
+    font-size: 9px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--green);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  /* Not-yet-built cards: visibly inert, not merely greyed */
+  .bc-card.disabled { cursor: default; opacity: .62; }
+  .bc-card.disabled .bc-card-icon { background: var(--bg); color: var(--subtle); }
+  .bc-card.disabled .bc-card-cta  { color: var(--subtle); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="bc-header">
+  <div class="bc-title">Broadcast Messages</div>
+  <div class="bc-sub">Send an approved template to many contacts at once.</div>
+</div>
+
+<div class="bc-grid">
+
+  {% if perms.phonebooks.read %}
+  <a href="/broadcast/phonebooks" class="bc-card">
+    <div class="bc-card-icon"><i class="ti ti-address-book"></i></div>
+    <div class="bc-card-name">PhoneBook</div>
+    <div class="bc-card-desc">
+      Contact lists for campaigns. Add contacts by hand or import them from a CSV.
+    </div>
+    <div class="bc-card-cta">Open <i class="ti ti-arrow-right"></i></div>
+  </a>
+  {% endif %}
+
+  {% if perms.campaigns.read %}
+  <a href="/broadcast/campaigns" class="bc-card">
+    <div class="bc-card-icon"><i class="ti ti-send"></i></div>
+    <div class="bc-card-name">Send Broadcast</div>
+    <div class="bc-card-desc">
+      Every broadcast you have sent, with delivery results. Start a new one from here.
+    </div>
+    <div class="bc-card-cta">Open <i class="ti ti-arrow-right"></i></div>
+  </a>
+  {% endif %}
+
+  {# Settings has no routes yet — rendered inert rather than hidden, so the shape
+     of the module stays visible while it is being built. #}
+
+  <div class="bc-card disabled">
+    <div class="bc-card-icon"><i class="ti ti-settings"></i></div>
+    <div class="bc-card-name">Broadcast Settings</div>
+    <div class="bc-card-desc">
+      Sending limits, reserved capacity for transactional messages, and
+      per-company defaults.
+    </div>
+    <div class="bc-card-cta">Coming soon</div>
+  </div>
+
+</div>
+
+{% endblock %}

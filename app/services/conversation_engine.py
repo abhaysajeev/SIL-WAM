@@ -26,6 +26,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.redis_client import get_redis
+# Client-specific inbound flows. app/lizo/__init__.py is empty, so this pulls in
+# only the handler module — not app.lizo.api, which would import back into the
+# client ingest API.
+from app.lizo import inbound as lizo_inbound
 from app.models.conversation import (
     Conversation,
     Message,
@@ -35,7 +39,7 @@ from app.models.conversation import (
 )
 from app.models.erpnext_config import ERPNextConfig
 from app.models.whatsapp import WhatsAppAccount
-from app.services import notify_queue, queue_manager, wa_sender
+from app.services import broadcast_status, notify_queue, queue_manager, wa_sender
 from app.utils.error_logger import log_error
 
 _WAMID_TTL = 86_400  # 24 h — wamid cache expiry in Redis
@@ -130,6 +134,13 @@ def handle_inbound(db: Session, account: WhatsAppAccount, msg: dict) -> None:
         if _is_download_invoice(button_payload):
             # PDF request during an active service flow — handle it and leave flow intact
             _handle_pdf_request(db, account, from_no, conv, msg)
+            db.commit()
+            return
+        # Client-specific button flows. Only services carrying that client's marker
+        # in Service.data match, so every other client — including the SFA/Shirin
+        # flow below — falls straight through to the unchanged path.
+        if lizo_inbound.handles(service):
+            lizo_inbound.handle_tap(db, service, account, from_no, button_payload, inbound)
             db.commit()
             return
         # First-ever engagement → notify once. Buttons stay clickable forever, so a
@@ -243,6 +254,17 @@ def handle_status(db: Session, status: dict, account: WhatsAppAccount) -> None:
 
     msg = db.query(Message).filter(Message.wamid == wamid).first()
     if not msg:
+        # Broadcast sends write no Message rows (BROADCAST_DESIGN.md §8), so their
+        # receipts land here. Without this fallback every one would be dropped — no
+        # delivered counts and no invalid-number flagging. A transactional message
+        # always has a Message row, so it never reaches this branch.
+        if broadcast_status.handle(db, wamid, state, status):
+            try:
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                log_error("Broadcast status update failed", f"handle_status wamid={wamid}", exc)
+            return
         logger.debug("Status receipt for unknown wamid=%s state=%s", wamid, state)
         return
 

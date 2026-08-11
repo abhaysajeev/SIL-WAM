@@ -1,0 +1,125 @@
+"""
+Lizo's order payload, and the translation into the shared ingest envelope.
+
+The contract is deliberately narrow: four fixed top-level fields, and a `data`
+dictionary of arbitrary shape. Nothing here inspects `data` beyond refusing a
+couple of reserved keys — which fields end up in which template placeholder is
+decided later, per template, through the mapping UI. Declaring Lizo's current
+order fields in this file would mean a code change every time Client X adds a
+use case, which is exactly what the dynamic contract exists to avoid.
+
+The only reshaping done here is moving customer_mobile from the top level into
+`data`, because that is where the shared pipeline requires it.
+"""
+from typing import Any
+
+from pydantic import BaseModel, field_validator
+
+from app.schemas.service import ServiceIngestRequest, _validate_mobile
+
+# Keys the platform controls. Any other key in `data` is passed through untouched.
+#
+#   questions        the shared ingest lifts this key out of `data` and turns the
+#                    service into a questionnaire (client_services_api.py:108).
+#                    Lizo has no questionnaire, so the order would never
+#                    auto-complete — and a non-list value raises AttributeError,
+#                    surfacing as a 500.
+#   customer_mobile  injected from the top-level field. Two sources of truth that
+#                    disagree is ambiguous, so refuse rather than silently pick one.
+#   _flow            our marker (see FLOW_MARKER). It is what tells the shared
+#                    inbound handler that a button tap belongs to Lizo, so a client
+#                    must not be able to set or spoof it.
+#
+# Refusing beats overwriting: Client X gets told at once instead of discovering it
+# from a customer who never received a message.
+_RESERVED_DATA_KEYS = ("questions", "customer_mobile", "_flow")
+
+# Stamped onto Service.data at ingest, read back by app/lizo/inbound.handles().
+#
+# Service.data is already the per-row behaviour switch the conversation engine
+# reads (completion_message, invoice_no, pdf_sent), so this needs no migration and
+# no new column. It is never echoed to clients — notify_queue builds its payload
+# from Service columns, not from data.
+FLOW_MARKER_KEY   = "_flow"
+FLOW_MARKER_VALUE = "lizo_order"
+
+# Meta reads `to` as a full international number. A country code is 1–3 digits and
+# no national number is shorter than 8, so anything under 11 digits is missing its
+# country code — India's 91 + 10 digits makes 12.
+_MIN_MOBILE_DIGITS = 11
+
+# Deliberately the same sentence the shared validator uses, with the bounds
+# corrected and the country code named, so every bad number — too short, too long,
+# malformed, or missing its country code — reads identically to the client.
+_MOBILE_ERROR = (
+    "customer_mobile '{value}' is not a valid phone number "
+    "(must be 11–15 digits including the country code, optional leading +, "
+    "no spaces or dashes)"
+)
+
+
+class LizoOrderRequest(BaseModel):
+    service_id:            str
+    template_name:         str
+    template_expiry_hours: int = 24
+    customer_mobile:       str
+    # Opaque by design — any shape, any depth. Mapped to template parameters
+    # through the UI, not through code.
+    data:                  dict[str, Any]
+
+    @field_validator("customer_mobile")
+    @classmethod
+    def normalise_mobile(cls, v: str) -> str:
+        """
+        Validate at Liso's own boundary so a bad number is a 422.
+
+        ServiceIngestRequest applies the shared rule to data.customer_mobile, but
+        that runs inside the route rather than while parsing the request, and a
+        pydantic error raised there surfaces as a 500. Failing first keeps the
+        inner validator a no-op.
+
+        Liso's rule is stricter than the shared one: it also requires a country
+        code. The shared validator accepts 7–15 digits, so a bare 10-digit Indian
+        mobile passes, we return 201, and the send then fails at Meta with 131026
+        — invisible to the client. Rejecting it here turns a silent delivery
+        failure into an obvious rejection while their developer is still testing.
+        """
+        try:
+            normalised = _validate_mobile(v)
+        except ValueError:
+            # Re-raise with Liso's wording rather than the shared "7–15 digits"
+            # one, so every rejected number reads identically to this client.
+            raise ValueError(_MOBILE_ERROR.format(value=v.strip())) from None
+
+        if len(normalised) < _MIN_MOBILE_DIGITS:
+            raise ValueError(_MOBILE_ERROR.format(value=v.strip()))
+        return normalised
+
+    @field_validator("data")
+    @classmethod
+    def reject_reserved_keys(cls, v: dict[str, Any]) -> dict[str, Any]:
+        clash = [k for k in _RESERVED_DATA_KEYS if k in v]
+        if clash:
+            raise ValueError(
+                f"reserved key(s) not allowed inside data: {', '.join(clash)}. "
+                "customer_mobile is sent as a top-level field; questions is not "
+                "supported on this endpoint."
+            )
+        return v
+
+    def to_ingest_request(self) -> ServiceIngestRequest:
+        """Reshape into the envelope the shared pipeline understands."""
+        # Copy so the caller's dict is not mutated — this object may be logged
+        # or reused after the call.
+        data = dict(self.data)
+        data["customer_mobile"] = self.customer_mobile
+        # Marks this service as Lizo's for the shared inbound handler. Services
+        # from any other client never carry it, so that branch is dead code for them.
+        data[FLOW_MARKER_KEY] = FLOW_MARKER_VALUE
+
+        return ServiceIngestRequest(
+            service_id            = self.service_id,
+            template_name         = self.template_name,
+            template_expiry_hours = self.template_expiry_hours,
+            data                  = data,
+        )

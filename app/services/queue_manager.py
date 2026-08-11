@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 _MAX_SEND_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = [30, 120]  # index = attempts made so far, 0-indexed
 
+# Meta's codes for "I could not download the media you pointed me at" (131053) and
+# "media download failed" (131052). Matched as substrings of the error text because
+# SendResult carries the message, not a structured code — the same approach the
+# existing 131026 check uses.
+_MEDIA_ERROR_CODES = ("131052", "131053")
+
 
 def enqueue_service(db: Session, service: Service, account: WhatsAppAccount) -> str:
     """
@@ -139,6 +145,7 @@ def send_template_for_service(
         service.template_params or [],
         mobile_no,
         service.cta_urls,
+        service.header_media,
     )
 
     if result.ok:
@@ -171,6 +178,18 @@ def send_template_for_service(
             service.status = "failed"
             _mark_queue_completed(db, service)
             notify_queue.enqueue_notification(db, service, "failed", note=service.failed_reason)
+        elif any(code in err for code in _MEDIA_ERROR_CODES):
+            # Meta could not fetch the header media the client pointed us at. Still
+            # retried — their media host may only be briefly unreachable — but the
+            # distinct reason tells them which side of the integration to look at
+            # instead of reading "send_error" and checking our logs.
+            logger.warning(
+                "Header media unreachable for service=%s media=%s err=%s",
+                service.service_id,
+                (service.header_media or {}).get("link"),
+                err,
+            )
+            _fail_or_schedule_retry(db, service, "media_error")
         else:
             log_error(
                 f"Template send failed for service {service.service_id}",

@@ -1,0 +1,1002 @@
+{% extends "base.html" %}
+{# Derived here rather than passed in: `request` is always in the context,
+   so this cannot fall out of step with the route. #}
+{% set personalized = request.query_params.get('mode') == 'personalized' %}
+{% block title %}{% if personalized %}Personalized broadcast{% else %}New broadcast{% endif %} — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/docview.css">
+<link rel="stylesheet" href="/static/css/templates.css">
+<link rel="stylesheet" href="/static/css/import-dialog.css">
+<style>
+  /* Deliberately small: the page is built from the shared dv-* form classes, so
+     only genuinely new elements are styled here. */
+
+  .cn-layout { display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start; }
+  @media (max-width:1000px) { .cn-layout { grid-template-columns:1fr; } }
+
+  /* Step numbering is real here — each step needs the one before it, and the
+     sections reveal in order, so the numbers describe the flow rather than
+     decorate it. */
+  .cn-step {
+    display:inline-flex;align-items:center;justify-content:center;
+    width:18px;height:18px;border-radius:50%;
+    background:var(--green);color:#fff;
+    font-family:var(--f-mono);font-size:10px;font-weight:600;
+  }
+  .cn-step.todo { background:var(--line-2);color:var(--muted); }
+
+  .cn-param-row { display:grid;grid-template-columns:60px 1fr;gap:10px;align-items:center;margin-bottom:8px; }
+  .cn-param-tag {
+    font-family:var(--f-mono);font-size:11px;color:var(--green-dark);
+    background:var(--green-tint);padding:6px 4px;text-align:center;
+  }
+
+  .cn-list-row {
+    display:flex;align-items:center;gap:10px;padding:10px 12px;
+    border:1px solid var(--line-2);margin-bottom:6px;cursor:pointer;transition:background .15s;
+  }
+  .cn-list-row:hover { background:var(--bg); }
+  .cn-list-row input { accent-color:var(--green);width:14px;height:14px;cursor:pointer; }
+  .cn-list-name  { font-weight:600;color:var(--black);font-size:13px; }
+  .cn-list-count { margin-left:auto;font-family:var(--f-mono);font-size:11px;color:var(--subtle); }
+  .cn-list-row.empty { opacity:.5; }
+
+  .cn-summary { font-size:12.5px;color:var(--ink-2);margin-top:10px;line-height:1.6; }
+  .cn-summary strong { color:var(--black); }
+  .cn-over { color:var(--red-dark);font-weight:600;display:block;margin-top:4px; }
+
+  /* Clears the page top bar AND the sticky form toolbar above it, otherwise the
+     preview's own header slides underneath them and disappears. */
+  .im-save-offer {
+    display:flex;align-items:center;gap:14px;padding:14px 16px;margin-bottom:16px;
+    border:1px solid var(--green);background:var(--green-tint);
+  }
+  .im-save-offer button { margin-left:auto;flex-shrink:0; }
+  .im-save-title { font-size:13px;font-weight:600;color:var(--black); }
+  .im-save-sub   { font-size:12px;color:var(--ink-2);margin-top:2px;line-height:1.5; }
+  .im-pb-fields  { display:grid;grid-template-columns:1fr 1fr;gap:14px; }
+  @media (max-width:560px) { .im-pb-fields { grid-template-columns:1fr; } }
+  .cn-field { display:flex;flex-direction:column;gap:5px; }
+
+  .cn-modal-backdrop {
+    position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;
+    justify-content:center;z-index:200;padding:20px;opacity:0;visibility:hidden;
+    pointer-events:none;transition:opacity .18s ease,visibility .18s ease;
+  }
+  .cn-modal-backdrop.open { opacity:1;visibility:visible;pointer-events:auto; }
+  .cn-modal { background:var(--bg-card);width:100%;box-shadow:var(--shadow-pop);display:flex;flex-direction:column; }
+  .cn-modal-hd { padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between; }
+  .cn-modal-title { font-family:var(--f-disp);font-size:15px;font-weight:700;color:var(--black);letter-spacing:-.02em; }
+  .cn-modal-close { width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:none;border:none;color:var(--subtle);cursor:pointer;font-size:16px; }
+  .cn-modal-close:hover { background:var(--bg);color:var(--ink); }
+  .cn-modal-ft { padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px; }
+  .bl-error {
+    font-size:12px;color:var(--red-dark);background:var(--red-tint);
+    border:1px solid rgba(220,38,38,.2);padding:8px 12px;display:none;
+  }
+  .bl-error.visible { display:block; }
+
+  .cn-sticky { position:sticky;top:calc(var(--topbar-h) + 60px); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dv-breadcrumb">
+  <a href="/broadcast/campaigns">Broadcasts</a>
+  <span class="sep">/</span>
+  <span>New broadcast</span>
+</div>
+
+<div class="dv-form-toolbar">
+  <div class="dv-form-doc-title">{% if personalized %}Personalized broadcast{% else %}New broadcast{% endif %}</div>
+  <div class="dv-form-doc-status">
+    <span class="dv-save-status" id="cnStatus"></span>
+    <button class="dv-btn dv-btn-ghost" onclick="window.location='/broadcast/campaigns'">Cancel</button>
+    <button class="dv-btn dv-btn-primary" id="cSave" disabled>
+      <span class="btn-label">Continue</span>
+      <div class="btn-spinner"></div>
+    </button>
+  </div>
+</div>
+
+<div class="dv-form-error" id="cnError" style="display:none"></div>
+
+<div class="cn-layout">
+  <div>
+    <div class="dv-section">
+      <div class="dv-section-header">
+        <span class="cn-step" id="cnStep1">1</span>
+        <span class="dv-section-label">Template</span>
+      </div>
+      <div class="dv-section-body">
+        <div class="dv-field">
+          <label class="dv-label" for="cCompany">Company</label>
+          <select id="cCompany" class="dv-input"></select>
+        </div>
+        <div class="dv-field">
+          <label class="dv-label" for="cTemplate">Approved template</label>
+          <select id="cTemplate" class="dv-input"></select>
+          <span class="dv-hint" id="cTemplateHint">Pick a company first.</span>
+        </div>
+      </div>
+    </div>
+
+    {% if not personalized %}
+    <div class="dv-section" id="cParamsCard" style="display:none">
+      <div class="dv-section-header">
+        <span class="cn-step todo" id="cnStep2">2</span>
+        <span class="dv-section-label">Message content</span>
+      </div>
+      <div class="dv-section-body" style="display:block">
+        <div id="cParams"></div>
+        <span class="dv-hint">Everyone on the selected lists receives these same values.</span>
+      </div>
+    </div>
+
+    <div class="dv-section" id="cListsCard" style="display:none">
+      <div class="dv-section-header">
+        <span class="cn-step todo" id="cnStep3">3</span>
+        <span class="dv-section-label">Who receives it — pick PhoneBooks</span>
+      </div>
+      <div class="dv-section-body" style="display:block">
+        <div id="cLists"></div>
+        <div class="cn-summary" id="cCount"></div>
+      </div>
+    </div>
+    {% else %}
+
+    {# Personalized: the CSV is the list, so there is no PhoneBook step and no
+       typed parameters — every value comes from the file. #}
+    <div class="dv-section" id="cCsvCard" style="display:none">
+      <div class="dv-section-header">
+        <span class="cn-step todo" id="cnStep2">2</span>
+        <span class="dv-section-label">Contacts and their values</span>
+      </div>
+      <div class="dv-section-body" style="display:block">
+        <p class="dv-hint" style="margin-bottom:14px">
+          One row per contact, carrying that contact's own values. The preview on the
+          right shows which placeholder each <strong>Param</strong> column fills.
+        </p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="dv-btn dv-btn-ghost" id="cSample">
+            <i class="ti ti-download"></i> Download sample CSV
+          </button>
+          <button class="dv-btn dv-btn-primary" id="cUpload">
+            <i class="ti ti-upload"></i> Upload CSV
+          </button>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="dv-section cn-sticky">
+    <div class="dv-section-header">
+      <i class="fab fa-whatsapp" style="color:#25D366;font-size:13px"></i>
+      <span class="dv-section-label">Live preview</span>
+    </div>
+    <div style="padding:16px">
+      <div class="tpl-preview-phone">
+        <div id="cPreviewEmpty" class="tpl-preview-empty">Choose a template to see the message.</div>
+        <div id="cPreviewBubble" class="tpl-preview-bubble" style="display:none">
+          <div id="cPrevHeader" class="tpl-preview-header" style="display:none"></div>
+          <div id="cPrevBody"   class="tpl-preview-body"></div>
+          <div id="cPrevFooter" class="tpl-preview-footer" style="display:none"></div>
+        </div>
+        <div id="cPreviewBtns" class="tpl-preview-btns"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if personalized %}
+{# Same three-step dialog the PhoneBook import uses: drop → map → results.
+   Styling comes from the shared import-dialog.css. #}
+<div class="cn-modal-backdrop" id="imBackdrop">
+  <div class="cn-modal im-modal">
+    <div class="cn-modal-hd">
+      <span class="cn-modal-title" id="imTitle">Import contacts from CSV</span>
+      <button class="cn-modal-close" id="imClose">&times;</button>
+    </div>
+
+    <div class="im-body">
+      <div class="im-step active" id="imStep1">
+        <div class="im-drop" id="imDrop">
+          <i class="ti ti-file-spreadsheet"></i>
+          <div class="im-drop-main">Drop your CSV here, or click to choose</div>
+          <div class="im-drop-sub">One row per contact, with that contact's own values</div>
+        </div>
+        <input type="file" id="imFile" accept=".csv,text/csv" style="display:none">
+        <div class="bl-error" id="imError" style="margin-top:14px"></div>
+      </div>
+
+      <div class="im-step" id="imStep2">
+        <div class="im-filebar">
+          <i class="ti ti-file-check"></i>
+          <span class="name" id="imFileName"></span>
+          <span id="imRowCount"></span>
+          <span class="spacer"></span>
+          <a href="#" id="imChangeFile" style="color:var(--green);font-weight:600">Change file</a>
+        </div>
+        <table class="im-maptable">
+          <thead><tr><th style="width:46%">Broadcast field</th><th>CSV column</th></tr></thead>
+          <tbody id="imMapRows"></tbody>
+        </table>
+        <div class="bl-error" id="imMapError" style="margin-top:14px"></div>
+      </div>
+
+      <div class="im-step" id="imStep3">
+        <div id="imProgWrap">
+          <div class="im-bar-wrap"><div class="im-bar" id="imBar"></div></div>
+          <div class="im-bar-label" id="imBarLabel">Preparing…</div>
+        </div>
+        <div id="imStats" style="display:none">
+          <div class="im-stats">
+            <div class="im-stat">
+              <div class="im-stat-n" id="imOk">0</div>
+              <div class="im-stat-l">imported</div>
+            </div>
+            <div class="im-stat">
+              <div class="im-stat-n" id="imBad">0</div>
+              <div class="im-stat-l">skipped</div>
+            </div>
+          </div>
+          {# The contacts are worth keeping: this CSV was curated for one send,
+             and without this the list is thrown away when the dialog closes. #}
+          <div class="im-save-offer" id="imSaveOffer">
+            <div>
+              <div class="im-save-title">Keep these contacts?</div>
+              <div class="im-save-sub">
+                Save them as a PhoneBook and you can send to them again without
+                uploading a file.
+              </div>
+            </div>
+            <button class="dv-btn dv-btn-ghost dv-btn-xs" id="imSaveBtn">
+              <i class="ti ti-address-book"></i> Save as PhoneBook
+            </button>
+          </div>
+
+          <div id="imErrWrap" style="display:none">
+            <div style="font-size:12px;font-weight:600;color:var(--ink);margin-bottom:8px">
+              Rows that were not imported
+            </div>
+            <div class="im-errscroll">
+              <table class="im-errtable">
+                <thead><tr><th>Row</th><th>Value</th><th>Reason</th></tr></thead>
+                <tbody id="imErrRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="im-step" id="imStep4">
+        <p class="dv-hint" style="margin-bottom:14px">
+          Only contact details are saved — the template values belong to this
+          broadcast, not to the contact.
+        </p>
+        <div class="im-pb-fields">
+          <div class="cn-field">
+            <label class="dv-label" for="imPbName">PhoneBook name</label>
+            <input type="text" id="imPbName" class="dv-input" maxlength="150"
+                   placeholder="Diwali list">
+          </div>
+          <div class="cn-field">
+            <label class="dv-label" for="imPbCompany">Company</label>
+            <select id="imPbCompany" class="dv-input"></select>
+          </div>
+        </div>
+        <table class="im-maptable" style="margin-top:14px">
+          <thead><tr><th style="width:46%">PhoneBook field</th><th>CSV column</th></tr></thead>
+          <tbody id="imPbMapRows"></tbody>
+        </table>
+        <div class="bl-error" id="imPbError" style="margin-top:14px"></div>
+      </div>
+    </div>
+
+    <div class="cn-modal-ft">
+      <button class="dv-btn dv-btn-ghost" id="imCancel">Cancel</button>
+      <button class="dv-btn dv-btn-primary" id="imPbSave" style="display:none">
+        <span class="btn-label">Save PhoneBook</span>
+        <div class="btn-spinner"></div>
+      </button>
+      <button class="dv-btn dv-btn-primary" id="imNext" style="display:none">Continue</button>
+      <button class="dv-btn dv-btn-primary" id="imStart" style="display:none">
+        <span class="btn-label">Import</span>
+        <div class="btn-spinner"></div>
+      </button>
+      <button class="dv-btn dv-btn-primary" id="imDone" style="display:none">Review recipients</button>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/csv.js"></script>
+<script>
+(function () {
+  var COMPANIES = {{ companies | tojson }};
+  var TEMPLATES = {{ templates_by_company | tojson }};
+  var LISTS     = {{ lists_by_company | tojson }};
+  var MAX_RECIPIENTS = 1000;
+  // Personalized replaces steps 2 and 3 with a CSV upload, so those
+  // sections are absent from the DOM entirely.
+  var PERSONALIZED = {{ 'true' if personalized else 'false' }};
+
+  var el = function (id) { return document.getElementById(id); };
+  var errEl = el('cnError');
+
+  function showError(msg) { errEl.textContent = msg; errEl.style.display = 'block'; }
+  function clearError()   { errEl.style.display = 'none'; }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  /* ── Company ─────────────────────────────────────────────────────────── */
+  var companySel = el('cCompany');
+  companySel.innerHTML = '<option value="">Select a company</option>' +
+    COMPANIES.map(function (c) {
+      return '<option value="' + c.id + '">' + esc(c.name) + '</option>';
+    }).join('');
+
+  // A single company is not a choice — pick it and let the user move on.
+  if (COMPANIES.length === 1) companySel.value = COMPANIES[0].id;
+
+  companySel.addEventListener('change', function () {
+    renderTemplates(); renderLists(); renderPreview(); refresh();
+  });
+
+  /* ── Template ────────────────────────────────────────────────────────── */
+  var templateSel = el('cTemplate');
+
+  function currentTemplates() { return TEMPLATES[companySel.value] || []; }
+  function currentTemplate() {
+    return currentTemplates().filter(function (t) { return t.id === templateSel.value; })[0] || null;
+  }
+
+  function renderTemplates() {
+    var list = currentTemplates();
+    templateSel.innerHTML = list.length
+      ? '<option value="">Select a template</option>' + list.map(function (t) {
+          return '<option value="' + t.id + '">' + esc(t.name) + ' · ' + esc(t.language) + '</option>';
+        }).join('')
+      : '<option value="">No approved templates</option>';
+    el('cTemplateHint').textContent = !companySel.value
+      ? 'Pick a company first.'
+      : (list.length ? 'Only templates Meta has approved can be sent.'
+                     : 'This company has no approved templates yet.');
+    renderParams();
+  }
+
+  templateSel.addEventListener('change', function () {
+    renderParams(); renderPreview(); refresh();
+  });
+
+  /* ── Parameters ──────────────────────────────────────────────────────── */
+  function bodyText(t) {
+    if (!t) return '';
+    var body = (t.components || []).filter(function (c) { return c.type === 'BODY'; })[0];
+    return body ? (body.text || '') : '';
+  }
+
+  function paramIndices(t) {
+    var found = bodyText(t).match(/\{\{(\d+)\}\}/g) || [];
+    var nums  = found.map(function (m) { return parseInt(m.replace(/[^\d]/g, ''), 10); });
+    return nums.filter(function (n, i) { return nums.indexOf(n) === i; })
+               .sort(function (a, b) { return a - b; });
+  }
+
+  // A doubled curly brace is Jinja's own delimiter, so it cannot appear literally
+  // anywhere in this file — not even inside <script>, and not even in a comment.
+  // Concatenating the braces produces the same string without tripping Jinja.
+  function placeholder(n) { return '{' + '{' + n + '}' + '}'; }
+
+  function exampleFor(t, idx) {
+    var body = (t.components || []).filter(function (c) { return c.type === 'BODY'; })[0] || {};
+    var rows = ((body.example || {}).body_text) || [];
+    return (rows[0] || [])[idx - 1] || ('Value for ' + placeholder(idx));
+  }
+
+  function renderParams() {
+    var t = currentTemplate();
+    var indices = t ? paramIndices(t) : [];
+    if (!el('cParamsCard')) return;          // personalized: no typed params
+    el('cParamsCard').style.display = indices.length ? '' : 'none';
+    el('cParams').innerHTML = indices.map(function (n) {
+      return '<div class="cn-param-row">' +
+               '<div class="cn-param-tag">' + placeholder(n) + '</div>' +
+               '<input type="text" class="dv-input cn-param" data-index="' + n + '" ' +
+                      'placeholder="' + esc(exampleFor(t, n)) + '">' +
+             '</div>';
+    }).join('');
+    Array.prototype.forEach.call(document.querySelectorAll('.cn-param'), function (inp) {
+      inp.addEventListener('input', function () { renderPreview(); refresh(); });
+    });
+  }
+
+  function paramValues() {
+    return Array.prototype.map.call(document.querySelectorAll('.cn-param'),
+                                    function (i) { return i.value; });
+  }
+
+  /* ── Preview ──────────────────────────────────────────────────────────
+     Same WhatsApp bubble the company page uses for template previews, so a
+     template looks identical wherever it is inspected. */
+  function componentOf(t, type) {
+    return (t.components || []).filter(function (c) { return c.type === type; })[0] || null;
+  }
+
+  function fill(t, text) {
+    var vals = paramValues();
+    // Unfilled slots stay visible as the highlighted placeholder rather than
+    // collapsing — a blank reads as finished copy, which is how empty values
+    // ship unnoticed.
+    return esc(text || '').replace(/\{\{(\d+)\}\}/g, function (m, n) {
+      var v = vals[parseInt(n, 10) - 1];
+      return (v && v.length)
+        ? esc(v)
+        : '<span class="tpl-preview-var">' + m + '</span>';
+    });
+  }
+
+  function renderPreview() {
+    var t = currentTemplate();
+    var empty = el('cPreviewEmpty'), bubble = el('cPreviewBubble'), btns = el('cPreviewBtns');
+
+    if (!t) {
+      empty.style.display = ''; bubble.style.display = 'none'; btns.innerHTML = '';
+      return;
+    }
+    empty.style.display = 'none';
+    bubble.style.display = '';
+
+    var header = componentOf(t, 'HEADER');
+    var footer = componentOf(t, 'FOOTER');
+
+    el('cPrevHeader').style.display = (header && header.text) ? '' : 'none';
+    el('cPrevHeader').innerHTML = header ? fill(t, header.text) : '';
+    el('cPrevBody').innerHTML   = fill(t, bodyText(t));
+    el('cPrevFooter').style.display = (footer && footer.text) ? '' : 'none';
+    el('cPrevFooter').textContent = footer ? (footer.text || '') : '';
+
+    var buttons = componentOf(t, 'BUTTONS');
+    btns.innerHTML = ((buttons || {}).buttons || []).map(function (b) {
+      var icon = (b.type || '').toUpperCase() === 'URL' ? 'fa-external-link-alt' : 'fa-reply';
+      return '<div class="tpl-preview-btn"><i class="fas ' + icon + '"></i>' +
+             esc(b.text || '') + '</div>';
+    }).join('');
+  }
+
+  /* ── Lists ───────────────────────────────────────────────────────────── */
+  function renderLists() {
+    var lists = LISTS[companySel.value] || [];
+    if (!el('cListsCard')) return;           // personalized: the CSV is the list
+    el('cListsCard').style.display = lists.length ? '' : 'none';
+    el('cLists').innerHTML = lists.length
+      ? lists.map(function (l) {
+          return '<label class="cn-list-row' + (l.contacts ? '' : ' empty') + '">' +
+                   '<input type="checkbox" class="cn-list" value="' + l.id + '" ' +
+                          'data-count="' + l.contacts + '"' + (l.contacts ? '' : ' disabled') + '>' +
+                   '<span class="cn-list-name">' + esc(l.name) + '</span>' +
+                   '<span class="cn-list-count">' +
+                     (l.contacts ? l.contacts + ' contacts' : 'empty') +
+                   '</span>' +
+                 '</label>';
+        }).join('')
+      : '';
+    Array.prototype.forEach.call(document.querySelectorAll('.cn-list'), function (c) {
+      c.addEventListener('change', function () { renderCount(); refresh(); });
+    });
+    renderCount();
+  }
+
+  function chosenLists() {
+    return Array.prototype.filter.call(document.querySelectorAll('.cn-list'),
+                                       function (c) { return c.checked; });
+  }
+  function rawTotal() {
+    return chosenLists().reduce(function (n, c) {
+      return n + parseInt(c.dataset.count, 10);
+    }, 0);
+  }
+
+  function renderCount() {
+    var n = rawTotal();
+    if (!n) { el('cCount').innerHTML = ''; return; }
+    el('cCount').innerHTML =
+      '<strong>' + n + '</strong> contact' + (n === 1 ? '' : 's') + ' selected. ' +
+      'Anyone in more than one PhoneBook is counted once.' +
+      (n > MAX_RECIPIENTS
+        ? '<span class="cn-over">Over the limit of ' + MAX_RECIPIENTS + ' per broadcast.</span>'
+        : '');
+  }
+
+  /* ── Step state + save ───────────────────────────────────────────────── */
+  var saveBtn = el('cSave');
+
+  function refresh() {
+    var t = currentTemplate();
+
+    if (PERSONALIZED) {
+      // Nothing to save from this form — the campaign is created by the import.
+      // Reveal the upload step once a template is chosen and hide Continue.
+      el('cnStep1').className = 'cn-step' + (t ? '' : ' todo');
+      el('cCsvCard').style.display = t ? '' : 'none';
+      el('cnStep2').className = 'cn-step todo';
+      saveBtn.style.display = 'none';
+      el('cnStatus').textContent = t
+        ? 'Download the sample, fill it in, then upload'
+        : '';
+      return;
+    }
+
+    var filled = paramValues().length > 0 &&
+                 paramValues().every(function (v) { return v.trim().length > 0; });
+    var picked = chosenLists().length > 0 && rawTotal() > 0;
+
+    el('cnStep1').className = 'cn-step' + (t ? '' : ' todo');
+    el('cnStep2').className = 'cn-step' + (filled ? '' : ' todo');
+    el('cnStep3').className = 'cn-step' + (picked ? '' : ' todo');
+
+    var ready = companySel.value && t && filled && picked &&
+                rawTotal() <= MAX_RECIPIENTS;
+    saveBtn.disabled = !ready;
+    el('cnStatus').textContent = ready
+      ? 'Ready — you will review the list before anything sends'
+      : '';
+  }
+
+  saveBtn.addEventListener('click', async function () {
+    clearError();
+    saveBtn.classList.add('loading');
+    saveBtn.disabled = true;
+    try {
+      var created = await fetchWithAuth('/api/campaigns/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_id: companySel.value,
+          template_id: templateSel.value,
+        }),
+      });
+      if (!created.ok) return showError(await describeFailure(created));
+      var campaign = await created.json();
+
+      var built = await fetchWithAuth('/api/campaigns/' + campaign.id + '/recipients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phonebook_ids: chosenLists().map(function (c) { return c.value; }),
+          params: paramValues().map(function (v) { return v.trim(); }),
+        }),
+      });
+      if (!built.ok) return showError(await describeFailure(built));
+
+      window.location.href = '/broadcast/campaigns/' + campaign.id;
+    } catch (_) {
+      showError('Could not reach the server. Check your connection and try again.');
+    } finally {
+      saveBtn.classList.remove('loading');
+      refresh();
+    }
+  });
+
+  async function describeFailure(res) {
+    if (res.status === 401 || res.status === 403) {
+      return 'Your session has expired. Reload the page and sign in again.';
+    }
+    var d = await res.json().catch(function () { return {}; });
+    var detail = d.detail;
+    if (Array.isArray(detail)) {
+      return detail.map(function (e) { return e.msg || ''; }).join('; ') ||
+             ('Request failed (' + res.status + ').');
+    }
+    return detail || ('Request failed (' + res.status + ').');
+  }
+
+{% if personalized %}
+/* ── Personalized: CSV import ─────────────────────────────────────────────
+   The campaign is created first (it owns the template, which decides how many
+   Param columns exist), then rows are posted in batches. Same three steps and
+   the same 3-second minimum progress bar as the PhoneBook import. */
+  var BATCH  = 200;
+  var MIN_MS = 3000;                 // shortest the bar is allowed to run
+
+  var backdrop = el('imBackdrop');
+  if (!backdrop) return;
+
+  var rows = [], headers = [], fields = [], paramCount = 0, fileName = '';
+  var campaignId = null;             // created on first upload, reused after
+
+  function step(n) {
+    ['imStep1', 'imStep2', 'imStep3', 'imStep4'].forEach(function (id, i) {
+      el(id).classList.toggle('active', i === n - 1);
+    });
+    el('imNext').style.display   = 'none';
+    el('imStart').style.display  = 'none';
+    el('imDone').style.display   = 'none';
+    el('imPbSave').style.display = 'none';
+    if (n === 2) el('imStart').style.display  = '';
+    if (n === 4) el('imPbSave').style.display = '';
+    el('imTitle').textContent = n === 4
+      ? 'Save these contacts as a PhoneBook'
+      : 'Import contacts from CSV';
+  }
+
+  function showErr(id, msg) { var e = el(id); e.textContent = msg; e.classList.add('visible'); }
+  function clearErr(id)     { el(id).classList.remove('visible'); }
+
+
+  /* ── Sample CSV ──────────────────────────────────────────────────────── */
+  el('cSample').addEventListener('click', function () {
+    var t = currentTemplate();
+    if (!t) return;
+    var cols = ['WhatsApp Number', 'Customer Name'];
+    paramIndices(t).forEach(function (n) { cols.push('Param ' + n); });
+    // Headers only. A sample row invites people to edit around it and leave the
+    // example in, which then imports as a real recipient.
+    var blob = new Blob([cols.join(',') + '\n'], { type: 'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (t.name || 'broadcast') + '_sample.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  /* ── Open / close ────────────────────────────────────────────────────── */
+  el('cUpload').addEventListener('click', function () {
+    rows = []; headers = [];
+    clearErr('imError'); clearErr('imMapError');
+    step(1);
+    backdrop.classList.add('open');
+  });
+  function close() { backdrop.classList.remove('open'); }
+  el('imClose').addEventListener('click', close);
+  el('imCancel').addEventListener('click', close);
+  backdrop.addEventListener('click', function (e) { if (e.target === backdrop) close(); });
+
+  /* ── File pick ───────────────────────────────────────────────────────── */
+  el('imDrop').addEventListener('click', function () { el('imFile').click(); });
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    el('imDrop').addEventListener(ev, function (e) {
+      e.preventDefault(); el('imDrop').classList.add('dragover');
+    });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    el('imDrop').addEventListener(ev, function (e) {
+      e.preventDefault(); el('imDrop').classList.remove('dragover');
+    });
+  });
+  el('imDrop').addEventListener('drop', function (e) {
+    if (e.dataTransfer.files.length) readFile(e.dataTransfer.files[0]);
+  });
+  el('imFile').addEventListener('change', function () {
+    if (this.files.length) readFile(this.files[0]);
+  });
+  el('imChangeFile').addEventListener('click', function (e) {
+    e.preventDefault(); step(1);
+  });
+
+  function readFile(file) {
+    clearErr('imError');
+    var reader = new FileReader();
+    reader.onload = async function () {
+      var parsed = window.parseCSV(reader.result);
+      if (parsed.length < 2) {
+        return showErr('imError', 'That file has no data rows — only a header.');
+      }
+      headers = parsed[0].map(function (h) { return (h || '').trim(); });
+      rows    = parsed.slice(1);
+      fileName = file.name;
+      el('imFileName').textContent = file.name;
+      el('imRowCount').textContent = rows.length + ' row' + (rows.length === 1 ? '' : 's');
+      await ensureCampaign();
+      if (campaignId) await buildMapping();
+    };
+    reader.readAsText(file);
+  }
+
+  /* ── Campaign + mapping ──────────────────────────────────────────────── */
+  async function ensureCampaign() {
+    if (campaignId) return;
+    try {
+      var res = await fetchWithAuth('/api/campaigns/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_id: companySel.value,
+          template_id: templateSel.value,
+          param_mode: 'per_row',
+        }),
+      });
+      if (!res.ok) return showErr('imError', await describeFailure(res));
+      campaignId = (await res.json()).id;
+    } catch (_) {
+      showErr('imError', 'Could not reach the server. Check your connection and try again.');
+    }
+  }
+
+  async function buildMapping() {
+    try {
+      var fr = await fetchWithAuth('/api/campaigns/' + campaignId + '/import/fields');
+      if (!fr.ok) return showErr('imError', await describeFailure(fr));
+      var fd = await fr.json();
+      fields = fd.fields; paramCount = fd.param_count;
+
+      var mr = await fetchWithAuth('/api/campaigns/' + campaignId + '/import/suggest-mapping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ headers: headers }),
+      });
+      if (!mr.ok) return showErr('imError', await describeFailure(mr));
+      var mapping = (await mr.json()).mapping;
+
+      el('imMapRows').innerHTML = fields.map(function (f) {
+        var chosen = mapping[f.name];
+        var opts = ['<option value="">— Not mapped —</option>'].concat(
+          headers.map(function (h) {
+            return '<option value="' + esc(h) + '"' +
+                   (h === chosen ? ' selected' : '') + '>' + esc(h) + '</option>';
+          })).join('');
+        var sample = chosen ? sampleFor(chosen) : '';
+        return '<tr>' +
+          '<td><div class="im-field-label">' + esc(f.label) +
+            (f.required ? '<span class="req">*</span>' : '') + '</div>' +
+            '<div class="im-field-help">' + esc(f.help || '') + '</div></td>' +
+          '<td><select class="im-select' + (chosen ? '' : ' unmapped') +
+            '" data-field="' + f.name + '">' + opts + '</select>' +
+            '<div class="im-sample">' + (sample ? 'e.g. ' + esc(sample) : '') + '</div></td>' +
+          '</tr>';
+      }).join('');
+
+      Array.prototype.forEach.call(document.querySelectorAll('.im-select'), function (sel) {
+        sel.addEventListener('change', function () {
+          sel.classList.toggle('unmapped', !sel.value);
+          sel.parentNode.querySelector('.im-sample').textContent =
+            sel.value ? 'e.g. ' + sampleFor(sel.value) : '';
+        });
+      });
+      step(2);
+    } catch (_) {
+      showErr('imError', 'Could not reach the server. Check your connection and try again.');
+    }
+  }
+
+  function sampleFor(header) {
+    var i = headers.indexOf(header);
+    if (i < 0) return '';
+    for (var r = 0; r < rows.length; r++) {
+      if ((rows[r][i] || '').trim()) return rows[r][i].trim();
+    }
+    return '';
+  }
+
+  /* ── Import ──────────────────────────────────────────────────────────── */
+  el('imStart').addEventListener('click', async function () {
+    clearErr('imMapError');
+    var chosen = {};
+    Array.prototype.forEach.call(document.querySelectorAll('.im-select'), function (sel) {
+      if (sel.value) chosen[sel.dataset.field] = headers.indexOf(sel.value);
+    });
+    var missing = fields.filter(function (f) {
+      return f.required && chosen[f.name] === undefined;
+    });
+    if (missing.length) {
+      return showErr('imMapError',
+        'Map a column for: ' + missing.map(function (f) { return f.label; }).join(', ') + '.');
+    }
+
+    var payload = rows.map(function (r, i) {
+      var params = {};
+      for (var n = 1; n <= paramCount; n++) {
+        var idx = chosen['param_' + n];
+        params['param_' + n] = idx === undefined ? '' : (r[idx] || '').trim();
+      }
+      return {
+        row: i + 2,                                    // +2: 1-based, past the header
+        mobile_no: (r[chosen.mobile_no] || '').trim(),
+        customer_name: chosen.customer_name === undefined
+          ? null : (r[chosen.customer_name] || '').trim(),
+        params: params,
+      };
+    });
+
+    step(3);
+    el('imProgWrap').style.display = '';
+    el('imStats').style.display = 'none';
+
+    var total = payload.length;
+    var batches = Math.ceil(total / BATCH) || 1;
+    var batchesDone = 0, startAt = Date.now();
+    var ticker = setInterval(function () {
+      var byTime  = (Date.now() - startAt) / MIN_MS;
+      var ceiling = Math.min(1, (batchesDone + 1) / batches);
+      var shown   = Math.max(0, Math.min(byTime, ceiling));
+      el('imBar').style.width = (shown * 100).toFixed(1) + '%';
+      el('imBarLabel').textContent =
+        'Importing ' + Math.round(shown * total) + ' of ' + total + '…';
+    }, 50);
+
+    var okCount = 0, errors = [];
+    try {
+      for (var s2 = 0; s2 < total; s2 += BATCH) {
+        var res = await fetchWithAuth('/api/campaigns/' + campaignId + '/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: payload.slice(s2, s2 + BATCH) }),
+        });
+        if (!res.ok) {
+          clearInterval(ticker);
+          step(2);
+          return showErr('imMapError', await describeFailure(res));
+        }
+        var out = await res.json();
+        okCount += out.imported;
+        errors = errors.concat(out.errors || []);
+        batchesDone++;
+      }
+    } catch (_) {
+      clearInterval(ticker);
+      step(2);
+      return showErr('imMapError', 'Could not reach the server. Check your connection.');
+    }
+
+    var remaining = MIN_MS - (Date.now() - startAt);
+    if (remaining > 0) await new Promise(function (r) { setTimeout(r, remaining); });
+    clearInterval(ticker);
+    el('imBar').style.width = '100%';
+
+    el('imProgWrap').style.display = 'none';
+    el('imStats').style.display = '';
+    el('imOk').textContent  = okCount;
+    el('imBad').textContent = errors.length;
+    if (errors.length) {
+      el('imErrWrap').style.display = '';
+      el('imErrRows').innerHTML = errors.slice(0, 200).map(function (e) {
+        return '<tr><td class="rownum">' + e.row + '</td>' +
+               '<td class="val">' + esc(e.value) + '</td>' +
+               '<td>' + esc(e.reason) + '</td></tr>';
+      }).join('');
+    }
+    el('imDone').style.display = okCount ? '' : 'none';
+  });
+
+  el('imDone').addEventListener('click', function () {
+    window.location.href = '/broadcast/campaigns/' + campaignId;
+  });
+
+  /* ── Save the contacts as a PhoneBook ───────────────────────────────────
+     Offered here rather than on the campaign page because the extra columns —
+     email, agent id — only exist in the file the browser parsed. Once this
+     dialog closes, broadcast_recipients has kept just the number and name. */
+  var pbFields = [];
+
+  el('imSaveBtn').addEventListener('click', async function () {
+    clearErr('imPbError');
+    el('imPbName').value = (fileName || 'Imported contacts').replace(/\.csv$/i, '');
+
+    el('imPbCompany').innerHTML = COMPANIES.map(function (c) {
+      return '<option value="' + c.id + '"' +
+             (c.id === companySel.value ? ' selected' : '') + '>' + esc(c.name) + '</option>';
+    }).join('');
+
+    try {
+      var fr = await fetchWithAuth('/api/phonebooks/import/fields');
+      if (!fr.ok) return showErr('imPbError', await describeFailure(fr));
+      pbFields = (await fr.json()).fields;
+
+      // Map against the PhoneBook's own fields, not the campaign's — template
+      // parameters are campaign data and are deliberately not offered here.
+      var mr = await fetchWithAuth('/api/phonebooks/import/suggest-mapping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ headers: headers }),
+      });
+      if (!mr.ok) return showErr('imPbError', await describeFailure(mr));
+      var mapping = (await mr.json()).mapping;
+
+      el('imPbMapRows').innerHTML = pbFields.map(function (f) {
+        var chosen = mapping[f.name];
+        var opts = ['<option value="">— Not mapped —</option>'].concat(
+          headers.map(function (h) {
+            return '<option value="' + esc(h) + '"' +
+                   (h === chosen ? ' selected' : '') + '>' + esc(h) + '</option>';
+          })).join('');
+        return '<tr>' +
+          '<td><div class="im-field-label">' + esc(f.label) +
+            (f.required ? '<span class="req">*</span>' : '') + '</div>' +
+            '<div class="im-field-help">' + esc(f.help || '') + '</div></td>' +
+          '<td><select class="im-select pb-sel' + (chosen ? '' : ' unmapped') +
+            '" data-field="' + f.name + '">' + opts + '</select></td>' +
+          '</tr>';
+      }).join('');
+
+      Array.prototype.forEach.call(document.querySelectorAll('.pb-sel'), function (sel) {
+        sel.addEventListener('change', function () {
+          sel.classList.toggle('unmapped', !sel.value);
+        });
+      });
+      step(4);
+    } catch (_) {
+      showErr('imPbError', 'Could not reach the server. Check your connection and try again.');
+    }
+  });
+
+  el('imPbSave').addEventListener('click', async function () {
+    clearErr('imPbError');
+    var name = el('imPbName').value.trim();
+    if (!name) return showErr('imPbError', 'Give the PhoneBook a name.');
+
+    var chosen = {};
+    Array.prototype.forEach.call(document.querySelectorAll('.pb-sel'), function (sel) {
+      if (sel.value) chosen[sel.dataset.field] = headers.indexOf(sel.value);
+    });
+    var missing = pbFields.filter(function (f) {
+      return f.required && chosen[f.name] === undefined;
+    });
+    if (missing.length) {
+      return showErr('imPbError',
+        'Map a column for: ' + missing.map(function (f) { return f.label; }).join(', ') + '.');
+    }
+
+    var btn = el('imPbSave');
+    btn.classList.add('loading');
+    btn.disabled = true;
+    try {
+      var cr = await fetchWithAuth('/api/phonebooks/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name, company_id: el('imPbCompany').value }),
+      });
+      if (!cr.ok) return showErr('imPbError', await describeFailure(cr));
+      var pbId = (await cr.json()).id;
+
+      var payload = rows.map(function (r, i) {
+        function col(field) {
+          var idx = chosen[field];
+          return idx === undefined ? null : (r[idx] || '').trim();
+        }
+        return {
+          row: i + 2,
+          mobile_no: col('mobile_no'),
+          customer_name: col('customer_name'),
+          email: col('email'),
+          agent_id: col('agent_id'),
+        };
+      });
+
+      var saved = 0, failed = 0;
+      for (var s3 = 0; s3 < payload.length; s3 += BATCH) {
+        // Reuses the PhoneBook's own import endpoint, so the rules that apply to
+        // a manual upload apply here too — same validation, same dedup.
+        var ir = await fetchWithAuth('/api/phonebooks/' + pbId + '/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: payload.slice(s3, s3 + BATCH) }),
+        });
+        if (!ir.ok) return showErr('imPbError', await describeFailure(ir));
+        var out = await ir.json();
+        saved  += out.imported;
+        failed += out.skipped;
+      }
+
+      window.location.href = '/broadcast/phonebooks/' + pbId;
+    } catch (_) {
+      showErr('imPbError', 'Could not reach the server. Check your connection and try again.');
+    } finally {
+      btn.classList.remove('loading');
+      btn.disabled = false;
+    }
+  });
+{% endif %}
+
+  renderTemplates();
+  renderLists();
+  refresh();
+})();
+
+</script>
+{% endblock %}

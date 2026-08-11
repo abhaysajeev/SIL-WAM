@@ -28,6 +28,13 @@ RESOURCES = [
         ],
     },
     {
+        "module": "Broadcast",
+        "items": [
+            {"name": "phonebooks", "label": "PhoneBooks", "actions": ["read", "create", "write", "delete"]},
+            {"name": "campaigns",        "label": "Campaigns",       "actions": ["read", "create", "write", "delete"]},
+        ],
+    },
+    {
         "module": "Analytics",
         "items": [
             {"name": "reports", "label": "Reports & Analytics", "actions": ["read"]},

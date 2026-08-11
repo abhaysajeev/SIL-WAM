@@ -641,6 +641,16 @@
             </div>
             <div id="tplHeaderFields" style="display:none;">
               <div class="tpl-field">
+                <label class="tpl-label" for="tplHeaderFormat">Header Type</label>
+                <select id="tplHeaderFormat" class="tpl-input" onchange="onHeaderFormatChange()">
+                  <option value="TEXT">Text</option>
+                  <option value="IMAGE">Image</option>
+                  <option value="DOCUMENT">Document (PDF)</option>
+                  <option value="VIDEO">Video</option>
+                </select>
+              </div>
+
+              <div class="tpl-field" id="tplHeaderTextField">
                 <label class="tpl-label" for="tplHeaderText">
                   Header Text
                   <span class="tpl-char-count" id="tplHeaderCount">0/60</span>
@@ -649,6 +659,25 @@
                        placeholder="Short header line…" maxlength="60"
                        oninput="updateHeaderCount();updatePreview();">
                 <div class="tpl-hint">No variables allowed. Max 60 characters.</div>
+              </div>
+
+              <!-- Media header. The file uploaded here is only the sample Meta's
+                   reviewer sees; the media each customer receives is resolved per
+                   send from the header mapping on the Mapping tab. -->
+              <div class="tpl-field" id="tplHeaderMediaField" style="display:none;">
+                <label class="tpl-label">Sample file <span style="font-weight:400;opacity:.7">— for Meta's review only</span></label>
+                <div class="tpl-hint" id="tplHeaderMediaHint" style="margin-bottom:8px;">
+                  <strong>This file is never sent to a customer.</strong> Meta requires one
+                  example so a reviewer can see what the header is for, the same way body
+                  variables need example values. Upload any representative file.
+                  <br>
+                  The image each customer actually receives is set per message on the
+                  <strong>Mapping</strong> tab, once this template is approved.
+                </div>
+                <input type="file" id="tplHeaderFile" class="tpl-input"
+                       onchange="onHeaderFileChange()">
+                <input type="hidden" id="tplHeaderHandle" value="">
+                <div id="tplHeaderMediaStatus" class="tpl-hint" style="margin-top:6px;"></div>
               </div>
             </div>
           </div>
@@ -1786,10 +1815,14 @@
       document.getElementById('tplLanguage').value = tplData.language || 'en_US';
 
       var comps = tplData.components || [];
-      var header = null, body = '', footer = null, btns = [];
+      var header = null, headerFormat = null, body = '', footer = null, btns = [];
       comps.forEach(function (c) {
         var type = (c.type || '').toUpperCase();
-        if (type === 'HEADER' && c.format === 'TEXT') header = c.text || '';
+        if (type === 'HEADER') {
+          headerFormat = (c.format || 'TEXT').toUpperCase();
+          // Media headers have no text — only the format and the approved sample.
+          if (headerFormat === 'TEXT') header = c.text || '';
+        }
         if (type === 'BODY')    body   = c.text || '';
         if (type === 'FOOTER')  footer = c.text || '';
         if (type === 'BUTTONS') btns   = c.buttons || [];
@@ -1797,11 +1830,23 @@
 
       document.getElementById('tplBodyText').value = body;
 
-      if (header !== null) {
+      if (headerFormat) {
         headerVisible = true;
         tplHeaderFields.style.display = 'block';
         tplHeaderToggle.textContent   = '− Remove Header';
-        document.getElementById('tplHeaderText').value = header;
+        document.getElementById('tplHeaderFormat').value = headerFormat;
+        document.getElementById('tplHeaderText').value   = header || '';
+        onHeaderFormatChange();
+        if (MEDIA_HEADER_FORMATS.indexOf(headerFormat) !== -1) {
+          // Leave the handle blank on purpose: an empty handle tells the backend to
+          // carry the already-approved sample forward, so editing body text alone
+          // never forces a re-upload.
+          document.getElementById('tplHeaderHandle').value = '';
+          setHeaderMediaStatus(
+            'Using the approved ' + headerFormat.toLowerCase() +
+            '. Choose a file only if you want to replace it.', ''
+          );
+        }
       }
       if (footer !== null) {
         footerVisible = true;
@@ -1857,12 +1902,84 @@
       updatePreview();
     }
 
+    /* ── Header format / media sample ───────────────────── */
+    var MEDIA_HEADER_FORMATS = ['IMAGE', 'DOCUMENT', 'VIDEO'];
+    var HEADER_ACCEPT = {
+      IMAGE:    'image/jpeg,image/png',
+      DOCUMENT: 'application/pdf',
+      VIDEO:    'video/mp4'
+    };
+
+    function setHeaderMediaStatus(msg, kind) {
+      var el = document.getElementById('tplHeaderMediaStatus');
+      if (!el) return;
+      el.textContent = msg || '';
+      el.style.color = kind === 'error' ? 'var(--red)'
+                     : kind === 'ok'    ? 'var(--green, #1a7f37)'
+                     : '';
+    }
+
+    window.onHeaderFormatChange = function () {
+      var fmt     = document.getElementById('tplHeaderFormat').value;
+      var isMedia = MEDIA_HEADER_FORMATS.indexOf(fmt) !== -1;
+      document.getElementById('tplHeaderTextField').style.display  = isMedia ? 'none' : 'block';
+      document.getElementById('tplHeaderMediaField').style.display = isMedia ? 'block' : 'none';
+      var fileInp = document.getElementById('tplHeaderFile');
+      if (isMedia) fileInp.setAttribute('accept', HEADER_ACCEPT[fmt] || '');
+      if (!isMedia) {
+        // Switching back to text discards a sample that no longer applies.
+        document.getElementById('tplHeaderHandle').value = '';
+        fileInp.value = '';
+        setHeaderMediaStatus('', '');
+      }
+      updatePreview();
+    };
+
+    window.onHeaderFileChange = function () {
+      var inp  = document.getElementById('tplHeaderFile');
+      var file = inp.files && inp.files[0];
+      if (!file) return;
+
+      // Uploading on selection rather than on submit keeps template creation a plain
+      // JSON POST, and surfaces a rejected file while the user is still looking at
+      // the picker instead of after they have filled in the whole form.
+      document.getElementById('tplHeaderHandle').value = '';
+      setHeaderMediaStatus('Uploading ' + file.name + '…', '');
+
+      var fd = new FormData();
+      fd.append('file', file);
+      fetch('/api/whatsapp/' + COMPANY_ID + '/templates/media-handle', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + getToken() },
+        body: fd
+      })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+        .then(function (res) {
+          if (!res.ok) throw new Error(res.d.detail || 'Upload failed');
+          document.getElementById('tplHeaderHandle').value = res.d.handle;
+          document.getElementById('tplHeaderFormat').value = res.d.format;
+          onHeaderFormatChange();
+          setHeaderMediaStatus('✓ ' + file.name + ' uploaded', 'ok');
+        })
+        .catch(function (e) {
+          inp.value = '';
+          setHeaderMediaStatus(e.message, 'error');
+        });
+    };
+
     /* ── Header toggle ──────────────────────────────────── */
     tplHeaderToggle && tplHeaderToggle.addEventListener('click', function () {
       headerVisible = !headerVisible;
       tplHeaderFields.style.display = headerVisible ? 'block' : 'none';
       tplHeaderToggle.textContent   = headerVisible ? '− Remove Header' : '+ Add Header';
-      if (!headerVisible) { document.getElementById('tplHeaderText').value = ''; updatePreview(); }
+      if (!headerVisible) {
+        document.getElementById('tplHeaderText').value   = '';
+        document.getElementById('tplHeaderHandle').value = '';
+        document.getElementById('tplHeaderFile').value   = '';
+        document.getElementById('tplHeaderFormat').value = 'TEXT';
+        onHeaderFormatChange();
+        updatePreview();
+      }
     });
 
     /* ── Footer toggle ──────────────────────────────────── */
@@ -1970,8 +2087,18 @@
       emptyEl.style.display = 'none';
 
       var prevHeader = document.getElementById('tplPrevHeader');
-      prevHeader.style.display = header ? '' : 'none';
-      prevHeader.textContent   = header;
+      var prevFmt    = headerVisible ? document.getElementById('tplHeaderFormat').value : null;
+      if (prevFmt && MEDIA_HEADER_FORMATS.indexOf(prevFmt) !== -1) {
+        // The real media differs per message, so show what shape it takes, not a file.
+        var icon = prevFmt === 'IMAGE' ? 'fa-image' : prevFmt === 'VIDEO' ? 'fa-video' : 'fa-file-pdf';
+        prevHeader.style.display = '';
+        prevHeader.innerHTML =
+          '<span style="opacity:.6"><i class="fas ' + icon + '"></i> ' +
+          prevFmt.charAt(0) + prevFmt.slice(1).toLowerCase() + ' — set per message</span>';
+      } else {
+        prevHeader.style.display = header ? '' : 'none';
+        prevHeader.textContent   = header;
+      }
 
       var prevBody = document.getElementById('tplPrevBody');
       var escaped  = body.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
@@ -2002,6 +2129,11 @@
       document.getElementById('tplLanguage').value  = 'en_US';
       if (document.getElementById('tplHeaderText')) document.getElementById('tplHeaderText').value = '';
       if (document.getElementById('tplFooterText')) document.getElementById('tplFooterText').value = '';
+      document.getElementById('tplHeaderFormat').value = 'TEXT';
+      document.getElementById('tplHeaderHandle').value = '';
+      document.getElementById('tplHeaderFile').value   = '';
+      setHeaderMediaStatus('', '');
+      onHeaderFormatChange();
       document.getElementById('tplBtnRows').innerHTML = '';
       btnRowCount = 0;
       headerVisible = false; footerVisible = false; btnsVisible = false;
@@ -2028,14 +2160,20 @@
         if (type === 'PHONE_NUMBER' && phoneEl) btn.phone_number = phoneEl.value.trim();
         buttons.push(btn);
       });
+      var headerFormat = headerVisible ? document.getElementById('tplHeaderFormat').value : null;
+      var isMedia      = headerFormat && MEDIA_HEADER_FORMATS.indexOf(headerFormat) !== -1;
       return {
-        name:        document.getElementById('tplName').value.trim(),
-        category:    document.getElementById('tplCategory').value,
-        language:    document.getElementById('tplLanguage').value,
-        header_text: (headerVisible && document.getElementById('tplHeaderText').value.trim()) || null,
-        body_text:   document.getElementById('tplBodyText').value.trim(),
-        footer_text: (footerVisible && document.getElementById('tplFooterText').value.trim()) || null,
-        buttons:     buttons.length ? buttons : null,
+        name:          document.getElementById('tplName').value.trim(),
+        category:      document.getElementById('tplCategory').value,
+        language:      document.getElementById('tplLanguage').value,
+        header_format: headerFormat,
+        header_text:   (!isMedia && headerVisible && document.getElementById('tplHeaderText').value.trim()) || null,
+        // Empty on edit unless a replacement was uploaded — the backend then keeps
+        // the sample Meta already approved.
+        header_handle: (isMedia && document.getElementById('tplHeaderHandle').value) || null,
+        body_text:     document.getElementById('tplBodyText').value.trim(),
+        footer_text:   (footerVisible && document.getElementById('tplFooterText').value.trim()) || null,
+        buttons:       buttons.length ? buttons : null,
       };
     }
 
@@ -2349,6 +2487,34 @@
         '</div>';
       rowsEl.appendChild(phoneRow);
 
+      /* ── Header media row — only for IMAGE/DOCUMENT/VIDEO headers ── */
+      var hdrFmt = null;
+      (t.components || []).forEach(function (c) {
+        if ((c.type || '').toUpperCase() === 'HEADER') hdrFmt = (c.format || '').toUpperCase();
+      });
+      if (MEDIA_HEADER_FORMATS.indexOf(hdrFmt) !== -1) {
+        var mediaHdr = document.createElement('div');
+        mediaHdr.className = 'tv-mapper-group-label';
+        mediaHdr.innerHTML = '<i class="fas fa-paperclip"></i> Header Media';
+        rowsEl.appendChild(mediaHdr);
+
+        var mediaIcon = hdrFmt === 'IMAGE' ? 'fa-image' : hdrFmt === 'VIDEO' ? 'fa-video' : 'fa-file-pdf';
+        var mediaRow = document.createElement('div');
+        mediaRow.className = 'tv-mapper-card';
+        mediaRow.innerHTML =
+          '<div class="tv-mapper-card-left">' +
+            '<div class="tv-mapper-badge" style="background:var(--blue-tint,#eff6ff);color:var(--blue,#2563eb);"><i class="fas ' + mediaIcon + '"></i></div>' +
+            '<div class="tv-mapper-snippet">' + hdrFmt.charAt(0) + hdrFmt.slice(1).toLowerCase() +
+              ' URL field path — must be public HTTPS, Meta fetches it directly</div>' +
+          '</div>' +
+          '<div class="tv-mapper-card-right">' +
+            '<div class="tv-mapper-input-label">data key</div>' +
+            '<input type="text" class="tv-mapper-input" data-type="header" data-key="header"' +
+            '       placeholder="data.receipt_image_url" value="' + _esc(t.header_mapping || '') + '">' +
+          '</div>';
+        rowsEl.appendChild(mediaRow);
+      }
+
       if (!hasContent) return;
 
       if (indices.length > 0) {
@@ -2423,11 +2589,14 @@
       var statusEl  = document.getElementById('tvMapperStatus');
       var spinner   = document.getElementById('tvMapperSpinner');
       var label     = document.getElementById('tvMapperSaveLabel');
-      var paramMap = {}, ctaMap = {}, mobileMap = '';
+      var paramMap = {}, ctaMap = {}, mobileMap = '', headerMap = '';
 
       document.querySelectorAll('#tvMapperRows .tv-mapper-input').forEach(function (inp) {
         var val = inp.value.trim();
+        // mobile and header are captured even when blank so they can be cleared;
+        // param and cta are keyed maps where a blank simply means "no mapping".
         if (inp.dataset.type === 'mobile') { mobileMap = val; return; }
+        if (inp.dataset.type === 'header') { headerMap = val; return; }
         if (!val) return;
         if (inp.dataset.type === 'param') paramMap[inp.dataset.key] = val;
         if (inp.dataset.type === 'cta')   ctaMap[inp.dataset.key]   = val;
@@ -2443,7 +2612,12 @@
           {
             method:  'PATCH',
             headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
-            body:    JSON.stringify({ param_mapping: paramMap, cta_mapping: ctaMap, mobile_mapping: mobileMap }),
+            body:    JSON.stringify({
+              param_mapping:  paramMap,
+              cta_mapping:    ctaMap,
+              mobile_mapping: mobileMap,
+              header_mapping: headerMap,
+            }),
           }
         );
         var data = await res.json().catch(function () { return {}; });
@@ -2454,6 +2628,7 @@
               TEMPLATES_DATA[i].param_mapping  = paramMap;
               TEMPLATES_DATA[i].cta_mapping    = ctaMap;
               TEMPLATES_DATA[i].mobile_mapping = mobileMap;
+              TEMPLATES_DATA[i].header_mapping = headerMap;
               currentViewTpl = TEMPLATES_DATA[i];
               break;
             }

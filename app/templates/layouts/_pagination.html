@@ -1,0 +1,36 @@
+{#
+  Reusable pager. Expects `page` (app.core.pagination.Page) and `page_url`
+  (the helper of the same name) in the template context.
+
+  Renders nothing when everything fits on one page — a pager under a 3-row
+  table is noise.
+#}
+{% if page.pages > 1 %}
+<div class="pg-bar">
+  <div class="pg-count">
+    Showing {{ page.first_index }}–{{ page.last_index }} of {{ page.total }}
+  </div>
+
+  <div class="pg-links">
+    <a class="pg-link {% if not page.has_prev %}disabled{% endif %}"
+       {% if page.has_prev %}href="{{ page_url(request, page.prev_page) }}"{% endif %}>
+      <i class="ti ti-chevron-left"></i>
+    </a>
+
+    {% for n in page.window %}
+      {% if n == 0 %}
+        <span class="pg-gap">…</span>
+      {% elif n == page.page %}
+        <span class="pg-link current">{{ n }}</span>
+      {% else %}
+        <a class="pg-link" href="{{ page_url(request, n) }}">{{ n }}</a>
+      {% endif %}
+    {% endfor %}
+
+    <a class="pg-link {% if not page.has_next %}disabled{% endif %}"
+       {% if page.has_next %}href="{{ page_url(request, page.next_page) }}"{% endif %}>
+      <i class="ti ti-chevron-right"></i>
+    </a>
+  </div>
+</div>
+{% endif %}

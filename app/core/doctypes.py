@@ -273,3 +273,42 @@ USERS_DOCTYPE = {
         },
     ],
 }
+
+
+PHONEBOOKS_DOCTYPE = {
+    "resource":       "phonebooks",
+    "title":          "PhoneBook",
+    "title_plural":   "PhoneBooks",
+    "perm_page":      "phonebooks",
+    "icon":           "ti ti-address-book",
+    "api_prefix":     "/api/phonebooks",
+    "base_route":     "/broadcast/phonebooks",
+    "title_field":    "name",
+    "bulk_delete":    True,
+
+    "list_columns": [
+        {"label": "Name",     "field": "name",          "type": "text", "bold": True},
+        {"label": "Company",  "field": "company_name",  "type": "text"},
+        {"label": "Contacts", "field": "contact_count", "type": "text"},
+        {"label": "Created",  "field": "created_at",    "type": "text"},
+    ],
+
+    # Only used for /new — editing the name happens inline on the detail page,
+    # because {base_route}/{id} is the contacts view, not a form.
+    "form_sections": [
+        {
+            "label": "PhoneBook",
+            "fields": [
+                {
+                    "name": "name", "label": "PhoneBook Name",
+                    "type": "text", "required": True, "maxlength": 150, "cols": 2,
+                },
+                {
+                    "name": "company_id", "label": "Company",
+                    "type": "select_company", "required": True, "cols": 2,
+                    "hint": "Contacts and campaigns are scoped to this company.",
+                },
+            ],
+        },
+    ],
+}

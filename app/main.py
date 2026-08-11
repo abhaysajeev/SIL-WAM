@@ -5,11 +5,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.exception_handlers import (
-    http_exception_handler,
-    request_validation_exception_handler,
-)
-from fastapi.exceptions import HTTPException, RequestValidationError
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.exceptions import HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -33,6 +30,7 @@ from app.api.erpnext_config_api import router as erpnext_config_api_router
 from app.api.meta_webhook import router as meta_webhook_router
 from app.api.analytics_api import router as analytics_router
 from app.api.client_services_api import router as client_services_router
+from app.lizo.api import router as lizo_router
 from app.api.sse_api import router as sse_router
 from app.api.erpnext_webhook import router as erpnext_webhook_router
 from app.api.webhook_config_api import router as webhook_config_api_router
@@ -46,6 +44,9 @@ from app.routes.users_pages import router as users_pages_router
 from app.routes.roles_pages import router as roles_pages_router
 from app.routes.error_logs_pages import router as error_logs_pages_router
 from app.routes.erpnext_config_pages import router as erpnext_config_pages_router
+from app.api.phonebooks_api import router as phonebooks_api_router
+from app.api.campaigns_api import router as campaigns_api_router
+from app.routes.broadcast_pages import router as broadcast_pages_router
 from app.routes.reports_pages import router as reports_pages_router
 from app.routes.services_pages import router as services_pages_router
 from app.routes.conversations_pages import router as conversations_pages_router
@@ -67,14 +68,18 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Tables are managed by Alembic migrations — never auto-create here
-    from app.services import expiry_scheduler, notify_scheduler, send_scheduler
+    from app.services import (
+        broadcast_scheduler, expiry_scheduler, notify_scheduler, send_scheduler,
+    )
     expiry_scheduler.start()
     send_scheduler.start()
     notify_scheduler.start()
+    broadcast_scheduler.start()
     yield
     expiry_scheduler.stop()
     send_scheduler.stop()
     notify_scheduler.stop()
+    broadcast_scheduler.stop()
 
 
 app = FastAPI(title=settings.APP_TITLE, lifespan=lifespan)
@@ -97,12 +102,13 @@ async def login_redirect_handler(request: Request, exc: _LoginRedirect):
     return RedirectResponse(url="/login", status_code=302)
 
 
+# Validation errors keep FastAPI's default handling app-wide. Lizo's endpoint
+# renders its own envelope through app/lizo/route.py's LizoRoute, so no global
+# handler needs to know that route exists.
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     if isinstance(exc, HTTPException):
         return await http_exception_handler(request, exc)
-    if isinstance(exc, RequestValidationError):
-        return await request_validation_exception_handler(request, exc)
     if isinstance(exc, _LoginRedirect):
         return RedirectResponse(url="/login", status_code=302)
 
@@ -141,6 +147,7 @@ app.include_router(meta_webhook_router)
 app.include_router(analytics_router)
 app.include_router(sse_router)
 app.include_router(client_services_router)
+app.include_router(lizo_router)
 app.include_router(erpnext_webhook_router)
 app.include_router(webhook_config_api_router)
 app.include_router(demo_api_router)
@@ -153,6 +160,9 @@ app.include_router(users_pages_router)
 app.include_router(roles_pages_router)
 app.include_router(error_logs_pages_router)
 app.include_router(erpnext_config_pages_router)
+app.include_router(phonebooks_api_router)
+app.include_router(campaigns_api_router)
+app.include_router(broadcast_pages_router)
 app.include_router(reports_pages_router)
 app.include_router(services_pages_router)
 app.include_router(conversations_pages_router)

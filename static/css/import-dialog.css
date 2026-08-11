@@ -1,0 +1,72 @@
+/*
+  CSV import dialog — the drop zone, column mapper, progress bar and error
+  report shared by the PhoneBook contact import and the personalised broadcast
+  import. Extracted from phonebook_detail.html when the second caller appeared;
+  two copies of a mapping dialog would drift apart the first time one is fixed.
+
+  Expects the host page to supply a modal shell (.bl-modal / .cl-modal or
+  similar) — only the .im-* internals live here.
+*/
+
+/* ── Import dialog ─────────────────────────────────────── */
+.im-modal { max-width:720px; }
+.im-body  { padding:20px;max-height:70vh;overflow-y:auto; }
+.im-step  { display:none; }
+.im-step.active { display:block; }
+
+.im-drop {
+  border:2px dashed var(--line-2);padding:38px 20px;text-align:center;
+  cursor:pointer;transition:border-color .18s,background .18s;
+}
+.im-drop:hover, .im-drop.dragover { border-color:var(--green);background:var(--green-tint); }
+.im-drop i { font-size:28px;color:var(--subtle);display:block;margin-bottom:10px; }
+.im-drop-main { font-size:13px;color:var(--ink);font-weight:600; }
+.im-drop-sub  { font-size:12px;color:var(--subtle);margin-top:4px; }
+
+.im-filebar {
+  display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg);
+  border:1px solid var(--line);font-size:12px;color:var(--ink-2);margin-bottom:16px;
+}
+.im-filebar .name { font-weight:600;color:var(--black); }
+.im-filebar .spacer { margin-left:auto; }
+
+.im-maptable { width:100%;border-collapse:collapse; }
+.im-maptable th {
+  text-align:left;padding:8px 10px;font-family:var(--f-mono);font-size:9px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+  border-bottom:1px solid var(--line);
+}
+.im-maptable td { padding:10px;border-bottom:1px solid var(--line);vertical-align:top; }
+.im-field-label { font-size:13px;font-weight:600;color:var(--black); }
+.im-field-label .req { color:var(--red);margin-left:2px; }
+.im-field-help  { font-size:11px;color:var(--subtle);margin-top:2px;line-height:1.45; }
+.im-select {
+  width:100%;padding:7px 10px;border:1px solid var(--line-2);background:transparent;
+  font-family:var(--f-ui);font-size:12.5px;color:var(--ink);outline:none;
+}
+.im-select:focus { border-color:var(--green);box-shadow:var(--ring); }
+.im-select.unmapped { border-color:var(--orange);background:var(--orange-tint); }
+.im-sample { font-family:var(--f-mono);font-size:11px;color:var(--subtle);margin-top:4px;
+             white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px; }
+
+.im-bar-wrap { height:6px;background:var(--bg);border:1px solid var(--line);overflow:hidden; }
+.im-bar { height:100%;width:0;background:var(--green);transition:width .12s linear; }
+.im-bar-label { font-family:var(--f-mono);font-size:11px;color:var(--muted);margin-top:8px;text-align:center; }
+
+.im-result-grid { display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px; }
+.im-stat { border:1px solid var(--line);padding:14px 16px;text-align:center; }
+.im-stat-n { font-family:var(--f-disp);font-size:26px;font-weight:700;letter-spacing:-.03em;line-height:1; }
+.im-stat-l { font-family:var(--f-mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-top:6px; }
+.im-stat.ok   .im-stat-n { color:var(--green-dark); }
+.im-stat.bad  .im-stat-n { color:var(--red-dark); }
+
+.im-errtable { width:100%;border-collapse:collapse;font-size:12px; }
+.im-errtable th {
+  text-align:left;padding:7px 10px;font-family:var(--f-mono);font-size:9px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+  background:var(--bg);border-bottom:1px solid var(--line);
+}
+.im-errtable td { padding:7px 10px;border-bottom:1px solid var(--line);color:var(--ink-2); }
+.im-errtable td.rownum { font-family:var(--f-mono);color:var(--subtle);width:56px; }
+.im-errtable td.val    { font-family:var(--f-mono); }
+.im-errscroll { max-height:260px;overflow-y:auto;border:1px solid var(--line); }

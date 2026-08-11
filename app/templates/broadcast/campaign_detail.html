@@ -1,0 +1,425 @@
+{% extends "base.html" %}
+{% block title %}{{ campaign.name }} — Broadcast — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/docview.css">
+<style>
+  .cd-head { display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap; }
+  .cd-title { font-family:var(--f-disp);font-size:22px;font-weight:700;color:var(--black);letter-spacing:-.03em; }
+  .cd-meta  { font-size:12px;color:var(--muted);margin-top:4px;display:flex;gap:14px;flex-wrap:wrap; }
+  .cd-meta span { display:flex;align-items:center;gap:5px; }
+
+  .cd-status {
+    font-family:var(--f-mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.12em;
+    padding:4px 9px;border:1px solid var(--line-2);color:var(--muted);
+  }
+  .cd-status.ready      { color:var(--green-dark);border-color:var(--green);background:var(--green-tint); }
+  .cd-status.sending    { color:#1d4ed8;border-color:#1d4ed8;background:#eff6ff; }
+  .cd-status.dispatched { color:var(--green-dark);border-color:var(--green);background:var(--green-tint); }
+  .cd-status.cancelled  { color:var(--red-dark);border-color:var(--red);background:var(--red-tint); }
+
+  .cd-card { background:var(--bg-card);border:1px solid var(--line);box-shadow:var(--shadow-card);margin-bottom:16px; }
+  .cd-card-hd {
+    padding:12px 18px;border-bottom:1px solid var(--line);background:var(--bg);
+    font-family:var(--f-mono);font-size:9.5px;font-weight:500;text-transform:uppercase;
+    letter-spacing:.14em;color:var(--muted);display:flex;align-items:center;gap:8px;
+  }
+  .cd-card-bd { padding:18px; }
+
+  .cd-preview {
+    background:#E7F3E4;border:1px solid var(--line);padding:14px 16px;
+    font-size:13.5px;line-height:1.55;color:#111;white-space:pre-wrap;word-break:break-word;
+  }
+
+  /* Screening summary */
+  .cd-screen { display:flex;gap:18px;flex-wrap:wrap;align-items:center; }
+  .cd-stat { display:flex;flex-direction:column;gap:2px; }
+  .cd-stat-n { font-family:var(--f-disp);font-size:22px;font-weight:700;color:var(--black);letter-spacing:-.02em; }
+  .cd-stat-l { font-size:11px;color:var(--muted); }
+  .cd-stat.warn .cd-stat-n { color:var(--orange, #b45309); }
+  .cd-stat.skip .cd-stat-n { color:var(--red-dark); }
+
+  /* Progress — thin bar, deliberately labelled as dispatch not delivery */
+  .cd-bar-wrap { height:6px;background:var(--line);overflow:hidden;margin-bottom:8px; }
+  .cd-bar { height:100%;width:0;background:var(--green);transition:width .3s ease; }
+  .cd-bar-label { font-size:12px;color:var(--ink-2);display:flex;justify-content:space-between;gap:12px; }
+  .cd-settling { font-size:11.5px;color:var(--muted);margin-top:10px;display:flex;align-items:center;gap:6px; }
+  .cd-settling i { color:var(--green); }
+
+  .cd-results { display:flex;gap:18px;flex-wrap:wrap;margin-top:14px; }
+
+  table.cd-table { width:100%;border-collapse:collapse; }
+  .cd-table th {
+    padding:10px 18px;text-align:left;font-family:var(--f-mono);font-size:9.5px;
+    font-weight:500;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);
+    background:var(--bg);border-bottom:1px solid var(--line);white-space:nowrap;
+  }
+  .cd-table td { padding:11px 18px;font-size:13px;color:var(--ink-2);border-bottom:1px solid var(--line); }
+  .cd-table tr:last-child td { border-bottom:none; }
+  .cd-mono { font-family:var(--f-mono);font-size:12px; }
+  .cd-name { font-weight:600;color:var(--black); }
+
+  .cd-pill {
+    font-family:var(--f-mono);font-size:9px;text-transform:uppercase;letter-spacing:.1em;
+    padding:3px 7px;border:1px solid var(--line-2);color:var(--muted);white-space:nowrap;
+  }
+  .cd-pill.sent      { color:var(--green-dark);border-color:var(--green);background:var(--green-tint); }
+  .cd-pill.delivered { color:var(--green-dark);border-color:var(--green);background:var(--green-tint); }
+  .cd-pill.read      { color:#1d4ed8;border-color:#1d4ed8;background:#eff6ff; }
+  .cd-pill.failed    { color:var(--red-dark);border-color:var(--red);background:var(--red-tint); }
+  .cd-pill.skipped   { color:var(--muted);background:var(--bg); }
+
+  .cd-err { font-size:11.5px;color:var(--red-dark);display:block;margin-top:3px; }
+
+  .pg-bar { display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 18px;border-top:1px solid var(--line);flex-wrap:wrap; }
+  .pg-count { font-family:var(--f-mono);font-size:11px;color:var(--subtle); }
+  .pg-links { display:flex;align-items:center;gap:4px; }
+  .pg-link {
+    min-width:28px;height:28px;padding:0 7px;display:inline-flex;align-items:center;justify-content:center;
+    border:1px solid var(--line-2);background:var(--bg-card);color:var(--ink-2);font-size:12px;text-decoration:none;
+  }
+  .pg-link:hover { background:var(--bg); }
+  .pg-link.current { background:var(--green);color:#fff;border-color:var(--green);font-weight:600; }
+  .pg-link.disabled { opacity:.4;pointer-events:none; }
+  .pg-gap { padding:0 4px;color:var(--subtle);font-size:12px; }
+
+  .cd-error {
+    font-size:12px;color:var(--red-dark);background:var(--red-tint);
+    border:1px solid rgba(220,38,38,.2);padding:9px 12px;margin-bottom:14px;display:none;
+  }
+  .cd-error.visible { display:block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dv-breadcrumb">
+  <a href="/broadcast/campaigns">Broadcasts</a>
+  <span class="sep">/</span>
+  <span>{{ campaign.name }}</span>
+</div>
+
+<div class="cd-error" id="cdError"></div>
+
+<div class="cd-head">
+  <div>
+    <div class="cd-title">{{ campaign.name }}</div>
+    <div class="cd-meta">
+      <span><i class="ti ti-building"></i> {{ company.name if company else '—' }}</span>
+      <span><i class="ti ti-file-text"></i> {{ template.name if template else 'template deleted' }}</span>
+      <span><i class="ti ti-users"></i> {{ campaign.total }} recipient{{ '' if campaign.total == 1 else 's' }}</span>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <span class="cd-status {{ campaign.status }}" id="cdStatus">{{ campaign.status }}</span>
+    {% if perms.campaigns.write and campaign.status in ('screening', 'ready') %}
+    <button class="dv-btn dv-btn-ghost" id="cdScreen">
+      <span class="btn-label">Run screening</span><div class="btn-spinner"></div>
+    </button>
+    {% endif %}
+    {% if perms.campaigns.write and campaign.status == 'ready' %}
+    <button class="dv-btn dv-btn-primary" id="cdSend">
+      <span class="btn-label">Send broadcast</span><div class="btn-spinner"></div>
+    </button>
+    {% endif %}
+    {% if perms.campaigns.write and campaign.status == 'sending' %}
+    <button class="dv-btn dv-btn-danger" id="cdCancel">Stop sending</button>
+    {% endif %}
+  </div>
+</div>
+
+{% if template %}
+<div class="cd-card">
+  <div class="cd-card-hd"><i class="ti ti-eye"></i> What each recipient receives</div>
+  <div class="cd-card-bd"><div class="cd-preview">{{ preview }}</div></div>
+</div>
+{% endif %}
+
+<div class="cd-card" id="cdScreenCard" style="{% if campaign.status == 'screening' %}display:none{% endif %}">
+  <div class="cd-card-hd"><i class="ti ti-shield-check"></i> Screening</div>
+  <div class="cd-card-bd">
+    <div class="cd-screen" id="cdScreenBody">
+      <div class="cd-stat"><div class="cd-stat-n">{{ campaign.total - campaign.skipped }}</div><div class="cd-stat-l">will be sent</div></div>
+      {# Zero skipped is good news — colouring it red draws the eye to a non-event.
+         Matches renderScreening(), which only emits non-zero counts. #}
+      {% if campaign.skipped %}
+      <div class="cd-stat skip"><div class="cd-stat-n">{{ campaign.skipped }}</div><div class="cd-stat-l">skipped</div></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# Rendered even before sending starts, hidden, so clicking Send can reveal it
+   instantly instead of reloading the page. #}
+<div class="cd-card" id="cdSendCard"
+     {% if campaign.status in ('draft', 'screening', 'ready') %}style="display:none"{% endif %}>
+  <div class="cd-card-hd"><i class="ti ti-send"></i> Sending</div>
+  <div class="cd-card-bd">
+    <div class="cd-bar-wrap"><div class="cd-bar" id="cdBar"></div></div>
+    <div class="cd-bar-label">
+      <span id="cdBarText">—</span>
+      <span class="cd-mono" id="cdBarPct">0%</span>
+    </div>
+
+    <div class="cd-results" id="cdResults"></div>
+
+    <div class="cd-settling" id="cdSettling" style="display:none">
+      <i class="ti ti-loader-2"></i>
+      <span>Delivery results still arriving — WhatsApp reports some failures after the send completes.</span>
+    </div>
+  </div>
+</div>
+
+<div class="cd-card" id="cdInsightsCard" style="display:none">
+  <div class="cd-card-hd"><i class="ti ti-alert-triangle"></i> Why messages did not arrive</div>
+  <div class="cd-card-bd"><div id="cdInsights"></div></div>
+</div>
+
+<div class="cd-card">
+  <div class="cd-card-hd"><i class="ti ti-list"></i> Recipients</div>
+  {% if recipients %}
+  <table class="cd-table">
+    <thead>
+      <tr>
+        <th>Number</th><th>Name</th><th>Agent</th><th>Parameters</th><th style="width:130px">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in recipients %}
+      <tr>
+        <td class="cd-mono">{{ r.mobile_no }}</td>
+        <td class="cd-name">{{ r.customer_name or '—' }}</td>
+        <td class="cd-mono">{{ r.agent_id or '—' }}</td>
+        <td>{{ (r.params or []) | join(' · ') }}</td>
+        <td>
+          <span class="cd-pill {{ r.status }}">
+            {{ r.skip_reason.replace('_', ' ') if r.status == 'skipped' and r.skip_reason else r.status }}
+          </span>
+          {% if r.error_message %}<span class="cd-err">{{ r.error_message }}</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if page.pages > 1 %}
+  <div class="pg-bar">
+    <span class="pg-count">{{ page.total }} recipients · page {{ page.page }} of {{ page.pages }}</span>
+    <div class="pg-links">
+      <a class="pg-link {% if page.page == 1 %}disabled{% endif %}" href="{{ page_url(request, page.page - 1) }}">‹</a>
+      {% for p in page.window %}
+        {% if p == 0 %}<span class="pg-gap">…</span>
+        {% else %}<a class="pg-link {% if p == page.page %}current{% endif %}" href="{{ page_url(request, p) }}">{{ p }}</a>
+        {% endif %}
+      {% endfor %}
+      <a class="pg-link {% if page.page == page.pages %}disabled{% endif %}" href="{{ page_url(request, page.page + 1) }}">›</a>
+    </div>
+  </div>
+  {% endif %}
+  {% else %}
+  <div style="text-align:center;padding:48px 20px;color:var(--subtle)">No recipients yet.</div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  var ID     = "{{ campaign.id }}";
+  var STATUS = "{{ campaign.status }}";
+
+  var el = function (id) { return document.getElementById(id); };
+  var errEl = el('cdError');
+
+  function showError(msg) { errEl.textContent = msg; errEl.classList.add('visible'); }
+  function clearError()   { errEl.classList.remove('visible'); }
+
+  async function describeFailure(res) {
+    if (res.status === 401 || res.status === 403) {
+      return 'Your session has expired. Reload the page and sign in again.';
+    }
+    var d = await res.json().catch(function () { return {}; });
+    return d.detail || ('Request failed (' + res.status + ').');
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  /* ── Screening ───────────────────────────────────────────────────────── */
+  var screenBtn = el('cdScreen');
+  if (screenBtn) screenBtn.addEventListener('click', async function () {
+    clearError();
+    screenBtn.classList.add('loading');
+    screenBtn.disabled = true;
+    try {
+      var res = await fetchWithAuth('/api/campaigns/' + ID + '/screen', { method: 'POST' });
+      if (!res.ok) return showError(await describeFailure(res));
+      renderScreening(await res.json());
+    } catch (_) {
+      showError('Could not reach the server. Check your connection and try again.');
+    } finally {
+      screenBtn.classList.remove('loading');
+      screenBtn.disabled = false;
+    }
+  });
+
+  function stat(n, label, cls) {
+    return '<div class="cd-stat ' + (cls || '') + '">' +
+             '<div class="cd-stat-n">' + n + '</div>' +
+             '<div class="cd-stat-l">' + label + '</div>' +
+           '</div>';
+  }
+
+  function renderScreening(s) {
+    var html = stat(s.sendable, 'will be sent');
+    if (s.opted_out)          html += stat(s.opted_out, 'unsubscribed', 'skip');
+    if (s.us_numbers)         html += stat(s.us_numbers, 'US numbers excluded', 'skip');
+    if (s.previously_invalid) html += stat(s.previously_invalid, 'previously invalid', 'warn');
+    el('cdScreenBody').innerHTML = html;
+    el('cdScreenCard').style.display = '';
+    // Send only appears once screening has run — the API refuses otherwise.
+    if (!el('cdSend')) window.location.reload();
+  }
+
+  /* ── Send ────────────────────────────────────────────────────────────── */
+  var sendBtn = el('cdSend');
+  if (sendBtn) sendBtn.addEventListener('click', async function () {
+    clearError();
+    var sendable = parseInt((el('cdScreenBody').querySelector('.cd-stat-n') || {}).textContent || '0', 10);
+    if (!confirm('Send this broadcast to ' + sendable + ' recipient' + (sendable === 1 ? '' : 's') +
+                 '?\n\nMessages go out immediately and cannot be recalled.')) return;
+
+    sendBtn.classList.add('loading');
+    sendBtn.disabled = true;
+    try {
+      var res = await fetchWithAuth('/api/campaigns/' + ID + '/send', { method: 'POST' });
+      if (!res.ok) { sendBtn.classList.remove('loading'); sendBtn.disabled = false;
+                     return showError(await describeFailure(res)); }
+
+      // Reloading here was the reason the UI still said "sending" after the
+      // message had already arrived: a full page load, then a 1.5s poll gap.
+      // Reveal the progress card and start watching straight away instead.
+      sendBtn.style.display = 'none';
+      if (screenBtn) screenBtn.style.display = 'none';
+      el('cdSendCard').style.display = '';
+      el('cdStatus').textContent = 'sending';
+      el('cdStatus').className = 'cd-status sending';
+      startPolling(true);
+    } catch (_) {
+      sendBtn.classList.remove('loading');
+      sendBtn.disabled = false;
+      showError('Could not reach the server. Check your connection and try again.');
+    }
+  });
+
+  var cancelBtn = el('cdCancel');
+  if (cancelBtn) cancelBtn.addEventListener('click', async function () {
+    if (!confirm('Stop this broadcast?\n\nMessages already sent cannot be recalled — only ' +
+                 'the ones still queued will be cancelled.')) return;
+    cancelBtn.disabled = true;
+    try {
+      var res = await fetchWithAuth('/api/campaigns/' + ID + '/cancel', { method: 'POST' });
+      if (!res.ok) { cancelBtn.disabled = false; return showError(await describeFailure(res)); }
+      window.location.reload();
+    } catch (_) {
+      cancelBtn.disabled = false;
+      showError('Could not reach the server.');
+    }
+  });
+
+  /* ── Progress ────────────────────────────────────────────────────────────
+     Polled rather than streamed: a campaign is capped at 1,000 messages and
+     finishes in a couple of minutes, and the shared SSE endpoint is built for
+     message traffic. The bar measures DISPATCH — sends attempted — because that
+     is the only thing known in real time. Delivery keeps changing afterwards. */
+  var bar = el('cdBar');
+  var timer = null;
+  var startPolling = function () {};   // replaced below when the bar exists
+
+  if (bar) {
+
+    async function poll() {
+      try {
+        var res = await fetchWithAuth('/api/campaigns/' + ID + '/progress');
+        if (!res.ok) return;
+        var p = await res.json();
+
+        bar.style.width = p.percent + '%';
+        el('cdBarPct').textContent = p.percent + '%';
+        el('cdBarText').textContent =
+          p.attempted + ' of ' + p.sendable + ' sent' +
+          (p.skipped ? '  ·  ' + p.skipped + ' skipped' : '');
+
+        el('cdResults').innerHTML =
+          stat(p.sent, 'sent') +
+          (p.delivered ? stat(p.delivered, 'delivered') : '') +
+          (p.read ? stat(p.read, 'read') : '') +
+          (p.failed ? stat(p.failed, 'failed', 'skip') : '');
+
+        el('cdStatus').textContent = p.status;
+        el('cdStatus').className = 'cd-status ' + p.status;
+        el('cdSettling').style.display = p.settling ? '' : 'none';
+
+        if (p.failed) loadInsights();
+
+        if (!p.is_running) {
+          clearInterval(timer);
+          timer = null;
+          // "dispatched" is set as soon as the last batch is claimed, which can be
+          // a moment before that batch's counters commit — so this poll may still
+          // read 0 of 4. Keep checking briskly until the counters actually add up,
+          // rather than assuming one fixed delay is long enough.
+          if (p.attempted < p.sendable) {
+            timer = setInterval(poll, 700);
+          } else if (p.settling) {
+            // Counters complete; now only delivery receipts can move the numbers
+            // below the bar, and those arrive over minutes.
+            timer = setInterval(poll, 10000);
+          }
+        }
+      } catch (_) { /* transient — the next tick retries */ }
+    }
+
+    async function loadInsights() {
+      try {
+        var res = await fetchWithAuth('/api/campaigns/' + ID + '/insights');
+        if (!res.ok) return;
+        var ins = await res.json();
+        if (!ins.failures_by_code.length) return;
+        el('cdInsightsCard').style.display = '';
+        el('cdInsights').innerHTML =
+          '<table class="cd-table"><thead><tr><th>Error</th><th>Count</th><th>Meaning</th></tr></thead><tbody>' +
+          ins.failures_by_code.map(function (f) {
+            return '<tr><td class="cd-mono">' + esc(f.code) + '</td>' +
+                   '<td>' + f.count + '</td>' +
+                   '<td>' + esc(explain(f.code, f.message)) + '</td></tr>';
+          }).join('') +
+          '</tbody></table>';
+      } catch (_) { /* non-critical */ }
+    }
+
+    function explain(code, fallback) {
+      if (code === '131026') return 'Not a WhatsApp number — flagged so future campaigns warn you.';
+      if (code === '131049') return 'Meta capped marketing messages to this person today. Try again tomorrow.';
+      if (code === '131047') return 'No open conversation window with this customer.';
+      if (code === '130472') return 'The recipient is in an experiment group excluded from marketing.';
+      return fallback || 'See the recipient list for the exact message.';
+    }
+
+    // `fast` is used right after clicking Send: a 1,000-message campaign is over in
+    // seconds, so a slow first tick is what makes the UI look stuck while the
+    // message is already on the customer's phone.
+    startPolling = function (fast) {
+      clearInterval(timer);
+      poll();
+      timer = setInterval(poll, fast ? 600 : 1500);
+    };
+
+    poll();
+    if (STATUS === 'sending')          startPolling(false);
+    else if (STATUS === 'dispatched')  timer = setInterval(poll, 10000);
+  }
+})();
+</script>
+{% endblock %}

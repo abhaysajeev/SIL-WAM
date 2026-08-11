@@ -17,6 +17,8 @@ from tests.conftest import (
 
 _FAIL_GENERIC = SendResult(ok=False, meta_message_id=None, error="503 Service Unavailable")
 _FAIL_INVALID_NUMBER = SendResult(ok=False, meta_message_id=None, error="(#131026) message undeliverable")
+_FAIL_MEDIA = SendResult(ok=False, meta_message_id=None,
+                         error="(#131053) Media upload error: failed to download media")
 _OK = SendResult(ok=True, meta_message_id="wamid.sent1", error=None)
 
 
@@ -107,6 +109,43 @@ class TestInvalidNumberNeverRetries:
 
         db.refresh(qe)
         assert qe.status == "completed"
+
+
+class TestMediaErrorIsRetryableButNamed:
+    """
+    Meta could not fetch the header media URL the client gave us. Unlike an invalid
+    number this is worth retrying — their media host may only be briefly down — but
+    it gets its own failed_reason so the client can see the problem is on their side
+    rather than reading "send_error" and asking us to check the logs.
+    """
+
+    def test_media_error_schedules_a_retry(self, db):
+        svc, account, qe = _setup(db, "SR10")
+        svc.header_media = {"format": "image", "link": "https://cdn.example/gone.png"}
+        db.commit()
+
+        with patch("app.services.wa_sender.send_template", return_value=_FAIL_MEDIA):
+            queue_manager.send_template_for_service(db, svc, account)
+        db.commit()
+
+        assert svc.status == "in_progress"          # retryable, not terminal
+        assert svc.failed_reason == "media_error"
+        assert svc.next_retry_at is not None
+
+    def test_media_error_becomes_terminal_after_the_cap(self, db):
+        svc, account, qe = _setup(db, "SR11")
+        svc.header_media = {"format": "image", "link": "https://cdn.example/gone.png"}
+        svc.send_attempts = 2                        # third call is the last
+        db.commit()
+
+        with patch("app.services.wa_sender.send_template", return_value=_FAIL_MEDIA):
+            queue_manager.send_template_for_service(db, svc, account)
+        db.commit()
+
+        assert svc.status == "failed"
+        assert svc.failed_reason == "media_error"
+        note = db.query(OutboundNotification).first().payload
+        assert note["status"] == "failed"
 
 
 class TestSendSchedulerClaimQuery:

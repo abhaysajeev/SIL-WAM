@@ -12,6 +12,17 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/docview.css">
+<style>
+  /* Hidden until something is selected — an always-visible action bar with a
+     disabled Delete button is just clutter above every list. */
+  .dv-bulkbar {
+    display:none;align-items:center;gap:10px;
+    padding:10px 20px;border-bottom:1px solid var(--line);background:var(--green-tint);
+  }
+  .dv-bulkbar.visible { display:flex; }
+  .dv-bulkbar-count { font-size:12px;font-weight:600;color:var(--green-dark);margin-right:auto; }
+  .dv-row-check, #dvSelectAll { cursor:pointer;width:14px;height:14px;accent-color:var(--green); }
+</style>
 {% endblock %}
 
 {% block content %}
@@ -46,10 +57,30 @@
     <span class="dv-list-count" id="dvCount">{{ rows | length }} total</span>
   </div>
 
+  {# Bulk selection is opt-in per doctype (dt.bulk_delete), so every existing
+     list view is untouched until it chooses to adopt it. #}
+  {% set bulk = dt.get('bulk_delete') and perms[dt.perm_page].delete %}
+
+  {# Only with rows: the select-all box lives in the table header, so rendering
+     the bar for an empty list left the JS reaching for a checkbox that was
+     never emitted. There is also nothing to select. #}
+  {% if bulk and rows %}
+  <div class="dv-bulkbar" id="dvBulkBar">
+    <span class="dv-bulkbar-count" id="dvBulkCount"></span>
+    <button class="dv-btn dv-btn-danger dv-btn-xs" id="dvBulkDelete">
+      <i class="ti ti-trash"></i> Delete selected
+    </button>
+    <button class="dv-btn dv-btn-ghost dv-btn-xs" id="dvBulkClear">Clear</button>
+  </div>
+  {% endif %}
+
   {% if rows %}
   <table class="dv-table" id="dvTable">
     <thead>
       <tr>
+        {% if bulk %}
+        <th style="width:38px;"><input type="checkbox" id="dvSelectAll" title="Select all"></th>
+        {% endif %}
         {% for col in dt.list_columns %}
         <th>{{ col.label }}</th>
         {% endfor %}
@@ -62,6 +93,13 @@
       {% for row in rows %}
       <tr data-id="{{ row.id }}" data-search="{{ row | dv_search_text }}"
           onclick="window.location='{{ dt.base_route }}/{{ row.id }}'">
+        {% if bulk %}
+        {# stopPropagation, or ticking the box navigates into the record #}
+        <td onclick="event.stopPropagation();">
+          <input type="checkbox" class="dv-row-check" value="{{ row.id }}"
+                 data-label="{{ row[dt.title_field] }}">
+        </td>
+        {% endif %}
         {% for col in dt.list_columns %}
         <td>
           {%- set val = row[col.field] -%}
@@ -153,5 +191,91 @@
     if (noMatch) noMatch.style.display = (visible === 0 && q) ? 'block' : 'none';
   });
 })();
+
+/* ── Bulk selection ─────────────────────────────────────────────────────── */
+{# Gate this in Jinja, not just JS: the tojson expressions below are evaluated
+   at render time on every list view, and a doctype that never opted in has no
+   api_prefix — which raised "Undefined is not JSON serializable" and 500'd the
+   Services and Conversations pages. #}
+{% if dt.get('bulk_delete') and perms[dt.perm_page].delete %}
+(function () {
+  var bar       = document.getElementById('dvBulkBar');
+  var selectAll = document.getElementById('dvSelectAll');
+  // No bar (doctype opted out) or no header checkbox (empty list) — nothing to wire.
+  if (!bar || !selectAll) return;
+
+  var API   = {{ dt.api_prefix | tojson }};
+  var NOUN  = {{ dt.title | lower | tojson }};
+  var NOUNP = {{ dt.title_plural | lower | tojson }};
+  var countEl   = document.getElementById('dvBulkCount');
+  var delBtn    = document.getElementById('dvBulkDelete');
+
+  function checks() { return Array.prototype.slice.call(document.querySelectorAll('.dv-row-check')); }
+  function chosen() { return checks().filter(function (c) { return c.checked; }); }
+
+  function refresh() {
+    var n = chosen().length;
+    bar.classList.toggle('visible', n > 0);
+    countEl.textContent = n + ' ' + (n === 1 ? NOUN : NOUNP) + ' selected';
+    var all = checks();
+    selectAll.checked = all.length > 0 && n === all.length;
+    selectAll.indeterminate = n > 0 && n < all.length;
+  }
+
+  selectAll.addEventListener('click', function (e) { e.stopPropagation(); });
+  selectAll.addEventListener('change', function () {
+    // Only rows the search filter is currently showing.
+    checks().forEach(function (c) {
+      if (c.closest('tr').style.display !== 'none') c.checked = selectAll.checked;
+    });
+    refresh();
+  });
+  checks().forEach(function (c) { c.addEventListener('change', refresh); });
+
+  document.getElementById('dvBulkClear').addEventListener('click', function () {
+    checks().forEach(function (c) { c.checked = false; });
+    refresh();
+  });
+
+  delBtn.addEventListener('click', async function () {
+    var picked = chosen();
+    if (!picked.length) return;
+
+    var names = picked.slice(0, 5).map(function (c) { return '· ' + c.dataset.label; }).join('\n');
+    if (picked.length > 5) names += '\n· …and ' + (picked.length - 5) + ' more';
+    if (!confirm('Delete ' + picked.length + ' ' + (picked.length === 1 ? NOUN : NOUNP) +
+                 '?\n\n' + names + '\n\nEverything inside them is deleted too. This cannot be undone.')) return;
+
+    delBtn.disabled = true;
+    try {
+      var res = await fetchWithAuth(API + '/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: picked.map(function (c) { return c.value; }) }),
+      });
+      if (res.ok) {
+        var out = await res.json();
+        if (out.failed && out.failed.length) {
+          alert('Deleted ' + out.deleted + '. ' + out.failed.length + ' could not be deleted.');
+        }
+        window.location.reload();
+        return;
+      }
+      if (res.status === 401 || res.status === 403) {
+        alert('Your session has expired. Reload the page and sign in again.');
+      } else {
+        var d = await res.json().catch(function () { return {}; });
+        alert(d.detail || ('Request failed (' + res.status + ').'));
+      }
+    } catch (_) {
+      alert('Could not reach the server. Check your connection and try again.');
+    } finally {
+      delBtn.disabled = false;
+    }
+  });
+
+  refresh();
+})();
+{% endif %}
 </script>
 {% endblock %}

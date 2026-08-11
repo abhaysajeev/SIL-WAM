@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core import template_body
 from app.core.database import get_db
 from app.core.deps import require_super_admin
 from app.models.company import Company
@@ -62,8 +63,8 @@ def list_templates(
 
     result = []
     for t in templates:
-        params = _extract_params(t.components or [], t.param_mapping or {})
-        body_text = _get_body_text(t.components or [])
+        params = template_body.describe_params(t.components, t.param_mapping)
+        body_text = template_body.body_text(t.components)
         result.append({
             "id":         str(t.id),
             "name":       t.name,
@@ -259,23 +260,6 @@ def demo_send_text(
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _get_body_text(components: list) -> str:
-    body = next((c for c in components if c.get("type") == "BODY"), None)
-    return body.get("text", "") if body else ""
-
-
-def _extract_params(components: list, param_mapping: dict) -> list[dict]:
-    """Return ordered list of param descriptors for the template body."""
-    body_text = _get_body_text(components)
-    indices   = sorted(set(re.findall(r"\{\{(\d+)\}\}", body_text)), key=int)
-    result    = []
-    for idx in indices:
-        dot_path = param_mapping.get(idx, "")
-        # Turn "data.customer_name" → "Customer Name"
-        label = dot_path.split(".")[-1].replace("_", " ").title() if dot_path else f"Param {idx}"
-        result.append({"index": idx, "label": label, "hint": dot_path})
-    return result
 
 
 def _fmt_message(msg: Message) -> dict:

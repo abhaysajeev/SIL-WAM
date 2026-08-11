@@ -1,0 +1,789 @@
+{% extends "base.html" %}
+{% block title %}{{ pb.name }} — PhoneBook — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/docview.css">
+<link rel="stylesheet" href="/static/css/import-dialog.css">
+<style>
+  .bl-back {
+    display:inline-flex;align-items:center;gap:6px;
+    font-size:12px;font-weight:600;color:var(--muted);
+    padding:6px 10px;border:1px solid var(--line-2);background:transparent;
+    text-decoration:none;margin-bottom:16px;transition:background .18s,color .18s;
+  }
+  .bl-back:hover { background:var(--bg);color:var(--ink); }
+
+  .bl-head { display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px; }
+  .bl-title { font-family:var(--f-disp);font-size:22px;font-weight:700;color:var(--black);letter-spacing:-.03em; }
+  .bl-meta  { font-size:12px;color:var(--muted);margin-top:4px;display:flex;gap:14px;flex-wrap:wrap; }
+  .bl-meta span { display:flex;align-items:center;gap:5px; }
+
+  .bl-toolbar { display:flex;align-items:center;gap:10px;margin-bottom:16px; }
+  .bl-search { flex:1;max-width:320px;position:relative; }
+  .bl-search input {
+    width:100%;padding:8px 12px 8px 32px;border:1px solid var(--line-2);
+    background:var(--bg-card);font-family:var(--f-ui);font-size:13px;color:var(--ink);outline:none;
+  }
+  .bl-search input:focus { border-color:var(--green);box-shadow:var(--ring); }
+  .bl-search i { position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--subtle);font-size:12px; }
+
+  .bl-card { background:var(--bg-card);border:1px solid var(--line);box-shadow:var(--shadow-card); }
+  .bl-table { width:100%;border-collapse:collapse; }
+  .bl-table th {
+    padding:10px 20px;text-align:left;font-family:var(--f-mono);font-size:9.5px;
+    font-weight:500;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);
+    background:var(--bg);border-bottom:1px solid var(--line);white-space:nowrap;
+  }
+  .bl-table td { padding:12px 20px;font-size:13px;color:var(--ink-2);border-bottom:1px solid var(--line); }
+  .bl-table tr:last-child td { border-bottom:none; }
+  .bl-table tbody tr:hover td { background:var(--green-tint); }
+  .bl-mono { font-family:var(--f-mono);font-size:12px; }
+  .bl-name { font-weight:600;color:var(--black); }
+  .bl-dim  { color:var(--subtle); }
+
+  .bl-row-actions { display:flex;gap:6px;justify-content:flex-end; }
+  .bl-icon-btn {
+    width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;
+    border:1px solid var(--line-2);background:transparent;color:var(--muted);
+    cursor:pointer;font-size:12px;transition:all .15s;
+  }
+  .bl-icon-btn:hover { background:var(--bg);color:var(--ink); }
+  .bl-icon-btn.danger:hover { background:var(--red-tint);color:var(--red);border-color:var(--red); }
+
+  .bl-empty { text-align:center;padding:52px 20px;color:var(--subtle); }
+  .bl-empty i { font-size:26px;display:block;margin-bottom:10px;opacity:.5; }
+
+  /* Pagination — styles live here for now; move to docview.css when a second
+     page adopts layouts/_pagination.html. */
+  .pg-bar { display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 20px;border-top:1px solid var(--line);flex-wrap:wrap; }
+  .pg-count { font-family:var(--f-mono);font-size:11px;color:var(--subtle); }
+  .pg-links { display:flex;align-items:center;gap:4px; }
+  .pg-link {
+    min-width:28px;height:28px;padding:0 7px;display:inline-flex;align-items:center;justify-content:center;
+    border:1px solid var(--line-2);background:var(--bg-card);color:var(--ink-2);
+    font-size:12px;text-decoration:none;transition:all .15s;
+  }
+  .pg-link:hover { background:var(--bg);border-color:var(--ink-2); }
+  .pg-link.current { background:var(--green);color:#fff;border-color:var(--green);font-weight:600; }
+  .pg-link.disabled { opacity:.4;pointer-events:none; }
+  .pg-gap { padding:0 4px;color:var(--subtle);font-size:12px; }
+
+  .bl-modal-backdrop {
+    position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;
+    justify-content:center;z-index:200;padding:20px;opacity:0;visibility:hidden;
+    pointer-events:none;transition:opacity .18s ease,visibility .18s ease;
+  }
+  .bl-modal-backdrop.open { opacity:1;visibility:visible;pointer-events:auto; }
+  .bl-modal { background:var(--bg-card);width:100%;max-width:440px;box-shadow:var(--shadow-pop);display:flex;flex-direction:column; }
+  .bl-modal-hd { padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between; }
+  .bl-modal-title { font-family:var(--f-disp);font-size:15px;font-weight:700;color:var(--black);letter-spacing:-.02em; }
+  .bl-modal-close { width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:none;border:none;color:var(--subtle);cursor:pointer;font-size:16px; }
+  .bl-modal-close:hover { background:var(--bg);color:var(--ink); }
+  .bl-modal-body { padding:20px;display:flex;flex-direction:column;gap:14px; }
+  .bl-modal-ft { padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px; }
+  .bl-field { display:flex;flex-direction:column;gap:5px; }
+  .bl-label { font-size:11px;font-weight:600;color:var(--ink); }
+  .bl-label .req { color:var(--red);margin-left:2px; }
+  .bl-input {
+    padding:9px 12px;border:1px solid var(--line-2);background:transparent;color:var(--ink);
+    font-family:var(--f-ui);font-size:13px;outline:none;width:100%;
+  }
+  .bl-input:focus { border-color:var(--green);background:var(--green-tint);box-shadow:var(--ring); }
+  .bl-hint { font-size:11px;color:var(--subtle); }
+  .bl-error {
+    font-size:12px;color:var(--red-dark);background:var(--red-tint);
+    border:1px solid rgba(220,38,38,.2);padding:8px 12px;display:none;
+  }
+  .bl-error.visible { display:block; }
+
+</style>
+{% endblock %}
+
+{% block content %}
+
+<a href="/broadcast/phonebooks" class="bl-back"><i class="ti ti-arrow-left"></i> PhoneBooks</a>
+
+<div class="bl-head">
+  <div>
+    <div class="bl-title">{{ pb.name }}</div>
+    <div class="bl-meta">
+      <span><i class="ti ti-building"></i> {{ company.name if company else '—' }}</span>
+      <span><i class="ti ti-users"></i> {{ page.total }} contact{{ '' if page.total == 1 else 's' }}</span>
+      <span><i class="ti ti-calendar"></i> {{ pb.created_at.strftime('%d %b %Y') if pb.created_at else '—' }}</span>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    {% if perms.phonebooks.delete %}
+    <button class="dv-btn dv-btn-danger" id="deleteListBtn" title="Delete PhoneBook">
+      <i class="ti ti-trash"></i>
+    </button>
+    {% endif %}
+    {% if perms.phonebooks.write %}
+    <button class="dv-btn dv-btn-ghost" id="importBtn">
+      <i class="ti ti-file-import"></i> Import CSV
+    </button>
+    <button class="dv-btn dv-btn-primary" id="addBtn">
+      <i class="ti ti-plus"></i> Add contact
+    </button>
+    {% endif %}
+  </div>
+</div>
+
+<div class="bl-toolbar">
+  <form class="bl-search" method="get" action="">
+    <i class="ti ti-search"></i>
+    <input type="text" name="q" value="{{ search }}" placeholder="Search">
+  </form>
+  {% if search %}
+  <a href="/broadcast/phonebooks/{{ pb.id }}" class="dv-btn dv-btn-ghost dv-btn-xs">Clear</a>
+  {% endif %}
+</div>
+
+<div class="bl-card">
+  {% if contacts %}
+  <table class="bl-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>WhatsApp number</th>
+        <th>Email</th>
+        <th>Agent ID</th>
+        {% if perms.phonebooks.write or perms.phonebooks.delete %}<th style="width:80px"></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in contacts %}
+      <tr data-id="{{ c.id }}"
+          data-name="{{ c.customer_name }}"
+          data-mobile="{{ c.mobile_no }}"
+          data-email="{{ c.email or '' }}"
+          data-agent="{{ c.agent_id or '' }}">
+        <td class="bl-name">{{ c.customer_name }}</td>
+        <td class="bl-mono">{{ c.mobile_no }}</td>
+        <td>{{ c.email or '—' }}</td>
+        <td class="bl-mono {% if not c.agent_id %}bl-dim{% endif %}">{{ c.agent_id or '—' }}</td>
+        {% if perms.phonebooks.write or perms.phonebooks.delete %}
+        <td>
+          <div class="bl-row-actions">
+            {% if perms.phonebooks.write %}
+            <button class="bl-icon-btn edit-btn" title="Edit"><i class="ti ti-pencil"></i></button>
+            {% endif %}
+            {% if perms.phonebooks.delete %}
+            <button class="bl-icon-btn danger del-btn" title="Remove"><i class="ti ti-trash"></i></button>
+            {% endif %}
+          </div>
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% include "layouts/_pagination.html" %}
+
+  {% else %}
+  <div class="bl-empty">
+    <i class="ti ti-address-book"></i>
+    {% if search %}
+      No contacts match “{{ search }}”.
+    {% else %}
+      No contacts yet. Add them one at a time, or import a CSV.
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<!-- Add / edit contact -->
+<div class="bl-modal-backdrop" id="contactBackdrop">
+  <div class="bl-modal">
+    <div class="bl-modal-hd">
+      <span class="bl-modal-title" id="modalTitle">Add contact</span>
+      <button class="bl-modal-close" id="modalClose">&times;</button>
+    </div>
+    <div class="bl-modal-body">
+      <div class="bl-error" id="modalError"></div>
+      <div class="bl-field">
+        <label class="bl-label">Customer name<span class="req">*</span></label>
+        <input type="text" id="fName" class="bl-input" maxlength="200">
+      </div>
+      <div class="bl-field">
+        <label class="bl-label">WhatsApp number<span class="req">*</span></label>
+        <input type="tel" id="fMobile" class="bl-input">
+      </div>
+      <div class="bl-field">
+        <label class="bl-label">Email</label>
+        <input type="email" id="fEmail" class="bl-input">
+      </div>
+      <div class="bl-field">
+        <label class="bl-label">Agent ID</label>
+        <input type="text" id="fAgent" class="bl-input" maxlength="100">
+        <div class="bl-hint">Identifier from the agent app; replies route to this agent.</div>
+      </div>
+    </div>
+    <div class="bl-modal-ft">
+      <button class="dv-btn dv-btn-ghost" id="modalCancel">Cancel</button>
+      <button class="dv-btn dv-btn-primary" id="modalSave">
+        <span class="btn-label">Save</span>
+        <div class="btn-spinner"></div>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Import CSV -->
+<div class="bl-modal-backdrop" id="importBackdrop">
+  <div class="bl-modal im-modal">
+    <div class="bl-modal-hd">
+      <span class="bl-modal-title" id="imTitle">Import contacts from CSV</span>
+      <button class="bl-modal-close" id="imClose">&times;</button>
+    </div>
+
+    <div class="bl-modal-body im-body">
+
+      <!-- 1: choose file -->
+      <div class="im-step active" id="imStep1">
+        <div class="im-drop" id="imDrop">
+          <i class="ti ti-cloud-upload"></i>
+          <div class="im-drop-main">Choose a CSV file, or drop one here</div>
+          <div class="im-drop-sub">First row must be the column headers</div>
+        </div>
+        <input type="file" id="imFile" accept=".csv,text/csv" style="display:none">
+        <div style="margin-top:14px;text-align:center">
+          <a href="#" id="imSample" style="font-size:12px;color:var(--green);font-weight:600">
+            <i class="ti ti-download"></i> Download a sample CSV
+          </a>
+        </div>
+        <div class="bl-error" id="imError" style="margin-top:14px"></div>
+      </div>
+
+      <!-- 2: map columns -->
+      <div class="im-step" id="imStep2">
+        <div class="im-filebar">
+          <i class="ti ti-file-text"></i>
+          <span class="name" id="imFileName"></span>
+          <span id="imRowCount"></span>
+          <span class="spacer"></span>
+          <a href="#" id="imChangeFile" style="color:var(--green);font-weight:600">Change file</a>
+        </div>
+        <table class="im-maptable">
+          <thead>
+            <tr><th style="width:46%">PhoneBook field</th><th>CSV column</th></tr>
+          </thead>
+          <tbody id="imMapRows"></tbody>
+        </table>
+        <div class="bl-error" id="imMapError" style="margin-top:14px"></div>
+      </div>
+
+      <!-- 3: importing -->
+      <div class="im-step" id="imStep3">
+        <div style="padding:20px 0">
+          <div class="im-bar-wrap"><div class="im-bar" id="imBar"></div></div>
+          <div class="im-bar-label" id="imBarLabel">Preparing…</div>
+        </div>
+      </div>
+
+      <!-- 4: results -->
+      <div class="im-step" id="imStep4">
+        <div class="im-result-grid">
+          <div class="im-stat ok">
+            <div class="im-stat-n" id="imOk">0</div>
+            <div class="im-stat-l">Imported</div>
+          </div>
+          <div class="im-stat bad">
+            <div class="im-stat-n" id="imBad">0</div>
+            <div class="im-stat-l">Skipped</div>
+          </div>
+        </div>
+        <div id="imErrWrap" style="display:none">
+          <div style="font-size:12px;font-weight:600;color:var(--ink);margin-bottom:8px">
+            Rows that were not imported
+          </div>
+          <div class="im-errscroll">
+            <table class="im-errtable">
+              <thead><tr><th>Row</th><th>Value</th><th>Reason</th></tr></thead>
+              <tbody id="imErrRows"></tbody>
+            </table>
+          </div>
+          <div style="margin-top:10px">
+            <a href="#" id="imDownloadErrors" style="font-size:12px;color:var(--green);font-weight:600">
+              <i class="ti ti-download"></i> Download skipped rows as CSV
+            </a>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="bl-modal-ft">
+      <button class="dv-btn dv-btn-ghost" id="imCancel">Cancel</button>
+      <button class="dv-btn dv-btn-primary" id="imNext" style="display:none">Continue</button>
+      <button class="dv-btn dv-btn-primary" id="imStart" style="display:none">
+        <span class="btn-label">Import</span>
+        <div class="btn-spinner"></div>
+      </button>
+      <button class="dv-btn dv-btn-primary" id="imDone" style="display:none">Done</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/csv.js"></script>
+<script>
+(function () {
+  var LIST_ID = "{{ pb.id }}";
+  var backdrop = document.getElementById('contactBackdrop');
+  var errEl    = document.getElementById('modalError');
+  var saveBtn  = document.getElementById('modalSave');
+  var editingId = null;   // null => creating
+
+  var f = {
+    name:   document.getElementById('fName'),
+    mobile: document.getElementById('fMobile'),
+    email:  document.getElementById('fEmail'),
+    agent:  document.getElementById('fAgent'),
+  };
+
+  function showError(msg) {
+    // FastAPI 422 bodies are an array of {loc, msg, ...}. Pydantic prefixes
+    // every message with "Value error, " — strip it so the user reads the
+    // sentence we wrote, not the framework's wrapper.
+    if (Array.isArray(msg)) {
+      msg = msg.map(function (e) {
+        return (e.msg || '').replace(/^Value error,\s*/, '');
+      }).join('; ');
+    }
+    errEl.textContent = msg || 'Something went wrong.';
+    errEl.classList.add('visible');
+  }
+
+  /* Pages authenticate with a session cookie, but these API calls use the JWT
+     in localStorage, which expires after 15 minutes. So a page can look
+     perfectly healthy while every button 401s. Say so plainly instead of
+     reporting a generic failure the user cannot act on. */
+  var SESSION_MSG = 'Your session has expired. Reload the page and sign in again.';
+
+  async function describeFailure(res) {
+    if (res.status === 401 || res.status === 403) return SESSION_MSG;
+    var d = await res.json().catch(function () { return {}; });
+    return d.detail || ('Request failed (' + res.status + ').');
+  }
+  function clearError() { errEl.classList.remove('visible'); }
+
+  function open(contact) {
+    clearError();
+    editingId = contact ? contact.id : null;
+    document.getElementById('modalTitle').textContent = contact ? 'Edit contact' : 'Add contact';
+    f.name.value   = contact ? contact.name   : '';
+    f.mobile.value = contact ? contact.mobile : '';
+    f.email.value  = contact ? contact.email  : '';
+    f.agent.value  = contact ? contact.agent  : '';
+    backdrop.classList.add('open');
+    f.name.focus();
+  }
+  function close() { backdrop.classList.remove('open'); }
+
+  var addBtn = document.getElementById('addBtn');
+  if (addBtn) addBtn.addEventListener('click', function () { open(null); });
+  document.getElementById('modalClose').addEventListener('click', close);
+  document.getElementById('modalCancel').addEventListener('click', close);
+  backdrop.addEventListener('click', function (e) { if (e.target === backdrop) close(); });
+
+  document.querySelectorAll('.edit-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var tr = btn.closest('tr');
+      open({
+        id:     tr.dataset.id,
+        name:   tr.dataset.name,
+        mobile: tr.dataset.mobile,
+        email:  tr.dataset.email,
+        agent:  tr.dataset.agent,
+      });
+    });
+  });
+
+  document.querySelectorAll('.del-btn').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      var tr = btn.closest('tr');
+      if (!confirm('Remove ' + tr.dataset.name + ' from this phonebook?')) return;
+
+      // Every branch here must give feedback. Without the try/catch a thrown
+      // fetch killed the handler silently and the button looked dead.
+      var prev = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="ti ti-loader-2"></i>';
+      try {
+        var res = await fetchWithAuth('/api/phonebooks/contacts/' + tr.dataset.id,
+                                      { method: 'DELETE' });
+        if (res.status === 204) {
+          window.location.reload();
+          return;
+        }
+        alert(await describeFailure(res));
+      } catch (_) {
+        alert('Could not reach the server. Check your connection and try again.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = prev;
+      }
+    });
+  });
+
+  /* Delete the whole phonebook. Contacts cascade, so the count goes in the
+     confirmation — "delete 1,240 contacts" is a very different decision from
+     "delete an empty list", and the button alone does not say which. */
+  var delListBtn = document.getElementById('deleteListBtn');
+  if (delListBtn) {
+    delListBtn.addEventListener('click', async function () {
+      var n = {{ page.total }};
+      var msg = n
+        ? 'Delete the PhoneBook "{{ pb.name|e }}" and all ' + n + ' contact' +
+          (n === 1 ? '' : 's') + ' in it?\n\nThis cannot be undone.'
+        : 'Delete the empty PhoneBook "{{ pb.name|e }}"?';
+      if (!confirm(msg)) return;
+
+      delListBtn.disabled = true;
+      try {
+        var res = await fetchWithAuth('/api/phonebooks/' + LIST_ID, { method: 'DELETE' });
+        if (res.status === 204) {
+          window.location.href = '/broadcast/phonebooks';
+          return;
+        }
+        alert(await describeFailure(res));
+      } catch (_) {
+        alert('Could not reach the server. Check your connection and try again.');
+      } finally {
+        delListBtn.disabled = false;
+      }
+    });
+  }
+
+  saveBtn.addEventListener('click', async function () {
+    clearError();
+    var body = {
+      customer_name: f.name.value.trim(),
+      mobile_no:     f.mobile.value.trim(),
+      email:         f.email.value.trim() || null,
+      agent_id:      f.agent.value.trim() || null,
+    };
+    if (!body.customer_name) { showError('Customer name is required.'); return; }
+    if (!body.mobile_no)     { showError('WhatsApp number is required.'); return; }
+
+    saveBtn.classList.add('loading');
+    saveBtn.disabled = true;
+    try {
+      var url    = editingId ? '/api/phonebooks/contacts/' + editingId
+                             : '/api/phonebooks/' + LIST_ID + '/contacts';
+      var method = editingId ? 'PUT' : 'POST';
+      var res = await fetchWithAuth(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        window.location.reload();
+      } else {
+        showError(await describeFailure(res));
+      }
+    } catch (_) {
+      showError('Could not reach the server. Check your connection and try again.');
+    } finally {
+      saveBtn.classList.remove('loading');
+      saveBtn.disabled = false;
+    }
+  });
+})();
+</script>
+
+<script>
+/* ── CSV import ───────────────────────────────────────────────────────────
+   Rows are parsed in the browser, mapped, then POSTed in batches so the
+   progress bar reflects real work rather than a spinner pretending to.     */
+(function () {
+  var LIST_ID = "{{ pb.id }}";
+  var BATCH   = 200;
+  var MIN_MS  = 3000;   // shortest the progress bar is allowed to run
+
+  var el = function (id) { return document.getElementById(id); };
+  var backdrop = el('importBackdrop');
+  var fields = [], headers = [], rows = [], fileName = '';
+  var lastErrors = [];
+
+  /* --- minimal RFC-4180 CSV parser: handles quotes, escaped quotes,
+         embedded commas and newlines, and CRLF ------------------------- */
+  var parseCSV = window.parseCSV;
+
+  function showStep(n) {
+    [1, 2, 3, 4].forEach(function (i) {
+      el('imStep' + i).classList.toggle('active', i === n);
+    });
+    el('imNext').style.display   = 'none';
+    el('imStart').style.display  = 'none';
+    el('imDone').style.display   = 'none';
+    el('imCancel').style.display = (n === 4) ? 'none' : '';
+    if (n === 2) el('imStart').style.display = '';
+    if (n === 4) el('imDone').style.display  = '';
+  }
+
+  function showErr(id, msg) { var e = el(id); e.textContent = msg; e.classList.add('visible'); }
+  function clearErr(id)     { el(id).classList.remove('visible'); }
+
+  function open() {
+    rows = []; headers = []; lastErrors = [];
+    clearErr('imError'); clearErr('imMapError');
+    el('imFile').value = '';
+    showStep(1);
+    backdrop.classList.add('open');
+  }
+  function close() { backdrop.classList.remove('open'); }
+
+  el('importBtn') && el('importBtn').addEventListener('click', open);
+  el('imClose').addEventListener('click', close);
+  el('imCancel').addEventListener('click', close);
+  el('imDone').addEventListener('click', function () { window.location.reload(); });
+  backdrop.addEventListener('click', function (e) { if (e.target === backdrop) close(); });
+
+  /* --- step 1: file selection ------------------------------------------- */
+  var drop = el('imDrop');
+  drop.addEventListener('click', function () { el('imFile').click(); });
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('dragover'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('dragover'); });
+  });
+  drop.addEventListener('drop', function (e) {
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+  el('imFile').addEventListener('change', function (e) {
+    if (e.target.files.length) handleFile(e.target.files[0]);
+  });
+  el('imChangeFile').addEventListener('click', function (e) { e.preventDefault(); showStep(1); });
+
+  function handleFile(file) {
+    clearErr('imError');
+    fileName = file.name;
+    var reader = new FileReader();
+    reader.onload = async function () {
+      var grid = parseCSV(String(reader.result));
+      if (grid.length < 2) {
+        showErr('imError', 'That file has no data rows — the first row must be column headers.');
+        return;
+      }
+      headers = grid[0].map(function (h) { return h.trim(); });
+      rows    = grid.slice(1);
+
+      el('imFileName').textContent = fileName;
+      el('imRowCount').textContent = '· ' + rows.length + ' row' + (rows.length === 1 ? '' : 's');
+
+      await buildMapper();
+      showStep(2);
+    };
+    reader.onerror = function () { showErr('imError', 'Could not read that file.'); };
+    reader.readAsText(file);
+  }
+
+  /* --- step 2: mapping --------------------------------------------------- */
+  async function buildMapper() {
+    if (!fields.length) {
+      var fr = await fetchWithAuth('/api/phonebooks/import/fields');
+      fields = (await fr.json()).fields;
+    }
+    var mr = await fetchWithAuth('/api/phonebooks/import/suggest-mapping', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ headers: headers }),
+    });
+    var suggested = (await mr.json()).mapping;
+
+    var tbody = el('imMapRows');
+    tbody.innerHTML = '';
+    fields.forEach(function (f) {
+      var tr = document.createElement('tr');
+
+      var tdF = document.createElement('td');
+      tdF.innerHTML = '<div class="im-field-label">' + f.label +
+        (f.required ? '<span class="req">*</span>' : '') + '</div>' +
+        '<div class="im-field-help">' + (f.help || '') + '</div>';
+
+      var tdS = document.createElement('td');
+      var sel = document.createElement('select');
+      sel.className = 'im-select';
+      sel.dataset.field = f.name;
+      sel.innerHTML = '<option value="">— Not mapped —</option>' +
+        headers.map(function (h) {
+          return '<option value="' + h.replace(/"/g, '&quot;') + '">' + h + '</option>';
+        }).join('');
+      sel.value = suggested[f.name] || '';
+      if (f.required && !sel.value) sel.classList.add('unmapped');
+
+      var sample = document.createElement('div');
+      sample.className = 'im-sample';
+
+      function refreshSample() {
+        var idx = headers.indexOf(sel.value);
+        if (idx === -1) { sample.textContent = ''; return; }
+        var vals = rows.slice(0, 2).map(function (r) { return (r[idx] || '').trim(); })
+                       .filter(Boolean);
+        sample.textContent = vals.length ? 'e.g. ' + vals.join(', ') : '';
+      }
+      sel.addEventListener('change', function () {
+        sel.classList.toggle('unmapped', f.required && !sel.value);
+        refreshSample();
+      });
+      refreshSample();
+
+      tdS.appendChild(sel);
+      tdS.appendChild(sample);
+      tr.appendChild(tdF); tr.appendChild(tdS);
+      tbody.appendChild(tr);
+    });
+  }
+
+  function currentMapping() {
+    var m = {};
+    document.querySelectorAll('#imMapRows select').forEach(function (s) {
+      if (s.value) m[s.dataset.field] = s.value;
+    });
+    return m;
+  }
+
+  /* --- step 3: import ---------------------------------------------------- */
+  el('imStart').addEventListener('click', async function () {
+    clearErr('imMapError');
+    var mapping = currentMapping();
+
+    var missing = fields.filter(function (f) { return f.required && !mapping[f.name]; });
+    if (missing.length) {
+      showErr('imMapError', 'Map a CSV column for: ' +
+        missing.map(function (f) { return f.label; }).join(', '));
+      return;
+    }
+    // Two fields pointing at one column is always a mistake worth catching
+    // before 2,000 rows are written.
+    var used = Object.values(mapping);
+    if (new Set(used).size !== used.length) {
+      showErr('imMapError', 'Each CSV column can only be mapped to one field.');
+      return;
+    }
+
+    var idx = {};
+    Object.keys(mapping).forEach(function (f) { idx[f] = headers.indexOf(mapping[f]); });
+
+    var payload = rows.map(function (r, i) {
+      var o = { row: i + 2 };   // +2: 1-based, and row 1 is the header
+      Object.keys(idx).forEach(function (f) {
+        o[f] = (r[idx[f]] || '').trim() || null;
+      });
+      return o;
+    });
+
+    showStep(3);
+    var imported = 0, skipped = 0;
+    lastErrors = [];
+
+    var total       = payload.length;
+    var batches     = Math.ceil(total / BATCH) || 1;
+    var batchesDone = 0;
+    var startAt     = Date.now();
+
+    /* A few hundred rows import in well under a second, so a purely
+       work-driven bar jumps straight to 100% and reads as "nothing happened".
+
+       Time drives the animation, capped by how far the work could possibly
+       have got: while batch k is in flight, progress is somewhere between
+       k/batches and (k+1)/batches, so (k+1)/batches is an honest ceiling.
+       That keeps the bar moving during a slow request instead of freezing at
+       zero, without ever claiming more than is plausible. */
+    var ticker = setInterval(function () {
+      var byTime  = (Date.now() - startAt) / MIN_MS;
+      var ceiling = Math.min(1, (batchesDone + 1) / batches);
+      var shown   = Math.max(0, Math.min(byTime, ceiling));
+      el('imBar').style.width = (shown * 100).toFixed(1) + '%';
+      el('imBarLabel').textContent =
+        'Importing ' + Math.round(shown * total) + ' of ' + total + '…';
+    }, 50);
+
+    function stopTicker() { clearInterval(ticker); }
+
+    for (var s = 0; s < payload.length; s += BATCH) {
+      var chunk = payload.slice(s, s + BATCH);
+      try {
+        var res = await fetchWithAuth('/api/phonebooks/' + LIST_ID + '/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: chunk }),
+        });
+        if (!res.ok) {
+          stopTicker();
+          showStep(2);
+          showErr('imMapError', await describeFailure(res));
+          return;
+        }
+        var out = await res.json();
+        imported += out.imported;
+        skipped  += out.skipped;
+        lastErrors = lastErrors.concat(out.errors || []);
+      } catch (_) {
+        stopTicker();
+        showStep(2);
+        showErr('imMapError', 'Could not reach the server partway through the import.');
+        return;
+      }
+      batchesDone++;
+    }
+
+    // Let the bar finish its minimum run before revealing the result.
+    var remaining = MIN_MS - (Date.now() - startAt);
+    if (remaining > 0) await new Promise(function (r) { setTimeout(r, remaining); });
+
+    stopTicker();
+    el('imBar').style.width = '100%';
+    el('imBarLabel').textContent = 'Done';
+    await new Promise(function (r) { setTimeout(r, 250); });  // let 100% land
+
+    el('imOk').textContent  = imported;
+    el('imBad').textContent = skipped;
+    renderErrors();
+    el('imTitle').textContent = 'Import finished';
+    showStep(4);
+  });
+
+  function renderErrors() {
+    var wrap = el('imErrWrap');
+    if (!lastErrors.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    el('imErrRows').innerHTML = lastErrors.map(function (e) {
+      return '<tr><td class="rownum">' + e.row + '</td>' +
+             '<td class="val">' + (e.value || '—') + '</td>' +
+             '<td>' + e.reason + '</td></tr>';
+    }).join('');
+  }
+
+  /* --- downloads --------------------------------------------------------- */
+  function download(name, text) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8;' }));
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  el('imSample').addEventListener('click', function (e) {
+    e.preventDefault();
+    // Headers only. Sample rows invite people to edit around them and leave
+    // the examples in, which then import as real contacts.
+    download('phonebook_sample.csv', 'Customer Name,WhatsApp Number,Email,Agent ID\n');
+  });
+
+  el('imDownloadErrors').addEventListener('click', function (e) {
+    e.preventDefault();
+    var csv = 'Row,Value,Reason\n' + lastErrors.map(function (r) {
+      return [r.row, '"' + (r.value || '') + '"', '"' + r.reason.replace(/"/g, '""') + '"'].join(',');
+    }).join('\n');
+    download('import_skipped_rows.csv', csv);
+  });
+})();
+</script>
+{% endblock %}

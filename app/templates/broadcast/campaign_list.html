@@ -1,0 +1,411 @@
+{% extends "base.html" %}
+{% block title %}Broadcasts — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/docview.css">
+<style>
+  /* Only what docview.css does not already provide: the company filter and the
+     per-status pill. Everything else reuses the shared list-view classes so this
+     page reads as part of the app rather than a one-off. */
+  .cl-filter {
+    padding:7px 11px;border:1px solid var(--line-2);background:var(--bg-card);
+    font-family:var(--f-ui);font-size:13px;color:var(--ink);outline:none;min-width:190px;
+  }
+  .cl-filter:focus { border-color:var(--green);box-shadow:var(--ring); }
+
+  .cl-status {
+    font-family:var(--f-mono);font-size:9px;text-transform:uppercase;letter-spacing:.1em;
+    padding:3px 8px;border:1px solid var(--line-2);color:var(--muted);white-space:nowrap;
+  }
+  .cl-status.draft, .cl-status.screening { color:var(--muted);background:var(--bg); }
+  .cl-status.ready      { color:var(--green-dark);border-color:var(--green);background:var(--green-tint); }
+  .cl-status.sending    { color:#1d4ed8;border-color:#1d4ed8;background:#eff6ff; }
+  .cl-status.dispatched,
+  .cl-status.settled    { color:var(--green-dark);border-color:var(--green);background:var(--green-tint); }
+  .cl-status.cancelled  { color:var(--red-dark);border-color:var(--red);background:var(--red-tint); }
+
+  /* Counts read as one line: 120 sent · 3 failed. Muted so the name stays dominant. */
+  .cl-counts { font-family:var(--f-mono);font-size:11.5px;color:var(--subtle);white-space:nowrap; }
+  .cl-counts .ok   { color:var(--green-dark); }
+  .cl-counts .bad  { color:var(--red-dark); }
+  .cl-counts .sep  { opacity:.4;margin:0 5px; }
+
+  /* Hidden until something is selected — an always-visible bar with a disabled
+     Delete button is just clutter above every list. Mirrors layouts/list_view.html. */
+  .dv-bulkbar {
+    display:none;align-items:center;gap:10px;
+    padding:10px 20px;border-bottom:1px solid var(--line);background:var(--green-tint);
+  }
+  .dv-bulkbar.visible { display:flex; }
+  .dv-bulkbar-count { font-size:12px;font-weight:600;color:var(--green-dark);margin-right:auto; }
+  .cl-check, #clSelectAll { cursor:pointer;width:14px;height:14px;accent-color:var(--green); }
+
+  /* Mode picker — same backdrop/modal idiom as the PhoneBook dialogs. */
+  .cl-modal-backdrop {
+    position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;
+    justify-content:center;z-index:200;padding:20px;opacity:0;visibility:hidden;
+    pointer-events:none;transition:opacity .18s ease,visibility .18s ease;
+  }
+  .cl-modal-backdrop.open { opacity:1;visibility:visible;pointer-events:auto; }
+  .cl-modal {
+    background:var(--bg-card);width:100%;max-width:620px;
+    box-shadow:var(--shadow-pop);display:flex;flex-direction:column;
+  }
+  .cl-modal-hd {
+    padding:16px 20px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .cl-modal-title {
+    font-family:var(--f-disp);font-size:15px;font-weight:700;
+    color:var(--black);letter-spacing:-.02em;
+  }
+  .cl-modal-close {
+    width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+    background:none;border:none;color:var(--subtle);cursor:pointer;font-size:16px;
+  }
+  .cl-modal-close:hover { background:var(--bg);color:var(--ink); }
+
+  .cl-modes { padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:14px; }
+  @media (max-width:560px) { .cl-modes { grid-template-columns:1fr; } }
+
+  .cl-mode {
+    display:flex;flex-direction:column;gap:6px;padding:18px;
+    border:1px solid var(--line-2);background:transparent;text-align:left;
+    text-decoration:none;color:inherit;cursor:pointer;font-family:inherit;
+    transition:border-color .18s var(--ease), box-shadow .18s ease, background .18s ease;
+  }
+  a.cl-mode:hover { border-color:var(--green);background:var(--green-tint);box-shadow:var(--shadow-lift); }
+  .cl-mode-icon {
+    width:34px;height:34px;display:flex;align-items:center;justify-content:center;
+    background:var(--green-tint);color:var(--green-dark);font-size:15px;margin-bottom:4px;
+  }
+  .cl-mode-name {
+    font-family:var(--f-disp);font-size:17px;font-weight:700;
+    color:var(--black);letter-spacing:-.02em;
+  }
+  .cl-mode-lead { font-size:12.5px;font-weight:600;color:var(--ink-2); }
+  .cl-mode-desc { font-size:12.5px;color:var(--muted);line-height:1.55; }
+
+  /* Not built yet: visibly inert rather than merely greyed, so it does not
+     look like a button that failed to respond. */
+  .cl-mode.disabled { cursor:default;opacity:.6; }
+  .cl-mode.disabled .cl-mode-icon { background:var(--bg);color:var(--subtle); }
+  .cl-mode-soon {
+    margin-top:2px;font-family:var(--f-mono);font-size:9px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--subtle);
+  }
+
+  .dv-table tbody tr { cursor:pointer; }
+  .dv-table tbody tr:hover td { background:var(--green-tint); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dv-page-header">
+  <div>
+    <div class="dv-title">Broadcasts</div>
+    <div class="dv-subtitle">{{ rows | length }} broadcast{{ '' if rows | length == 1 else 's' }}</div>
+  </div>
+  <div class="dv-actions">
+    {% if perms.campaigns.create %}
+    <button class="dv-btn dv-btn-primary" id="clNewBtn">
+      <i class="ti ti-plus"></i><span>New broadcast</span>
+    </button>
+    {% endif %}
+  </div>
+</div>
+
+<div class="dv-toolbar">
+  <div class="dv-search">
+    <i class="dv-search-icon ti ti-search"></i>
+    <input type="text" id="clSearch" class="dv-search-input" placeholder="Search broadcasts...">
+  </div>
+  {% if companies %}
+  <select class="cl-filter" id="clCompany">
+    <option value="">All companies</option>
+    {% for c in companies %}
+    <option value="{{ c.id }}" {% if c.id == selected_company %}selected{% endif %}>{{ c.name }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+  <span class="dv-row-count" id="clCount"></span>
+</div>
+
+<div class="dv-list-card">
+  <div class="dv-list-meta">
+    <div class="dv-list-meta-title"><i class="ti ti-speakerphone"></i> Broadcasts</div>
+    <span class="dv-list-count">{{ rows | length }} total</span>
+  </div>
+
+  {% set can_delete = perms.campaigns.delete %}
+  {% if rows and can_delete %}
+  <div class="dv-bulkbar" id="clBulkBar">
+    <span class="dv-bulkbar-count" id="clBulkCount"></span>
+    <button class="dv-btn dv-btn-danger dv-btn-xs" id="clBulkDelete">
+      <i class="ti ti-trash"></i> Delete selected
+    </button>
+    <button class="dv-btn dv-btn-ghost dv-btn-xs" id="clBulkClear">Clear</button>
+  </div>
+  {% endif %}
+
+  {% if rows %}
+  <table class="dv-table" id="clTable">
+    <thead>
+      <tr>
+        {% if can_delete %}
+        <th style="width:38px"><input type="checkbox" id="clSelectAll" title="Select all"></th>
+        {% endif %}
+        <th>Name</th>
+        <th>Company</th>
+        <th style="width:120px">Status</th>
+        <th style="width:100px">Recipients</th>
+        <th style="width:210px">Results</th>
+        <th style="width:120px">Created</th>
+        <th style="width:44px"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr data-search="{{ r.name }} {{ r.company_name }} {{ r.status }}"
+          onclick="window.location='/broadcast/campaigns/{{ r.id }}'">
+        {% if can_delete %}
+        {# stopPropagation, or ticking the box navigates into the campaign #}
+        <td onclick="event.stopPropagation();">
+          <input type="checkbox" class="cl-check" value="{{ r.id }}"
+                 data-label="{{ r.name }}"
+                 data-sent="{{ 1 if r.status in ('sending', 'dispatched', 'settled') else 0 }}">
+        </td>
+        {% endif %}
+        <td class="cell-bold">{{ r.name }}</td>
+        <td>{{ r.company_name }}</td>
+        <td><span class="cl-status {{ r.status }}">{{ r.status }}</span></td>
+        <td class="cl-counts">{{ r.total }}</td>
+        <td class="cl-counts">
+          {% if r.status in ('draft', 'screening', 'ready') %}
+            <span style="opacity:.5">not sent yet</span>
+          {% else %}
+            <span class="ok">{{ r.sent }} sent</span>
+            {% if r.delivered %}<span class="sep">·</span>{{ r.delivered }} delivered{% endif %}
+            {% if r.failed %}<span class="sep">·</span><span class="bad">{{ r.failed }} failed</span>{% endif %}
+            {% if r.skipped %}<span class="sep">·</span>{{ r.skipped }} skipped{% endif %}
+          {% endif %}
+        </td>
+        <td>{{ r.created_at.strftime('%d %b %Y') if r.created_at else '—' }}</td>
+        <td onclick="event.stopPropagation();">
+          <a href="/broadcast/campaigns/{{ r.id }}" class="dv-row-open" title="Open">
+            <i class="ti ti-chevron-right"></i>
+          </a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div id="clNoMatch" class="dv-hidden">
+    <div class="dv-empty">
+      <i class="dv-empty-icon ti ti-search"></i>
+      <div class="dv-empty-text">No broadcasts match your search.</div>
+    </div>
+  </div>
+
+  {% else %}
+  <div class="dv-empty">
+    <i class="dv-empty-icon ti ti-speakerphone"></i>
+    <div class="dv-empty-text">
+      {% if selected_company %}No broadcasts for this company yet.{% else %}No broadcasts yet.{% endif %}
+    </div>
+    {% if perms.campaigns.create %}
+    <div class="dv-empty-hint"><a href="#" id="clNewEmpty">Create the first broadcast</a></div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% if perms.campaigns.create %}
+<div class="cl-modal-backdrop" id="clModeBackdrop">
+  <div class="cl-modal" role="dialog" aria-modal="true" aria-labelledby="clModeTitle">
+    <div class="cl-modal-hd">
+      <span class="cl-modal-title" id="clModeTitle">How do you want to send this?</span>
+      <button class="cl-modal-close" id="clModeClose" aria-label="Close">&times;</button>
+    </div>
+    <div class="cl-modes">
+
+      <a href="/broadcast/campaigns/new" class="cl-mode">
+        <span class="cl-mode-icon"><i class="ti ti-users"></i></span>
+        <span class="cl-mode-name">Standard</span>
+        <span class="cl-mode-lead">Same message for everyone</span>
+        <span class="cl-mode-desc">
+          Pick PhoneBooks and type the values once. Everyone receives an identical message.
+        </span>
+      </a>
+
+      <a href="/broadcast/campaigns/new?mode=personalized" class="cl-mode">
+        <span class="cl-mode-icon"><i class="ti ti-file-spreadsheet"></i></span>
+        <span class="cl-mode-name">Personalized</span>
+        <span class="cl-mode-lead">Different details per contact</span>
+        <span class="cl-mode-desc">
+          Upload a CSV with one row per contact. Each person gets their own values,
+          and the CSV replaces the PhoneBook.
+        </span>
+      </a>
+
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+/* ── Mode picker ─────────────────────────────────────────────────────────
+   "New broadcast" asks how before it asks what. The two modes diverge
+   immediately after this point — one collects PhoneBooks, the other a CSV —
+   so choosing first avoids a form that rearranges itself underneath you. */
+(function () {
+  var backdrop = document.getElementById('clModeBackdrop');
+  if (!backdrop) return;                 // no create permission
+
+  function open(e) { if (e) e.preventDefault(); backdrop.classList.add('open'); }
+  function close() { backdrop.classList.remove('open'); }
+
+  var btn = document.getElementById('clNewBtn');
+  if (btn) btn.addEventListener('click', open);
+
+  var emptyLink = document.getElementById('clNewEmpty');
+  if (emptyLink) emptyLink.addEventListener('click', open);
+
+  document.getElementById('clModeClose').addEventListener('click', close);
+  backdrop.addEventListener('click', function (e) { if (e.target === backdrop) close(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && backdrop.classList.contains('open')) close();
+  });
+})();
+
+(function () {
+  // Company filtering is a page reload rather than a client-side hide: the list is
+  // unpaginated today but will not stay that way, and a server-side filter keeps
+  // working when it grows.
+  var company = document.getElementById('clCompany');
+  if (company) {
+    company.addEventListener('change', function () {
+      var url = new URL(window.location.href);
+      if (company.value) url.searchParams.set('company', company.value);
+      else               url.searchParams.delete('company');
+      window.location.href = url.toString();
+    });
+  }
+
+  var input = document.getElementById('clSearch');
+  var count = document.getElementById('clCount');
+  var noMatch = document.getElementById('clNoMatch');
+  if (!input) return;
+
+  input.addEventListener('input', function () {
+    var q = input.value.trim().toLowerCase();
+    var rows = document.querySelectorAll('#clTable tbody tr');
+    var visible = 0;
+    rows.forEach(function (tr) {
+      var show = !q || (tr.dataset.search || '').toLowerCase().includes(q);
+      tr.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    if (count) count.textContent = q ? visible + ' of ' + rows.length : '';
+    if (noMatch) noMatch.style.display = (visible === 0 && q) ? 'block' : 'none';
+  });
+})();
+
+/* ── Bulk delete ─────────────────────────────────────────────────────────── */
+(function () {
+  var bar       = document.getElementById('clBulkBar');
+  var selectAll = document.getElementById('clSelectAll');
+  // No bar (no delete permission) or no header checkbox (empty list) — nothing to wire.
+  if (!bar || !selectAll) return;
+
+  var countEl = document.getElementById('clBulkCount');
+  var delBtn  = document.getElementById('clBulkDelete');
+
+  function checks() {
+    return Array.prototype.slice.call(document.querySelectorAll('.cl-check'));
+  }
+  function chosen() { return checks().filter(function (c) { return c.checked; }); }
+
+  function refresh() {
+    var n = chosen().length;
+    bar.classList.toggle('visible', n > 0);
+    countEl.textContent = n + ' broadcast' + (n === 1 ? '' : 's') + ' selected';
+    var all = checks();
+    selectAll.checked = all.length > 0 && n === all.length;
+    selectAll.indeterminate = n > 0 && n < all.length;
+  }
+
+  selectAll.addEventListener('click', function (e) { e.stopPropagation(); });
+  selectAll.addEventListener('change', function () {
+    // Only rows the search filter is currently showing.
+    checks().forEach(function (c) {
+      if (c.closest('tr').style.display !== 'none') c.checked = selectAll.checked;
+    });
+    refresh();
+  });
+  checks().forEach(function (c) { c.addEventListener('change', refresh); });
+
+  document.getElementById('clBulkClear').addEventListener('click', function () {
+    checks().forEach(function (c) { c.checked = false; });
+    refresh();
+  });
+
+  delBtn.addEventListener('click', async function () {
+    var picked = chosen();
+    if (!picked.length) return;
+
+    // Warn before the request rather than reporting a partial result afterwards:
+    // a sent broadcast is the record of messages that reached real customers.
+    var sent = picked.filter(function (c) { return c.dataset.sent === '1'; });
+    if (sent.length === picked.length) {
+      alert('These have already been sent and cannot be deleted — they are the record ' +
+            'of what reached your customers.');
+      return;
+    }
+
+    var deletable = picked.length - sent.length;
+    var names = picked.slice(0, 5).map(function (c) { return '· ' + c.dataset.label; }).join('\n');
+    if (picked.length > 5) names += '\n· …and ' + (picked.length - 5) + ' more';
+
+    var msg = 'Delete ' + deletable + ' broadcast' + (deletable === 1 ? '' : 's') + '?\n\n' + names;
+    if (sent.length) {
+      msg += '\n\n' + sent.length + ' already sent and will be kept.';
+    }
+    msg += '\n\nRecipient lists inside them are deleted too. This cannot be undone.';
+    if (!confirm(msg)) return;
+
+    delBtn.disabled = true;
+    try {
+      var res = await fetchWithAuth('/api/campaigns/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: picked.map(function (c) { return c.value; }) }),
+      });
+      if (res.ok) {
+        var out = await res.json();
+        if (out.failed && out.failed.length) {
+          alert('Deleted ' + out.deleted + '. ' + out.failed.length + ' could not be deleted.');
+        }
+        window.location.reload();
+        return;
+      }
+      if (res.status === 401 || res.status === 403) {
+        alert('Your session has expired. Reload the page and sign in again.');
+      } else {
+        var d = await res.json().catch(function () { return {}; });
+        alert(d.detail || ('Request failed (' + res.status + ').'));
+      }
+    } catch (_) {
+      alert('Could not reach the server. Check your connection and try again.');
+    } finally {
+      delBtn.disabled = false;
+    }
+  });
+
+  refresh();
+})();
+</script>
+{% endblock %}

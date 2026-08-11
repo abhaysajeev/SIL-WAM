@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -25,6 +25,7 @@ from app.schemas.whatsapp import (
     TemplateUpdateRequest,
     WhatsAppAccountOut,
 )
+from app.services import meta_media
 from app.utils.error_logger import log_error
 from app.utils.whatsapp_crypto import decrypt_token, encrypt_token
 
@@ -713,18 +714,86 @@ def _template_to_dict(t: WhatsAppTemplate) -> dict:
         "param_mapping": t.param_mapping or {},
         "cta_mapping": t.cta_mapping or {},
         "mobile_mapping": t.mobile_mapping or "",
+        "header_mapping": t.header_mapping or "",
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
         "synced_at": t.synced_at.isoformat() if t.synced_at else None,
     }
 
 
-def _build_components(payload) -> list:
-    """Build Meta-compatible components array from create request."""
+_MEDIA_HEADER_FORMATS = ("IMAGE", "DOCUMENT", "VIDEO")
+
+
+def _existing_header(existing_components) -> dict | None:
+    """The HEADER component already stored for a template, if any."""
+    for c in existing_components or []:
+        if str(c.get("type", "")).upper() == "HEADER":
+            return c
+    return None
+
+
+def _build_header(payload, existing_components) -> dict | None:
+    """
+    Build the HEADER component, or None for a header-less template.
+
+    Media headers need an `example.header_handle` so Meta's reviewer can see a sample.
+    On edit the handle is optional: leaving it out means "keep the media that is already
+    approved", and we carry the stored component forward verbatim. Without that carry
+    forward, editing only the body text would PATCH a header-less array to Meta and
+    silently destroy the header on a live template.
+    """
+    fmt = getattr(payload, "header_format", None)
+    prev = _existing_header(existing_components)
+
+    # Callers predating header_format send header_text alone — treat that as TEXT.
+    if not fmt:
+        fmt = "TEXT" if payload.header_text else None
+
+    if not fmt:
+        # The payload says nothing about a header. For TEXT that means "remove it" —
+        # that is how the builder's header toggle has always worked. For media it must
+        # mean "leave it alone": a request that simply omits the field must never be
+        # able to strip an approved image off a live template, which is the failure
+        # this whole branch exists to prevent.
+        prev_fmt = str((prev or {}).get("format", "")).upper()
+        return prev if prev_fmt in _MEDIA_HEADER_FORMATS else None
+
+    if fmt == "TEXT":
+        return (
+            {"type": "HEADER", "format": "TEXT", "text": payload.header_text}
+            if payload.header_text
+            else None
+        )
+
+    handle = getattr(payload, "header_handle", None)
+    if handle:
+        return {"type": "HEADER", "format": fmt, "example": {"header_handle": [handle]}}
+
+    # No new sample supplied — reuse what Meta already has for this template.
+    if prev and str(prev.get("format", "")).upper() == fmt:
+        return prev
+
+    # Nothing to fall back on. TemplateCreateRequest blocks this outright; an edit can
+    # only reach here by switching format without uploading, which Meta would reject
+    # with a far less obvious message.
+    raise HTTPException(
+        status_code=400,
+        detail=f"A {fmt} header needs a sample file — upload one before saving.",
+    )
+
+
+def _build_components(payload, existing_components=None) -> list:
+    """
+    Build Meta-compatible components array from a create or update request.
+
+    `existing_components` is the template's currently stored components, and is only
+    consulted to preserve an approved media header when the edit did not replace it.
+    """
     components = []
 
-    if payload.header_text:
-        components.append({"type": "HEADER", "format": "TEXT", "text": payload.header_text})
+    header = _build_header(payload, existing_components)
+    if header:
+        components.append(header)
 
     # Body — Meta requires an "example" block for every variable present
     body_component: dict = {"type": "BODY", "text": payload.body_text}
@@ -878,6 +947,47 @@ def sync_templates(
         raise HTTPException(status_code=500, detail="Sync failed.")
 
 
+# ── POST media handle — sample upload for a media header ──
+
+@router.post("/{company_id}/templates/media-handle")
+async def upload_template_media(
+    company_id: uuid.UUID,
+    request: Request,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _user=Depends(require("companies", "write")),
+):
+    """
+    Upload a sample image/document/video and return Meta's header handle.
+
+    The builder calls this the moment a file is chosen, so by the time the template
+    form is submitted the handle is already in hand and creation stays a plain JSON
+    POST. The handle is only a review sample — the media actually sent to each
+    customer comes from header_mapping at send time.
+    """
+    acc = _get_active_account(company_id, db)
+    file_bytes = await file.read()
+
+    try:
+        fmt = meta_media.validate_upload(file_bytes, file.content_type or "")
+        handle = meta_media.upload_resumable(
+            acc, file_bytes, file.filename or "sample", file.content_type
+        )
+    except meta_media.MediaUploadError as exc:
+        # Every message from this path is written for the person in the builder.
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        log_error(
+            "Template media upload failed",
+            f"POST /api/whatsapp/{company_id}/templates/media-handle",
+            exc,
+            request=request,
+        )
+        raise HTTPException(status_code=500, detail="Could not upload the file.")
+
+    return {"handle": handle, "format": fmt, "filename": file.filename}
+
+
 # ── POST create ───────────────────────────────────────────
 
 @router.post("/{company_id}/templates", response_model=TemplateOut)
@@ -982,7 +1092,8 @@ def update_template(
             detail="Template has not been confirmed by Meta yet. Try syncing first.",
         )
 
-    components = _build_components(payload)
+    # Pass the stored components so an untouched media header survives the edit.
+    components = _build_components(payload, tpl.components)
 
     meta_body: dict = {"components": components}
     if payload.category:
@@ -1109,7 +1220,7 @@ def save_template_mapping(
     db: Session = Depends(get_db),
     _user=Depends(require("companies", "write")),
 ):
-    """Save or update the param_mapping and cta_mapping for a template."""
+    """Save or update the param / cta / mobile / header mappings for a template."""
     _get_company_or_404(company_id, db)
     template = db.query(WhatsAppTemplate).filter(
         WhatsAppTemplate.id == template_id,
@@ -1124,6 +1235,8 @@ def save_template_mapping(
         template.cta_mapping = payload.cta_mapping
     if payload.mobile_mapping is not None:
         template.mobile_mapping = payload.mobile_mapping or None
+    if payload.header_mapping is not None:
+        template.header_mapping = payload.header_mapping or None
 
     try:
         db.commit()

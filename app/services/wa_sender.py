@@ -32,14 +32,35 @@ def send_template(
     body_params: list[str],
     to_phone: str,
     cta_urls: dict[str, str] | None = None,
+    header_media: dict | None = None,
 ) -> SendResult:
     """
     Send a WhatsApp template message via the Meta Graph API.
 
     body_params  — ordered list of substitution values for {{1}}, {{2}}, ...
     cta_urls     — {button_index_str: url_value} for URL-button components, or None
+    header_media — {"format": "image"|"document"|"video", "link": url, "filename": ...}
+                   for templates with a media header, or None. Meta fetches the link
+                   itself at send time, so it must be publicly reachable over HTTPS.
+
+    header_media is deliberately the last parameter: queue_manager and
+    broadcast_scheduler both call this positionally, and several tests assert on
+    `call_args.args[2]` / `args[3]`. Appending keeps those positions stable.
     """
     components = []
+
+    # Meta expects header before body. Order is not enforced by the API, but a payload
+    # that reads in message order is far easier to debug against their error messages.
+    if header_media and header_media.get("link"):
+        fmt = str(header_media.get("format", "image")).lower()
+        media_obj: dict = {"link": header_media["link"]}
+        if fmt == "document" and header_media.get("filename"):
+            # Without this the customer sees the URL's last path segment as the title.
+            media_obj["filename"] = header_media["filename"]
+        components.append({
+            "type": "header",
+            "parameters": [{"type": fmt, fmt: media_obj}],
+        })
 
     if body_params:
         components.append({

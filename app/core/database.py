@@ -2,7 +2,16 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from app.core.config import settings
 
-engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
+# SQLAlchemy defaults to pool_size=5 / max_overflow=10 — 15 connections shared by
+# uvicorn, four background schedulers, and every webhook BackgroundTask (each opens its
+# own session). That is tight enough that a broadcast run could starve inbound webhook
+# processing. Postgres allows 100 by default, so this is headroom, not a trade-off.
+engine = create_engine(
+    settings.DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=20,
+    max_overflow=10,
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

@@ -71,6 +71,10 @@ class WhatsAppTemplate(Base):
     param_mapping  = Column(JSONB, nullable=True)    # {"1": "customer_name", "2": "order.amount"}
     cta_mapping    = Column(JSONB, nullable=True)    # {"0": "invoice_url"} — 0-indexed button pos
     mobile_mapping = Column(String(200), nullable=True)  # dot-path to phone number in data, e.g. "customer.phone"
+    # Dot-path to the media URL for an IMAGE/DOCUMENT/VIDEO header, e.g. "data.receipt_image_url".
+    # Only meaningful when components carries a HEADER with a non-TEXT format; the format itself
+    # is read back out of components by template_body.header_format().
+    header_mapping = Column(String(200), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     synced_at = Column(DateTime(timezone=True), nullable=True)

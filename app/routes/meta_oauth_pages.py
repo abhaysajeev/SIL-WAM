@@ -154,13 +154,21 @@ def meta_oauth_callback(
     company_id = saved.get("company_id")
     q = request.query_params
 
-    if q.get("error"):
+    if q.get("error") or q.get("error_code"):
         # Meta states its refusal reason here — the visibility the popup flow lacks.
-        return _result_page(
-            "Meta returned an error",
-            f"{q.get('error')}\n{q.get('error_reason', '')}\n{q.get('error_description', '')}",
-            company_id,
+        # Two shapes exist: error/error_reason/error_description (OAuth denials)
+        # and error_code/error_message (dialog-level refusals, e.g. 1349186
+        # "Feature Unavailable" when the FB user has no role on a dev-mode app).
+        detail = "\n".join(
+            part for part in (
+                q.get("error"),
+                q.get("error_code"),
+                q.get("error_reason"),
+                q.get("error_description"),
+                q.get("error_message"),
+            ) if part
         )
+        return _result_page("Meta returned an error", detail, company_id)
     if not company_id or not q.get("code") or q.get("state") != saved.get("nonce"):
         return _result_page(
             "Invalid callback",

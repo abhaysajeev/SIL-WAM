@@ -84,6 +84,13 @@
       {% endif %}
       {% endif %}
 
+      {% if perms.phonebooks.read %}
+      <span class="nav-label">Broadcast</span>
+      <a href="/broadcast" class="nav-item {% if active == 'broadcast' %}active{% endif %}">
+        <i class="nav-icon ti ti-speakerphone"></i> Broadcast Messages
+      </a>
+      {% endif %}
+
       {% if perms.reports.read %}
       <span class="nav-label">Analytics</span>
       <a href="/reports" class="nav-item {% if active == 'reports' %}active{% endif %}">

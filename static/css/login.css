@@ -87,7 +87,7 @@ body::before {
   font-size: 28px;
   font-weight: 700;
   color: #fff;
-  letter-spacing: -.04em;
+  letter-spacing: -.02em;
   line-height: 1.05;
   margin-bottom: 12px;
   text-shadow:
@@ -103,12 +103,12 @@ body::before {
 }
 
 .brand-sub {
-  font-family: var(--f-mono);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: .26em;
+  font-family: var(--f-ui);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .22em;
   text-transform: uppercase;
-  color: rgba(255,255,255,.78);
+  color: rgba(255,255,255,.82);
   line-height: 1.6;
   text-shadow:
     0 1px 6px rgba(0,0,0,.14),
@@ -126,9 +126,9 @@ body::before {
 }
 
 .form-eyebrow {
-  font-family: var(--f-mono);
-  font-size: 9px;
-  letter-spacing: .3em;
+  font-family: var(--f-ui);
+  font-size: 11px;
+  letter-spacing: .18em;
   text-transform: uppercase;
   color: var(--green);
   font-weight: 600;
@@ -140,14 +140,14 @@ body::before {
   font-family: var(--f-disp);
   font-size: 30px;
   font-weight: 700;
-  letter-spacing: -.04em;
+  letter-spacing: -.02em;
   color: var(--black);
   line-height: 1;
   margin-bottom: 6px;
 }
 
 .form-sub {
-  font-size: 13px;
+  font-size: 13.5px;
   color: var(--muted);
   margin-bottom: 28px;
   line-height: 1.5;
@@ -263,11 +263,11 @@ body::before {
   color: #fff;
   border: 1px solid var(--green);
   cursor: pointer;
-  font-family: var(--f-mono);
-  font-size: 10.5px;
-  letter-spacing: .22em;
+  font-family: var(--f-ui);
+  font-size: 12px;
+  letter-spacing: .16em;
   text-transform: uppercase;
-  font-weight: 700;
+  font-weight: 600;
   position: relative;
   overflow: hidden;
   transition: background .25s var(--ease), color .25s ease, border-color .25s ease;
@@ -279,7 +279,7 @@ body::before {
   transform: translateX(-110%);
   transition: transform .9s var(--ease);
 }
-.btn-submit:hover:not(:disabled) { background: transparent; color: var(--green); }
+.btn-submit:hover:not(:disabled) { background: var(--green-dark); border-color: var(--green-dark); }
 .btn-submit:hover:not(:disabled)::after { transform: translateX(110%); }
 .btn-submit:active:not(:disabled) { transform: translateY(1px); }
 
@@ -310,9 +310,10 @@ body::before {
   align-items: center;
 }
 .footer-note {
-  font-family: var(--f-mono);
-  font-size: 9px;
-  letter-spacing: .2em;
+  font-family: var(--f-ui);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .14em;
   text-transform: uppercase;
   color: var(--subtle);
 }

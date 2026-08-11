@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — SIL WhatsApp{% endblock %}
+
+{% block extra_css %}
+<style>
+  .cs-back {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 600; color: var(--muted);
+    padding: 6px 10px; border: 1px solid var(--line-2);
+    text-decoration: none; margin-bottom: 20px;
+    transition: background .18s, color .18s;
+  }
+  .cs-back:hover { background: var(--bg); color: var(--ink); }
+
+  .cs-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-card);
+    padding: 60px 20px;
+    text-align: center;
+  }
+  .cs-icon { font-size: 30px; color: var(--subtle); opacity: .5; margin-bottom: 14px; }
+  .cs-name {
+    font-family: var(--f-disp);
+    font-size: 18px; font-weight: 700;
+    color: var(--ink); margin-bottom: 6px;
+  }
+  .cs-blurb { font-size: 13px; color: var(--subtle); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<a href="/broadcast" class="cs-back"><i class="ti ti-arrow-left"></i> Broadcast</a>
+
+<div class="cs-panel">
+  <div class="cs-icon"><i class="ti ti-tool"></i></div>
+  <div class="cs-name">{{ title }}</div>
+  <div class="cs-blurb">{{ blurb }} — being built.</div>
+</div>
+
+{% endblock %}

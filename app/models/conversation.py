@@ -55,11 +55,15 @@ class Service(Base):
 
     status values:   waiting | in_progress | completed | expired | failed
     expired_reason:  timeout | superseded
-    failed_reason:   whatsapp_number_invalid | send_error
+    failed_reason:   whatsapp_number_invalid | send_error | media_error
 
-    send_error is retried automatically (see queue_manager._fail_or_schedule_retry)
-    up to _MAX_SEND_ATTEMPTS before becoming terminal; whatsapp_number_invalid never
-    auto-retries — client must submit a corrected number via the retry endpoint.
+    send_error and media_error are retried automatically (see
+    queue_manager._fail_or_schedule_retry) up to _MAX_SEND_ATTEMPTS before becoming
+    terminal; whatsapp_number_invalid never auto-retries — client must submit a
+    corrected number via the retry endpoint. media_error means Meta could not fetch
+    the header media URL supplied by the client; it is retried because the client's
+    media host may only be briefly unreachable, but the distinct reason tells them
+    which side the problem is on.
 
     Concurrency is unlimited: multiple services can be status="in_progress" for
     the same (company_id, mobile_no) at once — see queue_manager.enqueue_service.
@@ -109,6 +113,10 @@ class Service(Base):
     template_params      = Column(JSONB, nullable=True)
     # URL button overrides {button_index_str: url_value}
     cta_urls             = Column(JSONB, nullable=True)
+    # Resolved media header for the template send, frozen at ingest like template_params.
+    # {"format": "image"|"document"|"video", "link": "https://…", "filename": "…"}
+    # filename applies to documents only. NULL for text-header and header-less templates.
+    header_media         = Column(JSONB, nullable=True)
     template_expiry_hours = Column(Integer, nullable=False, default=24)
     created_at           = Column(DateTime(timezone=True), server_default=func.now())
     completed_at         = Column(DateTime(timezone=True), nullable=True)

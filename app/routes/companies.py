@@ -137,6 +137,7 @@ def company_edit(
             "param_mapping": t.param_mapping or {},
             "cta_mapping": t.cta_mapping or {},
             "mobile_mapping": t.mobile_mapping or "",
+            "header_mapping": t.header_mapping or "",
             "synced_at": t.synced_at.isoformat() if t.synced_at else None,
             "created_at": t.created_at.isoformat() if t.created_at else None,
         }

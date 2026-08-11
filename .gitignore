@@ -12,3 +12,14 @@ dist/
 build/
 *.egg-info/
 FIXES.md
+
+# Local .env backups — these hold SECRET_KEY / META_APP_SECRET and must never
+# reach a remote. The bare `.env` rule above does not cover suffixed copies.
+.env.bak*
+.env.*.bak
+
+# Generated knowledge-graph output (5MB+ of derived artifacts)
+graphify-out/
+
+# Internal audit notes, same as FIXES.md above
+FIXES2.md
