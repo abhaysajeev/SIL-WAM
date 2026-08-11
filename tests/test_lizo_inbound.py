@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app.core.config import settings
 from app.lizo import inbound as lizo_inbound
 from app.lizo.schemas import FLOW_MARKER_KEY, FLOW_MARKER_VALUE
 from app.models.conversation import Message
@@ -64,9 +65,13 @@ def _setup(db, *, data=None, questions=None, code="LIZOIN"):
     db.commit()
     make_queue_entry(db, svc, mobile_no=_MOBILE,
                      status="completed" if questions is None else "in_progress")
-    # The outbound template the tap replies to — this is what context.id resolves through.
+    # The outbound template the tap replies to — this is what context.id resolves
+    # through. Marked as the confirmation template: confirming is the second tap of
+    # the two-step flow, and content["template_name"] is how inbound.py tells the two
+    # "Confirm Order" buttons apart. See test_lizo_confirm.py for the first step.
     make_message(db, svc, wamid=_TEMPLATE_WAMID,
-                 direction="outbound", message_type="template")
+                 direction="outbound", message_type="template",
+                 content={"template_name": settings.LIZO_CONFIRM_TEMPLATE})
     db.commit()
     return comp, account, svc
 

@@ -19,7 +19,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core import template_body
+from app.core import mapping, template_body
 from app.core.database import get_db
 from app.core.deps import get_api_company, get_api_key_and_company
 from app.models.company import Company
@@ -41,35 +41,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/client-api/v1", tags=["Client API"])
 
 
-def _get_nested(data: dict, dot_path: str) -> str:
-    """Resolve a dot-path like 'order.amount' from data dict. Returns '' if missing."""
-    parts = dot_path.split(".")
-    val = data
-    for part in parts:
-        if not isinstance(val, dict):
-            return ""
-        val = val.get(part, "")
-    return str(val) if val is not None else ""
-
-
-def _resolve_params(data: dict, param_mapping: dict) -> list[str]:
-    """Build ordered template_params list from mapping. Keys are 1-indexed strings."""
-    if not param_mapping:
-        return []
-    max_idx = max(int(k) for k in param_mapping.keys())
-    result = []
-    for i in range(1, max_idx + 1):
-        key = str(i)
-        dot_path = param_mapping.get(key, "")
-        result.append(_get_nested(data, dot_path) if dot_path else "")
-    return result
-
-
-def _resolve_cta_urls(data: dict, cta_mapping: dict) -> dict[str, str]:
-    """Build cta_urls dict from mapping. Keys are 0-indexed button position strings."""
-    if not cta_mapping:
-        return {}
-    return {btn_idx: _get_nested(data, dot_path) for btn_idx, dot_path in cta_mapping.items()}
+# The resolvers moved to app/core/mapping.py so app/lizo/ can use them without
+# importing this router. Re-exported under their original private names: they are
+# referenced throughout this module and by app/lizo/validation.py, and both call
+# sites and tests already know them by these names.
+_get_nested        = mapping.get_nested
+_resolve_params    = mapping.resolve_params
+_resolve_cta_urls  = mapping.resolve_cta_urls
 
 
 def _resolve_header_media(data: dict, template) -> dict | None:

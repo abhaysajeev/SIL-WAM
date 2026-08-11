@@ -10,8 +10,9 @@ What is *not* shared is the response format. Every reply from this endpoint uses
 Lizo's four-key envelope (see responses.py), rendered by LizoRoute. Shirin Asal's
 /client-api/v1/services is untouched and keeps FastAPI's default `{"detail": …}`.
 
-    POST /client-api/v1/lizo/orders
-    X-API-Key: <lizo's key>
+    POST /client-api/v1/lizo/orders     the order message, with its confirm flow
+    POST /client-api/v1/lizo/payments   payment confirmation, notification only
+    X-API-Key: <liso's key>
 """
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -23,7 +24,7 @@ from app.lizo.responses import (
     STATUS_DUPLICATE_SERVICE_ID, LizoOrderResponse, failure, success,
 )
 from app.lizo.route import LizoRoute
-from app.lizo.schemas import LizoOrderRequest
+from app.lizo.schemas import LizoOrderRequest, LizoPaymentRequest
 from app.lizo.validation import check_approval_fields, check_resolvable
 from app.models.conversation import Service
 from app.models.whatsapp import WhatsAppTemplate
@@ -86,6 +87,73 @@ def ingest_lizo_order(
     # attempts and a delivery that never happens. The template is looked up again
     # inside ingest_service — a cheap indexed query, and the price of leaving
     # client_services_api untouched.
+    template = db.query(WhatsAppTemplate).filter(
+        WhatsAppTemplate.name       == payload.template_name,
+        WhatsAppTemplate.company_id == company.id,
+        WhatsAppTemplate.status     == "APPROVED",
+    ).first()
+
+    if template:
+        problem = check_resolvable(ingest_payload.data, payload.service_id, template)
+        if problem:
+            status, message = problem
+            return failure(422, message, status=status, service_id=payload.service_id)
+    # A missing template is left to ingest_service, which owns the 404.
+
+    result = ingest_service(
+        payload         = ingest_payload,
+        api_key_company = api_key_company,
+        db              = db,
+    )
+    return success(result.service_id, result.reference_id)
+
+
+@router.post("/payments", response_model=LizoOrderResponse, status_code=201)
+def ingest_liso_payment(
+    payload:         LizoPaymentRequest,
+    api_key_company: tuple   = Depends(get_api_key_and_company),
+    db:              Session = Depends(get_db),
+):
+    """
+    Accept a payment confirmation and hand it to the shared ingest path.
+
+    Deliberately a sibling of ingest_lizo_order rather than a branch inside it. The
+    two differ in exactly two ways, and both are contract, not behaviour:
+
+      * No check_approval_fields. Those fields exist so a Confirm Order tap can call
+        SFA's ApproveOrder; a payment has nothing to approve, and demanding UserID
+        and CompanyID here would make the client pad the payload with values nobody
+        could explain.
+      * LizoPaymentRequest stamps FLOW_PAYMENT_VALUE, which keeps button taps away
+        from the approval path entirely — see inbound.handle_tap.
+
+    Everything else — auth, dedup, template lookup, parameter and media resolution,
+    queueing, sending, retries — is the same shared pipeline, and the response is the
+    same four-key envelope rendered by LizoRoute.
+    """
+    _api_key, company = api_key_company
+
+    # Same reasoning as the order endpoint: the shared pipeline fetches the clashing
+    # row and discards it, so doing this here is what lets the client have the
+    # original reference_id back and reconcile a POST whose response never arrived.
+    existing = db.query(Service).filter(
+        Service.service_id == payload.service_id,
+        Service.company_id == company.id,
+    ).first()
+    if existing:
+        return failure(
+            409,
+            f"service_id '{payload.service_id}' already exists for this company",
+            status       = STATUS_DUPLICATE_SERVICE_ID,
+            service_id   = payload.service_id,
+            reference_id = existing.id,
+        )
+
+    ingest_payload = payload.to_ingest_request()
+
+    # Meta refuses a template send with any blank parameter, on the background
+    # scheduler long after this response was returned. Catching it here makes it a
+    # 422 the client can act on rather than three silent retries.
     template = db.query(WhatsAppTemplate).filter(
         WhatsAppTemplate.name       == payload.template_name,
         WhatsAppTemplate.company_id == company.id,

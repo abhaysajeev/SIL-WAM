@@ -69,8 +69,12 @@ def _setup(db, *, data=None, code="LZAPP", liso=True):
     svc.status = "completed"        # what queue_manager does for a template-only order
     db.commit()
     make_queue_entry(db, svc, mobile_no=_MOBILE, status="completed")
+    # The confirmation template, not the order message. Approval is the *second* tap
+    # of the two-step flow, and content["template_name"] is how inbound.py tells the
+    # two "Confirm Order" buttons apart — see inbound._tapped_template.
     make_message(db, svc, wamid=_TEMPLATE_WAMID,
-                 direction="outbound", message_type="template")
+                 direction="outbound", message_type="template",
+                 content={"template_name": settings.LIZO_CONFIRM_TEMPLATE})
     db.commit()
     return comp, account, svc
 

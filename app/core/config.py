@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     # SFA host, and the status callback's own URL already lives on CompanyApiKey.
     # Empty disables the call — the hook stays inert, like a missing notify_url.
     LIZO_APPROVE_ORDER_URL: str = ""
+    # The Confirm Order / Cancel template sent when the customer taps Confirm on the
+    # order message. A setting rather than a constant because it is also the
+    # discriminator: both templates carry a button labelled "Confirm Order", and the
+    # tap is routed by comparing the tapped template's name against this.
+    LIZO_CONFIRM_TEMPLATE: str = "order_confirm_liso"
     # Set True in production (HTTPS) so the session cookie gets the Secure flag
     HTTPS_ONLY: bool = False
 

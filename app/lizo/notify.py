@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.lizo import sfa
-from app.lizo.schemas import FLOW_MARKER_KEY, FLOW_MARKER_VALUE
+from app.lizo.schemas import FLOW_MARKER_KEY, FLOW_MARKER_VALUE, FLOW_VALUES
 from app.models.api_key import CompanyApiKey
 from app.models.outbound_notification import OutboundNotification
 
@@ -99,7 +99,26 @@ def _credentials() -> dict:
 
 
 def handles(service) -> bool:
-    """True only for services created through app/lizo/api.py."""
+    """
+    True for any service created through app/lizo/api.py — orders and payments both.
+
+    This is what notify_queue tests to exclude Liso from its own callbacks, so it has
+    to claim payments too. Otherwise, the moment Liso's key gets a notify_url, a
+    payment would POST Shirin Asal's envelope to an endpoint expecting
+    Credentials/RequestData.
+
+    Whether we actually *report* on a flow is emit()'s decision, not this one.
+    """
+    return (getattr(service, "data", None) or {}).get(FLOW_MARKER_KEY) in FLOW_VALUES
+
+
+def reports_on(service) -> bool:
+    """
+    Whether this flow's status is pushed back to SFA.
+
+    Orders only for now. Payments are silent by choice — SFA has no endpoint for them
+    yet. Adding one later is a change here and nowhere else.
+    """
     return (getattr(service, "data", None) or {}).get(FLOW_MARKER_KEY) == FLOW_MARKER_VALUE
 
 
@@ -148,7 +167,7 @@ def emit(
     that is when the event actually happened, which can be seconds before we process
     it. Defaults to now for events we originate ourselves, like Confirmed.
     """
-    if not handles(service):
+    if not reports_on(service):
         return
     if status not in ALL_STATUSES:
         logger.error("Liso notify: refusing unknown status=%r service=%s", status, service.service_id)
