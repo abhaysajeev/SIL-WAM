@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
+from app.lizo import notify as lizo_notify
 from app.models.api_key import CompanyApiKey
 from app.models.conversation import Message, Service, ServiceResponse
 from app.models.outbound_notification import OutboundNotification
@@ -73,7 +74,17 @@ def enqueue_notification(
     note is surfaced in the payload as "reason" — used for the failed_reason string
     (e.g. "whatsapp_number_invalid", "send_error") so clients can branch on why a
     service failed without polling GET /services/{service_id}.
+
+    Liso services are excluded entirely — see the guard below.
     """
+    # Liso has its own notifier (app/lizo/notify.py) with a different payload
+    # envelope. Without this guard, setting notify_url on their key would POST this
+    # module's Shirin-shaped payload to an endpoint that cannot parse it — and the
+    # monotonic-status rule below would then suppress every delivery receipt, since
+    # a Liso service is terminal ("completed") from the moment its template sends.
+    if lizo_notify.handles(service):
+        return
+
     if not service.api_key_id:
         return
 

@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
+from app.lizo import notify as lizo_notify
 from app.models.conversation import Message, MobileQueue, Service
 from app.models.whatsapp import WhatsAppAccount, WhatsAppTemplate
 from app.services import notify_queue, wa_sender
@@ -50,6 +51,7 @@ def enqueue_service(db: Session, service: Service, account: WhatsAppAccount) -> 
         service.status = "failed"
         service.failed_reason = "send_error"
         notify_queue.enqueue_notification(db, service, "failed", note="send_error")
+        _notify_lizo_failure(db, service)
         return "failed"
 
     _start_service(db, service, account, mobile_no, position=1)
@@ -178,6 +180,7 @@ def send_template_for_service(
             service.status = "failed"
             _mark_queue_completed(db, service)
             notify_queue.enqueue_notification(db, service, "failed", note=service.failed_reason)
+            _notify_lizo_failure(db, service)
         elif any(code in err for code in _MEDIA_ERROR_CODES):
             # Meta could not fetch the header media the client pointed us at. Still
             # retried — their media host may only be briefly unreachable — but the
@@ -222,6 +225,26 @@ def _fail_or_schedule_retry(db: Session, service: Service, reason: str) -> None:
         service.status = "failed"
         _mark_queue_completed(db, service)
         notify_queue.enqueue_notification(db, service, "failed", note=reason)
+        _notify_lizo_failure(db, service)
+
+
+def _notify_lizo_failure(db: Session, service: Service) -> None:
+    """
+    Report a terminal send failure to Liso.
+
+    Only for failures that never produced a wamid: with no message on Meta's side
+    there will never be a status receipt, so conversation_engine.handle_status — the
+    usual source of Liso's callbacks — will never fire for this order. Deliberately
+    not called on a scheduled retry, so three attempts do not become three "Failed"
+    callbacks; this sits alongside the notify_queue calls, which are already
+    terminal-only for the same reason.
+    """
+    if not lizo_notify.handles(service):
+        return
+    lizo_notify.emit(
+        db, service, lizo_notify.STATUS_FAILED,
+        reason=lizo_notify.reason_for(failed_reason=service.failed_reason),
+    )
 
 
 def _mark_queue_completed(db: Session, service: Service) -> None:

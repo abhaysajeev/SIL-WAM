@@ -23,3 +23,6 @@ graphify-out/
 
 # Internal audit notes, same as FIXES.md above
 FIXES2.md
+
+# Claude Code local state, including git worktrees (a full checkout of this repo)
+.claude/

@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.lizo import notify
 from app.lizo.schemas import FLOW_MARKER_KEY, FLOW_MARKER_VALUE
 from app.models.conversation import Message
 
@@ -92,21 +93,29 @@ def _confirm(db: Session, service) -> None:
     service.data = data
     flag_modified(service, "data")   # JSONB mutations are invisible to SQLAlchemy otherwise
 
-    logger.info("Lizo: order confirmed service=%s", service.service_id)
-    _post_confirmation(service)
+    logger.info("Liso: order confirmed service=%s", service.service_id)
+    _post_confirmation(db, service)
 
 
-def _post_confirmation(service) -> None:
+def _post_confirmation(db: Session, service) -> None:
     """
-    Placeholder for the callback to Client X (.NET).
+    Tell the client the customer confirmed the order.
 
-    TODO: send this to the CompanyApiKey.notify_url of the key that ingested the
-    service (Service.api_key_id), with the same retry/backoff treatment
-    OutboundNotification rows get. It cannot go through notify_queue as-is:
-    notify_queue suppresses non-terminal events once a service is terminal, and a
-    Lizo service is "completed" from the moment its template sends.
+    Goes through app/lizo/notify.py rather than notify_queue: a Liso service is
+    already "completed" by the time a button can be tapped, and notify_queue drops
+    non-terminal events on a terminal service. The row it writes still rides
+    notify_scheduler's retry and backoff.
     """
+    confirmed_at = (service.data or {}).get(_CONFIRMED_AT_KEY)
+    event_at = None
+    if confirmed_at:
+        try:
+            event_at = datetime.fromisoformat(confirmed_at)
+        except ValueError:
+            pass   # fall back to now, inside notify._timestamp
+
+    notify.emit(db, service, notify.STATUS_CONFIRMED, event_at=event_at)
     logger.info(
-        "Lizo: TODO post confirmation to Client X — service_id=%s reference_id=%s confirmed_at=%s",
-        service.service_id, service.id, (service.data or {}).get(_CONFIRMED_AT_KEY),
+        "Liso: confirmation queued — service_id=%s reference_id=%s confirmed_at=%s",
+        service.service_id, service.id, confirmed_at,
     )

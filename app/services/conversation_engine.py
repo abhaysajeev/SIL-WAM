@@ -30,6 +30,7 @@ from app.core.redis_client import get_redis
 # only the handler module — not app.lizo.api, which would import back into the
 # client ingest API.
 from app.lizo import inbound as lizo_inbound
+from app.lizo import notify as lizo_notify
 from app.models.conversation import (
     Conversation,
     Message,
@@ -287,7 +288,15 @@ def handle_status(db: Session, status: dict, account: WhatsAppAccount) -> None:
             # returned ok=True (Meta accepted the send, then rejected it moments later
             # via this async receipt) — queue_manager's send-time check never sees this
             # case, so the service is still sitting "in_progress" until we react here.
-            if state == "failed" and service.status == "in_progress":
+            #
+            # Liso services are exempt from the "in_progress" test: they carry no
+            # questions, so queue_manager completes them the instant the template send
+            # returns. Without the exemption a Liso order whose image Meta could not
+            # fetch would stay "completed" forever and the client would be told the
+            # order succeeded.
+            if state == "failed" and (
+                service.status == "in_progress" or lizo_notify.handles(service)
+            ):
                 error_codes = {e.get("code") for e in status.get("errors", [])}
                 failed_reason = (
                     "whatsapp_number_invalid"
@@ -304,6 +313,22 @@ def handle_status(db: Session, status: dict, account: WhatsAppAccount) -> None:
             # delivery receipts arriving after "responded"/"completed" already fired
             # are automatically suppressed there, not re-checked here.
             notify_queue.enqueue_notification(db, service, state, message=msg, note=note)
+
+            # Liso reports the full lifecycle instead: it is excluded from
+            # notify_queue (see the guard there) precisely because that monotonic rule
+            # would drop every receipt after the send.
+            if lizo_notify.handles(service):
+                lizo_status = lizo_notify.status_for_meta(state)
+                if lizo_status:
+                    lizo_notify.emit(
+                        db, service, lizo_status,
+                        reason   = lizo_notify.reason_for(
+                            meta_errors   = status.get("errors", []),
+                            failed_reason = note or None,
+                        ) if lizo_status == lizo_notify.STATUS_FAILED else "",
+                        message  = msg,
+                        event_at = ts,
+                    )
 
     try:
         db.commit()
