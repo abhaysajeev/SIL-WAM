@@ -87,6 +87,35 @@ Plus `ImageURL`, which supplies the header image — see below.
 `items` is stored with the order but **is not rendered anywhere** — the itemised list
 now lives inside the header image. Send it or don't; it changes nothing in the message.
 
+### Three more required fields — for approving the order
+
+When the customer taps **Confirm Order** we call your `ApproveOrder` endpoint to approve
+the order in SFA. That call needs three fields, so they are required on every order:
+
+| Field | Type | Used as |
+|---|---|---|
+| `order_no` | string | `RequestData.SearchText` — how SFA finds the order. Already required as `{{3}}`. |
+| `UserID` | string | `RequestData.UserID` and `Credentials.LoginUserID` |
+| `CompanyID` | number | `RequestData.CompanyID` and `Credentials.CompanyID` |
+
+```json
+"data": {
+  "order_no":  "26OS02LC00007",
+  "UserID":    "1024",
+  "CompanyID": 5
+}
+```
+
+Key names are case-sensitive — `UserID` and `CompanyID` exactly, `order_no` in lower
+snake case. A missing or blank one is rejected `422` with status `missing_approval_field`,
+naming every offender at once.
+
+> **Why they are checked at ingest and not at tap time.** These are not read until the
+> customer taps Confirm, which can be days later. Accepting an order without them would
+> mean a perfectly successful `201` followed — silently, with nobody watching — by an
+> order that can never be approved. Better a `422` while your developer is still looking
+> at the request.
+
 ### One rule that will bite you
 
 **Amounts and dates must be strings — and nothing will tell you if they aren't.**
@@ -172,7 +201,7 @@ code. You never branch on the shape of the body.
 |---|---|---|
 | `service_id` | string \| null | Echo of what you sent. `null` only if the body was unreadable (malformed JSON). |
 | `reference_id` | uuid \| null | Our internal id. Store it — support lookups use it. `null` on errors, except `409`. |
-| `status` | string | **The code to branch on.** One of the ten values below, always — never a sentence. |
+| `status` | string | **The code to branch on.** One of the eleven values below, always — never a sentence. |
 | `message` | string \| null | `null` on success. Human-readable detail on failure. Treat its wording as liable to change. |
 
 `in_progress` means **accepted and queued**, not delivered. The WhatsApp send happens
@@ -191,6 +220,7 @@ of the message.
 | `409` | `duplicate_service_id` | `service_id` already used — see below | Yours |
 | `422` | `validation_error` | Malformed payload: bad `customer_mobile`, a reserved key in `data`, a missing required field | Yours |
 | `422` | `missing_parameter` | A required body field was missing or blank | Yours |
+| `422` | `missing_approval_field` | `order_no`, `UserID` or `CompanyID` missing or blank | Yours |
 | `422` | `missing_media_url` | `ImageURL` missing or blank | Yours |
 | `422` | `template_not_configured` | The template is not fully set up on our side | **Ours** |
 | `503` | `whatsapp_not_configured` | No WhatsApp account for your company | **Ours** |
@@ -264,29 +294,71 @@ before confirming.
 The line items appear **only inside the image** — WhatsApp does not allow line breaks
 inside template parameters, so a variable-length list cannot go in the text.
 
-**Tapping Confirm Order** records the confirmation. Only the first tap counts; later
-taps are ignored. The button stays tappable indefinitely.
+**Tapping Confirm Order** records the confirmation, approves the order in SFA through
+your `ApproveOrder` endpoint, and reports `Confirmed` to `SaveWhatsAppOrderStatus` — see
+[What we call back](#what-we-call-back). Only the first tap counts; later taps are
+ignored. The button stays tappable indefinitely.
 
 > There used to be a second **View Order** button that sent the itemised list as a
 > follow-up text message. It has been removed — the image carries that content now.
 
 ---
 
-## Confirmation callback — not built yet
+## What we call back
 
-The POST back to your system on **Confirm Order** is still to be implemented.
-Proposed shape:
+The `201` means accepted and queued, not delivered. Everything that matters happens
+afterwards, and reaches you through two of your own SFA endpoints.
+
+### 1. Delivery status → `SaveWhatsAppOrderStatus`
+
+Sent every time the order's state changes.
 
 ```json
 {
-  "service_id":      "LIZO-ORD-10235",
-  "reference_id":    "a0d58a7f-a18f-4c0d-9af6-5ecea6e03b9d",
-  "status":          "confirmed",
-  "customer_mobile": "918111888008",
-  "confirmed_at":    "2026-08-06T05:22:27Z"
+  "Credentials": { "ServiceName": "SaveWhatsAppOrderStatus", "...": "" },
+  "RequestData": {
+    "ReferenceId": "a0d58a7f-a18f-4c0d-9af6-5ecea6e03b9d",
+    "Status":      "Delivered",
+    "Reason":      "",
+    "Timestamp":   "2026-08-11T05:32:15.761Z"
+  }
 }
 ```
 
-Delivery would retry 8 times with backoff up to an hour, treating any 2xx as
-success. To enable it you need to give us a receiving URL — none is configured on
-the Lizo API key today.
+`ReferenceId` is the `reference_id` from the original `201` — ours, not your
+`service_id`. `Status` is always one of five words and never carries prose:
+
+| `Status` | Means |
+|---|---|
+| `Sent` | Accepted by Meta |
+| `Delivered` | Reached the customer's phone |
+| `Read` | The customer opened it |
+| `Confirmed` | The customer tapped Confirm Order |
+| `Failed` | Could not be delivered — see `Reason` |
+
+`Reason` is empty except on `Failed`, where it is a plain-English cause written for a
+dashboard: `Invalid WhatsApp number`, `Order image could not be downloaded from the
+supplied URL`, `Template parameter mismatch`, or `Message could not be delivered`.
+
+### 2. Order approval → `ApproveOrder`
+
+Sent once, when the customer taps **Confirm Order**, carrying the `order_no`, `UserID`
+and `CompanyID` you supplied in `data`:
+
+```json
+{
+  "Credentials": { "ServiceName": "ApproveOrder", "CompanyID": 5,
+                   "LoginUserID": "1024", "...": "" },
+  "RequestData": { "CompanyID": 5, "UserID": "1024",
+                   "SearchText": "26OS02LC00007", "...": "" }
+}
+```
+
+`SearchText` is the `order_no`. Only the first tap sends this — later taps on the same
+message are ignored, so the same order is never approved twice.
+
+### Delivery guarantees, both endpoints
+
+Any `2xx` is treated as success. Anything else is retried 8 times with backoff up to an
+hour, then given up on and logged our side. Callbacks are not strictly ordered: a
+retried `Sent` can arrive after a `Delivered` that succeeded first time.
