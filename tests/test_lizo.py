@@ -23,6 +23,13 @@ _PARAM_MAPPING = {
 }
 
 
+# The three fields ApproveOrder needs when the customer taps Confirm. Required on
+# every Lizo order since that endpoint was wired up — see
+# TestApprovalFieldsRequiredAtIngest for why they are checked at ingest rather than
+# discovered missing at tap time.
+_APPROVAL_FIELDS = {"UserID": "1024", "CompanyID": 5}
+
+
 def _headers():
     return {"X-API-Key": _KEY}
 
@@ -48,6 +55,7 @@ def _payload(service_id="LIZO-ORD-10234", **overrides):
             "customer_name": "Ravi Kumar",
             "order_no": "10234",
             "order_date": "30/07/2026",
+            **_APPROVAL_FIELDS,
             "items": {
                 "item_1": {"item": "A", "qty": 2},
                 "item_2": {"item": "B", "qty": 1},
@@ -114,19 +122,25 @@ class TestIngest:
 
 class TestDynamicData:
     """
-    The contract is that `data` has no fixed shape. These are the tests that
-    would fail if someone declared Lizo's current order fields on the model.
+    The contract is that `data` has no fixed shape beyond the fields SFA's own
+    endpoints need. These are the tests that would fail if someone declared Lizo's
+    order fields on the model.
+
+    order_no/UserID/CompanyID are the exception and are merged into every case
+    below: they are not part of the shape contract but the arguments to
+    ApproveOrder, required since that call was wired up.
     """
 
     @pytest.mark.parametrize("data", [
-        {},                                                  # empty
+        {},                                                  # nothing but the required fields
         {"anything": "at all"},                              # unrelated keys
         {"a": {"b": {"c": {"d": "deep"}}}},                  # deeply nested
         {"list_field": [1, 2, 3], "num": 42, "flag": True},  # mixed types
-        {"order_no": "1"},                                   # a subset of the usual fields
+        {"customer_name": "Ravi"},                           # a subset of the usual fields
     ], ids=["empty", "unrelated", "deep", "mixed-types", "subset"])
     def test_any_data_shape_is_accepted(self, client, db, data):
         _setup(db)
+        data = {"order_no": "1", **_APPROVAL_FIELDS, **data}
         with patch("app.services.wa_sender.send_template", return_value=_MOCK_SEND):
             r = client.post("/client-api/v1/lizo/orders",
                             json=_payload("D-" + str(abs(hash(str(data))))[:6], data=data),
@@ -606,6 +620,7 @@ class TestLisoImageOrder:
                       {"item": "Liso Pebbles 2 Pcs Colour Sachet", "qty": 1.0}],
             "subtotal": "211.230", "discount": "0.000",
             "gst": "10.561", "net_amount": "222.000",
+            **_APPROVAL_FIELDS,
         }
         data.update(data_overrides)
         return {"service_id": service_id, "template_name": "order_confirm_lizo",
@@ -723,6 +738,7 @@ class TestStatusVocabulary:
         "in_progress", "invalid_api_key", "template_not_found", "duplicate_service_id",
         "validation_error", "missing_parameter", "missing_media_url",
         "template_not_configured", "whatsapp_not_configured", "internal_error",
+        "missing_approval_field",
     }
 
     def test_the_published_set_matches_the_code(self):
@@ -822,4 +838,87 @@ class TestCountryCodeRequired:
                               "data": {"customer_mobile": "7025985366"}},
                         headers=_headers())
         # Accepted by validation — it gets past the mobile check into the pipeline.
+        assert r.status_code != 422, r.text
+
+
+class TestApprovalFieldsRequiredAtIngest:
+    """
+    order_no, UserID and CompanyID are only read when the customer taps Confirm Order,
+    which may be days after this response was returned as a success. A payload missing
+    one of them would look perfectly accepted and then silently fail to approve, with
+    nobody watching. So they are rejected at the door instead.
+    """
+
+    def _post(self, client, data_overrides, service_id="LIZO-APPROVE"):
+        p = _payload(service_id)
+        p["data"].update(data_overrides)
+        return client.post("/client-api/v1/lizo/orders", json=p, headers=_headers())
+
+    @pytest.mark.parametrize("field", ["order_no", "UserID", "CompanyID"])
+    def test_a_missing_field_is_422(self, client, db, field):
+        _setup(db)
+        p = _payload("LIZO-MISSING")
+        del p["data"][field]
+        r = client.post("/client-api/v1/lizo/orders", json=p, headers=_headers())
+        assert r.status_code == 422, r.text
+        assert r.json()["status"] == "missing_approval_field"
+        assert field in r.json()["message"]
+
+    @pytest.mark.parametrize("field", ["order_no", "UserID", "CompanyID"])
+    def test_a_blank_field_is_422(self, client, db, field):
+        _setup(db)
+        r = self._post(client, {field: ""}, service_id=f"LIZO-BLANK-{field}")
+        assert r.status_code == 422, r.text
+        assert r.json()["status"] == "missing_approval_field"
+
+    def test_a_non_numeric_company_id_is_422(self, client, db):
+        _setup(db)
+        r = self._post(client, {"CompanyID": "not-a-number"})
+        assert r.status_code == 422, r.text
+        assert r.json()["status"] == "missing_approval_field"
+
+    def test_every_offending_field_is_named_at_once(self, client, db):
+        """One response the client can fix from, not one 422 per attempt."""
+        _setup(db)
+        p = _payload("LIZO-ALLBAD")
+        for field in ("order_no", "UserID", "CompanyID"):
+            del p["data"][field]
+        msg = client.post("/client-api/v1/lizo/orders", json=p,
+                          headers=_headers()).json()["message"]
+        assert "order_no" in msg and "UserID" in msg and "CompanyID" in msg
+
+    def test_no_service_row_is_created(self, client, db):
+        _setup(db)
+        p = _payload("LIZO-NOROW")
+        del p["data"]["UserID"]
+        client.post("/client-api/v1/lizo/orders", json=p, headers=_headers())
+        assert db.query(Service).filter(Service.service_id == "LIZO-NOROW").first() is None
+
+    def test_checked_even_when_the_template_is_missing(self, client, db):
+        """
+        Runs before the template lookup, so an incomplete payload is reported even
+        when the template name is the other thing that is wrong.
+        """
+        _setup(db)
+        p = _payload("LIZO-NOTPL", template_name="does-not-exist")
+        del p["data"]["CompanyID"]
+        r = client.post("/client-api/v1/lizo/orders", json=p, headers=_headers())
+        assert r.status_code == 422, r.text
+        assert r.json()["status"] == "missing_approval_field"
+
+    def test_a_valid_payload_still_succeeds(self, client, db):
+        _setup(db)
+        with patch("app.services.wa_sender.send_template", return_value=_MOCK_SEND):
+            r = client.post("/client-api/v1/lizo/orders", json=_payload("LIZO-OK-APPROVE"),
+                            headers=_headers())
+        assert r.status_code == 201, r.text
+
+    def test_shirin_is_unaffected(self, client, db):
+        """The requirement is Liso's alone — /client-api/v1/services never checks it."""
+        _setup(db)
+        r = client.post("/client-api/v1/services",
+                        json={"service_id": "SFA-NO-APPROVAL-FIELDS",
+                              "template_name": "order_confirm_lizo",
+                              "data": {"customer_mobile": "919876543210"}},
+                        headers=_headers())
         assert r.status_code != 422, r.text

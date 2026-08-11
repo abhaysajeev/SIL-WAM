@@ -1,7 +1,7 @@
 """
 Handles the template button on Liso's order message.
 
-    Confirm Order → record the confirmation and notify the client (placeholder)
+    Confirm Order → record the confirmation, approve the order in SFA, notify the client
 
 conversation_engine.handle_inbound delegates here for Liso services only, via
 handles(). Every other client — including the live SFA/Shirin flow — fails that
@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.lizo import notify
+from app.lizo import approve, notify
 from app.lizo.schemas import FLOW_MARKER_KEY, FLOW_MARKER_VALUE
 from app.models.conversation import Message
 
@@ -99,13 +99,22 @@ def _confirm(db: Session, service) -> None:
 
 def _post_confirmation(db: Session, service) -> None:
     """
-    Tell the client the customer confirmed the order.
+    Hand the confirmation to the client — two separate calls to two SFA endpoints.
 
-    Goes through app/lizo/notify.py rather than notify_queue: a Liso service is
+      approve.emit   POST /api/Sfa/ApproveOrder            — approves the order
+      notify.emit    POST /api/Sfa/SaveWhatsAppOrderStatus — reports "Confirmed"
+
+    The approval goes first: it is the action, the status is the report of it.
+    Neither blocks the webhook — both write OutboundNotification rows that
+    notify_scheduler delivers, with retries, moments later.
+
+    Status goes through app/lizo/notify.py rather than notify_queue: a Liso service is
     already "completed" by the time a button can be tapped, and notify_queue drops
     non-terminal events on a terminal service. The row it writes still rides
     notify_scheduler's retry and backoff.
     """
+    approve.emit(db, service)
+
     confirmed_at = (service.data or {}).get(_CONFIRMED_AT_KEY)
     event_at = None
     if confirmed_at:

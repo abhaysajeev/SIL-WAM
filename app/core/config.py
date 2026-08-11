@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     ERPNEXT_PDF_METHOD: str = "sil.services.print_download.get_invoice_pdf"
     # Optional Redis for wamid dedup fast path — leave empty to rely on DB unique index only
     REDIS_URL: str = ""
+    # Lizo → SFA order approval, fired when the customer taps Confirm Order. A single
+    # global URL rather than a per-key column: every Lizo company points at the same
+    # SFA host, and the status callback's own URL already lives on CompanyApiKey.
+    # Empty disables the call — the hook stays inert, like a missing notify_url.
+    LIZO_APPROVE_ORDER_URL: str = ""
     # Set True in production (HTTPS) so the session cookie gets the Secure flag
     HTTPS_ONLY: bool = False
 

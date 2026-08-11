@@ -98,6 +98,14 @@ def _send_one_pending(db) -> bool:
         if 200 <= resp.status_code < 300:
             notif.status = "delivered"
             notif.delivered_at = now
+            # A 2xx is treated as success, but some endpoints answer 200 with a body
+            # that means "rejected" — SFA's do. Logging the body is what makes that
+            # visible; without it a refused order approval looks identical to an
+            # accepted one. Truncated to keep the log readable.
+            logger.info(
+                "Notification %s delivered → %s: HTTP %s %s",
+                notif.id, notif.notify_url, resp.status_code, resp.text[:500],
+            )
         else:
             _record_failure(notif, f"HTTP {resp.status_code}: {resp.text[:500]}")
     except Exception as exc:

@@ -18,8 +18,10 @@ cannot drift from what actually happens.
 """
 from app.api.client_services_api import _get_nested
 from app.core import template_body
+from app.lizo import approve
 from app.lizo.responses import (
-    STATUS_MISSING_MEDIA_URL, STATUS_MISSING_PARAMETER, STATUS_TEMPLATE_NOT_CONFIGURED,
+    STATUS_MISSING_APPROVAL_FIELD, STATUS_MISSING_MEDIA_URL, STATUS_MISSING_PARAMETER,
+    STATUS_TEMPLATE_NOT_CONFIGURED,
 )
 
 
@@ -41,6 +43,29 @@ def check_resolvable(payload_data: dict, service_id: str, template) -> tuple[str
     if problem:
         return problem
     return _check_header_media(ctx, template)
+
+
+def check_approval_fields(payload_data: dict) -> tuple[str, str] | None:
+    """
+    Return (status_code, message) if the order could never be approved, else None.
+
+    Confirming an order calls SFA's ApproveOrder, which needs order_no, UserID and
+    CompanyID out of `data`. Those are only read when the customer taps the button —
+    potentially days later — so a payload missing one of them looks completely
+    successful at ingest and then silently fails to approve, with nobody watching.
+
+    Checking here turns that into a 422 the client can act on immediately, for the
+    same reason _check_body_params exists. The rule itself lives in approve.extract
+    so this check and the tap-time one can never disagree.
+    """
+    _fields, problems = approve.extract(payload_data)
+    if problems:
+        return (STATUS_MISSING_APPROVAL_FIELD, (
+            "Order approval needs every one of "
+            f"'{approve.ORDER_NO_KEY}', '{approve.USER_ID_KEY}', '{approve.COMPANY_ID_KEY}' "
+            f"inside data, but {', '.join(problems)}."
+        ))
+    return None
 
 
 def _check_body_params(ctx: dict, template) -> tuple[str, str] | None:

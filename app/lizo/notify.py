@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from app.lizo import sfa
 from app.lizo.schemas import FLOW_MARKER_KEY, FLOW_MARKER_VALUE
 from app.models.api_key import CompanyApiKey
 from app.models.outbound_notification import OutboundNotification
@@ -89,30 +90,12 @@ _REASON_BY_FAILED_REASON = {
     "send_error":              REASON_GENERIC,
 }
 
-# Fixed block SFA expects on every request. Only ServiceName carries meaning to
-# them; the rest are their app's device/session fields, irrelevant server-to-server.
-# Rebuilt per call rather than shared, so a caller cannot mutate it for everyone.
+# The fixed block SFA expects on every request lives in app/lizo/sfa.py, shared with
+# the ApproveOrder call. This endpoint sends no CompanyID or LoginUserID — a status
+# report is not attributed to a user — so both keep their defaults and the payload is
+# exactly what it was before the block moved.
 def _credentials() -> dict:
-    return {
-        "CheckSum": 0,
-        "Operation": 0,
-        "Latitude": "",
-        "Longitude": "",
-        "Altitude": "",
-        "DeviceID": "",
-        "IMEI": "",
-        "LoginUserID": "",
-        "ServiceName": "SaveWhatsAppOrderStatus",
-        "TokenID": "",
-        "BluetoothID": "",
-        "IsZipped": 0,
-        "CompanyID": 0,
-        "SendStatus": 0,
-        "ApkType": "",
-        "DeviceNotificationID": "",
-        "HierarchyTypeID": "",
-        "HierarchyID": "",
-    }
+    return sfa.credentials(sfa.SERVICE_SAVE_STATUS)
 
 
 def handles(service) -> bool:

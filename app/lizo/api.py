@@ -24,7 +24,7 @@ from app.lizo.responses import (
 )
 from app.lizo.route import LizoRoute
 from app.lizo.schemas import LizoOrderRequest
-from app.lizo.validation import check_resolvable
+from app.lizo.validation import check_approval_fields, check_resolvable
 from app.models.conversation import Service
 from app.models.whatsapp import WhatsAppTemplate
 
@@ -66,6 +66,20 @@ def ingest_lizo_order(
             reference_id = existing.id,
         )
 
+    # Build the reshaped envelope once — checked against *that*, not payload.data,
+    # because to_ingest_request injects customer_mobile, so a mapping pointing at it
+    # would otherwise look unresolvable here and resolve fine at send time.
+    ingest_payload = payload.to_ingest_request()
+
+    # The fields Confirm Order will need to approve the order in SFA. Checked before
+    # the template lookup so a payload missing them is rejected even when the template
+    # is the other thing that is wrong — and checked at all because these are not read
+    # until the customer taps, long after this response was accepted as a success.
+    problem = check_approval_fields(ingest_payload.data)
+    if problem:
+        status, message = problem
+        return failure(422, message, status=status, service_id=payload.service_id)
+
     # Meta refuses a template send with any blank parameter, and does so on the
     # background scheduler long after the client has its response. Check it here so
     # a missing field is a 422 the client can act on rather than three silent retry
@@ -77,11 +91,6 @@ def ingest_lizo_order(
         WhatsAppTemplate.company_id == company.id,
         WhatsAppTemplate.status     == "APPROVED",
     ).first()
-
-    # Build the reshaped envelope once and check against *that*, not payload.data —
-    # to_ingest_request injects customer_mobile, so a mapping pointing at it would
-    # otherwise look unresolvable here and resolve fine at send time.
-    ingest_payload = payload.to_ingest_request()
 
     if template:
         problem = check_resolvable(ingest_payload.data, payload.service_id, template)
