@@ -53,20 +53,7 @@
   .bl-empty { text-align:center;padding:52px 20px;color:var(--subtle); }
   .bl-empty i { font-size:26px;display:block;margin-bottom:10px;opacity:.5; }
 
-  /* Pagination — styles live here for now; move to docview.css when a second
-     page adopts layouts/_pagination.html. */
-  .pg-bar { display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 20px;border-top:1px solid var(--line);flex-wrap:wrap; }
-  .pg-count { font-family:var(--f-mono);font-size:11px;color:var(--subtle); }
-  .pg-links { display:flex;align-items:center;gap:4px; }
-  .pg-link {
-    min-width:28px;height:28px;padding:0 7px;display:inline-flex;align-items:center;justify-content:center;
-    border:1px solid var(--line-2);background:var(--bg-card);color:var(--ink-2);
-    font-size:12px;text-decoration:none;transition:all .15s;
-  }
-  .pg-link:hover { background:var(--bg);border-color:var(--ink-2); }
-  .pg-link.current { background:var(--green);color:#fff;border-color:var(--green);font-weight:600; }
-  .pg-link.disabled { opacity:.4;pointer-events:none; }
-  .pg-gap { padding:0 4px;color:var(--subtle);font-size:12px; }
+  /* Pager styles: .pg-* in static/css/docview.css */
 
   .bl-modal-backdrop {
     position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;

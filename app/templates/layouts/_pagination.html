@@ -1,36 +1,38 @@
 {#
   Reusable pager. Expects `page` (app.core.pagination.Page) and `page_url`
-  (the helper of the same name) in the template context.
+  (the helper of the same name) in the template context. Styles: .pg-* in docview.css.
 
   Renders nothing when everything fits on one page — a pager under a 3-row
   table is noise.
 #}
 {% if page.pages > 1 %}
-<div class="pg-bar">
+<nav class="pg-bar" aria-label="Pagination">
   <div class="pg-count">
-    Showing {{ page.first_index }}–{{ page.last_index }} of {{ page.total }}
+    {{ page.first_index }}–{{ page.last_index }} of {{ page.total }}
   </div>
 
   <div class="pg-links">
     <a class="pg-link {% if not page.has_prev %}disabled{% endif %}"
-       {% if page.has_prev %}href="{{ page_url(request, page.prev_page) }}"{% endif %}>
-      <i class="ti ti-chevron-left"></i>
+       {% if page.has_prev %}href="{{ page_url(request, page.prev_page) }}"{% else %}aria-disabled="true"{% endif %}
+       aria-label="Previous page">
+      <i class="ti ti-chevron-left" aria-hidden="true"></i>
     </a>
 
     {% for n in page.window %}
       {% if n == 0 %}
-        <span class="pg-gap">…</span>
+        <span class="pg-gap" aria-hidden="true">…</span>
       {% elif n == page.page %}
-        <span class="pg-link current">{{ n }}</span>
+        <span class="pg-link current" aria-current="page">{{ n }}</span>
       {% else %}
-        <a class="pg-link" href="{{ page_url(request, n) }}">{{ n }}</a>
+        <a class="pg-link" href="{{ page_url(request, n) }}" aria-label="Page {{ n }}">{{ n }}</a>
       {% endif %}
     {% endfor %}
 
     <a class="pg-link {% if not page.has_next %}disabled{% endif %}"
-       {% if page.has_next %}href="{{ page_url(request, page.next_page) }}"{% endif %}>
-      <i class="ti ti-chevron-right"></i>
+       {% if page.has_next %}href="{{ page_url(request, page.next_page) }}"{% else %}aria-disabled="true"{% endif %}
+       aria-label="Next page">
+      <i class="ti ti-chevron-right" aria-hidden="true"></i>
     </a>
   </div>
-</div>
+</nav>
 {% endif %}

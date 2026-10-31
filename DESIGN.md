@@ -1,443 +1,481 @@
 # DESIGN.md — SIL WhatsApp Manager (SIL-WAM)
 
 > The design source of truth for this project. Humans and AI agents read it before building UI.
-> Every value here is **extracted from the existing code**, with the file it lives in. Where the code
-> is inconsistent, the inconsistency is listed under Open Questions instead of silently picking one.
-> Format: Google Stitch DESIGN.md sections, plus Components inventory and Verification.
+> `CLAUDE.md` wins over this file wherever they disagree (permissions, `build_templates()`, `ts()`).
 >
-> Extracted 2026-10-31 from the live working copy (including uncommitted template changes).
-> Paths are relative to the repo root. `CLAUDE.md` wins over this file wherever they disagree.
+> **Status (2026-10-31): redesign phase 1 of 3 is in.** Phase 1 replaced the design direction,
+> the tokens, the shared components, the app shell, the generic list/form layouts and the sign-in
+> page. Feature screens still carry page-local CSS from the old system; they keep working through
+> the legacy aliases listed in §2 and §4 and are migrated in phases 2–3 (§12).
+> Paths are relative to the repo root.
 
-## 1. Visual Theme & Atmosphere
+## 1. Design direction
 
-An internal admin panel for an ISV that hosts WhatsApp Business messaging for many client
-companies. Two kinds of user: ISV admins (super_admin / admin) who see every company, and
-company-scoped users who see only their own. People use it for operations: setting up companies
-and their WhatsApp connection, managing users and roles, building phonebooks, sending broadcast
-campaigns, reading conversations, and checking error logs and reports.
+SIL-WAM is a tool people keep open all day: ISV admins set up companies and their WhatsApp
+numbers, manage users and roles, send broadcasts, read conversations and chase failures. It should
+read like a **calm, dense, production SaaS console** in the family of Linear, Stripe's dashboard and
+Intercom — quiet chrome, the data at full contrast, one obvious action per screen, and nothing on
+the page that does not carry information. Personality comes from precision (alignment, real
+numbers, honest empty states, good copy), not from decoration.
 
-It should feel like a **dense, calm, precise operations console**: a white surface on a pale
-green-grey page, a WhatsApp-adjacent brand green used as an accent, **square corners
-everywhere**, hairline borders with very soft shadows, small uppercase monospace labels for
-metadata, and short entrance animations. Clarity and scannability come before decoration.
+The previous look leaned on devices that read as generated: tiny uppercase monospace labels on
+every heading and table header, a gradient logo bar, a tinted icon tile on every KPI, a green
+inset bar and green tint on every hovered row, staggered fade-in on every row and card, and lifts on
+hover. All of those are gone. Structure now comes from one tight radius, hairline borders on white
+surfaces over a near-white ground, sentence-case labels, and spacing on a 4px scale. Motion is
+reserved for things that appear (menus, dialogs, toasts) and respects `prefers-reduced-motion`.
 
-## 2. Color Palette & Roles
+The brand stays green — this is a WhatsApp messaging product — but the green had to change. The old
+`#0FAF58` gave white text only 2.9:1. The primary is now **`#0B7340`** (white text 5.9:1), used for
+the one primary button per screen, the active nav icon, focus rings, switched-on toggles, checkboxes
+and success states. The bright green survives only as `--brand-bright` for the logo and non-text
+decoration. Everything else is neutral: the accent is never used as a large surface or on chrome.
+**One typeface (Inter)**; JetBrains Mono only for IDs, usernames, keys and codes. **Radius is tight
+and consistent**: 4px chips, 6px controls, 8px surfaces. Light theme only.
 
-All tokens are defined once in `static/css/theme.css` (`:root`). Templates should use only
-`var(--token)`.
+## 2. Colour
 
-| Role | Token | Value | Notes / where used |
+All tokens live once in `static/css/theme.css` (`:root`). Templates and page CSS use only
+`var(--token)`; no hex in templates. Every text token reaches **4.5:1 on white and on `--bg`**.
+
+| Role | Token | Value | Contrast / use |
 |---|---|---|---|
-| Brand / primary action | `--green` | `#0FAF58` | `.btn`, `.dv-btn-primary`, active nav, focus border, links in breadcrumbs |
-| Primary hover / dark text on green tint | `--green-dark` | `#089A4D` | button hover, green badge text |
-| Light green (gradient start) | `--green-light` / `--g-start` | `#17B85C` | gradients only |
-| Gradient mid | `--g-mid` | `#0FAF58` | |
-| Gradients | `--green-gradient`, `--green-gradient-diagonal`, `--green-gradient-vertical` | linear-gradient `#17B85C → #089A4D` | sidebar logo bar (`base.css .sidebar-logo`), login brand panel |
-| Green tint (selected / hover surface) | `--green-tint` | `#E6F9EE` | active nav row, table row hover, focused input fill, bulk-select bar |
-| Page background | `--bg` | `#F0F4F0` | `body`, table header row, ghost hover |
-| Surface | `--bg-card` | `#FFFFFF` | cards, sidebar, topbar, modals |
-| Border (hairline) | `--line` | `rgba(0,0,0,.09)` | card borders, row dividers |
-| Border (strong) | `--line-2` | `rgba(0,0,0,.15)` | inputs, outline buttons, dropdowns |
-| Text: strongest | `--black` | `#0A0A0A` | page titles, modal titles, bold cells |
-| Text: body | `--ink` | `#111827` | default body text |
-| Text: secondary | `--ink-2` | `#374151` | table cells, ghost button text |
-| Text: muted | `--muted` | `#6B7280` | table headers, stat labels |
-| Text: subtle | `--subtle` | `#9CA3AF` | placeholders, nav section labels, counts, empty states |
-| Danger | `--red` / `--red-dark` / `--red-tint` | `#DC2626` / `#B91C1C` / `#FEF2F2` | destructive buttons, failed/inactive badges, error banners |
-| Warning-ish | `--orange` / `--orange-tint` | `#f97316` / `#fff7ed` | `.stat-icon.orange`, `.badge.orange` (text is hardcoded `#9a3412`) |
-| Info | `--blue` / `--blue-tint` | `#3b82f6` / `#eff6ff` | in-progress / sending / role badges (text is hardcoded `#1d4ed8`) |
-| Focus ring | `--ring` | `0 0 0 3px rgba(15,175,88,.15)` | every `:focus-visible` / input focus |
+| Primary fill, primary text-link | `--primary` | `#0B7340` | white on it 5.9:1 |
+| Primary hover / active | `--primary-hover` / `--primary-active` | `#095F35` / `#084F2C` | |
+| Selected / success surface | `--primary-tint` / `--primary-tint-2` (border) | `#E8F5EE` / `#D3EDDF` | |
+| Text on primary tint | `--primary-ink` | `#085C33` | 7.1:1 on tint |
+| Logo / decoration only | `--brand-bright` | `#0FAF58` | never text, never under text |
+| Page ground, sidebar, topbar | `--bg` | `#F6F7F7` | |
+| Surfaces (cards, tables, modals) | `--bg-card` | `#FFFFFF` | |
+| Inset well, read-only field, modal footer | `--bg-subtle` | `#FAFBFB` | |
+| Hover / active-nav | `--bg-hover` / `--bg-active` | `#F0F2F2` / `#E7EAEA` | |
+| Surface edge | `--border` | `#E3E6E6` | |
+| Row rule, inner divider | `--rule` | `#ECEEEE` | |
+| Control border (input, secondary button) | `--control` / `--control-hover` | `#D0D5D5` / `#B4BBBB` | see Open Question 18 |
+| Text: primary | `--text` | `#141717` | 18:1 |
+| Text: body / secondary cells | `--text-2` | `#3D4444` | 10:1 |
+| Text: labels, meta, table headers | `--text-3` | `#5C6363` | 6.1:1 |
+| Text: placeholder, hint, count | `--text-4` | `#646B6B` | 5.4:1 |
+| Decorative icon (not text) | `--icon` | `#7A8282` | |
+| Danger | `--danger` / `-hover` / `-tint` / `-border` / `-ink` | `#B42318` / `#912018` / `#FEF3F2` / `#FECDCA` / `#912018` | 6.6:1 |
+| Warning (new) | `--warning` / `-tint` / `-border` / `-ink` | `#DC6803` / `#FFF8EB` / `#FEDF89` / `#93370D` | ink 7:1 on tint |
+| Info | `--info` / `-tint` / `-border` / `-ink` | `#2E6BD6` / `#EFF5FF` / `#C7DAFE` / `#1849A9` | ink 7.5:1 on tint |
+| Success | `--success*` | aliases of the primary family | |
+| Neutral chip | `--neutral-tint` / `-border` / `-ink` | `#EEF0F0` / `#E0E3E3` / `#3D4444` | |
 
-**Status colour mapping in use** (`layouts/list_view.html`, `broadcast/campaign_list.html`):
-green = active / completed / ready / dispatched / settled; blue = in progress / sending / role tag;
-gray = waiting / expired / draft / screening / "No role"; red = inactive / failed / cancelled.
+**Status mapping** (badges, `layouts/list_view.html`): success = active / completed / ready /
+dispatched / settled; info = in progress / sending; neutral = inactive / waiting / expired / draft /
+role names; warning = needs attention but not failed; danger = failed / cancelled / rejected only.
+"Inactive" is neutral, not red: red is a signal, not a texture.
 
 **Rules**
-- Green is the brand **and** the "success" colour. Use it for the one primary action and for
-  positive states. Large green fills are limited to the sidebar logo bar and the login brand panel.
-- Red is for destructive actions and failed states only, never decoration.
-- WhatsApp's own colours (`#25D366`, chat wallpaper `#E5DDD5`/`#ECE5DD`, `#8696A0`) appear only
-  inside WhatsApp message previews (`static/css/templates.css`, `broadcast/campaign_new.html`,
-  `companies/detail.html`), where they mimic the WhatsApp client. Do not use them elsewhere.
-- Light theme only. `base.css` sets `color-scheme: light`; there are no dark-mode rules anywhere.
+- One filled primary button per screen. Destructive actions use the danger styles, never primary.
+- The accent goes on actions and on data, never on chrome: the active nav row is a neutral grey
+  pill (only its icon is green), tabs underline in green but their label is ink, hover is grey.
+- WhatsApp's own colours (`#25D366`, wallpaper `#E5DDD5`/`#ECE5DD`) only inside WhatsApp message
+  previews (`static/css/templates.css`, `broadcast/campaign_new.html`, `companies/detail.html`).
+- Light theme only. No dark-mode rules.
 
-## 3. Typography Rules
+**Legacy aliases** (defined at the bottom of `theme.css`, for pages not yet migrated — never in new
+code): `--green`→`--primary`, `--green-dark`→`--primary-hover`, `--green-tint`→`--primary-tint`,
+`--green-gradient*`→ a flat primary fill, `--line`→`--border`, `--line-2`→`--control`,
+`--black`/`--ink`→`--text`, `--ink-2`→`--text-2`, `--muted`→`--text-3`, `--subtle`→`--text-4`,
+`--red*`→`--danger*`, `--orange*`→`--warning*`, `--blue*`→`--info*`, `--f-disp`→`--f-ui`,
+`--shadow-card`/`--shadow-lift`/`--shadow-green`→`none`, and the five that were used but never
+defined: `--text-muted`, `--bg-secondary`, `--surface`, `--accent` (plus `--border`, `--text`,
+which are now real tokens). Because `--green` now points at the accessible primary, every legacy
+green button and link became AA-compliant without touching its page.
 
-Loaded from Google Fonts in `app/templates/base.html` (and again, with slightly different weights,
-in `login.html`). Tokens in `theme.css`:
+## 3. Typography
 
-| Token | Family | Role |
+Loaded from Google Fonts in `app/templates/base.html` (Inter 400/500/600/700, JetBrains Mono
+400/500) and `login.html` (Inter only). Space Grotesk is retired.
+
+| Token | Family | Use |
 |---|---|---|
-| `--f-ui` | Inter (300–700) | all body text, inputs, buttons. `base.css` turns on `cv05`, `cv11` |
-| `--f-disp` | Space Grotesk (400–700) | page titles, modal titles, stat numbers, brand name |
-| `--f-mono` | JetBrains Mono (400–600) | uppercase metadata labels, table headers, badges, IDs/codes, counts |
+| `--f-ui` | Inter | everything |
+| `--f-mono` | JetBrains Mono | IDs, usernames, API keys, codes, E.164 numbers in code contexts. Never for labels or headers. |
 
-Base: `body` 14px / 1.5, `--ink`, antialiased (`base.css`). Scales up to 14.5px at ≥1920px and 15px at ≥2560px.
+**Scale** — six sizes, each with a job:
 
-| Element | Class | Spec | File |
-|---|---|---|---|
-| Page title | `.dv-title` | Space Grotesk 22px / 700 / -.03em / `--black` | `docview.css` |
-| Dashboard heading | `.dash-welcome-title` | Space Grotesk 22px / 700 | `dashboard/index.html` |
-| Topbar title | `.page-title` | Space Grotesk 15px / 600 | `base.css` |
-| Modal / form-doc title | `.modal-title`, `.dv-form-doc-title` | Space Grotesk 15px / 700 | `base.css`, `docview.css` |
-| Card title | `.card-title` | Inter 13.5px / 600, green icon | `base.css` |
-| Stat number | `.stat-value` / `.stat-info h3` | Space Grotesk 28–30px / 700, tabular-nums | `base.css`, `dashboard/index.html` |
-| Body / table cell | `.dv-table td` | Inter 13px, `--ink-2`, tabular-nums | `docview.css` |
-| Form label | `.dv-label` | Inter 11px / 600 | `docview.css` |
-| Hint / subtitle | `.dv-hint`, `.dv-subtitle` | 11–12px, `--subtle` (subtitle is mono) | `docview.css` |
-| Metadata label (eyebrow) | `.nav-label`, `.dv-section-label`, `.info-key`, `.stat-label`, table `th` | JetBrains Mono 9–9.5px, uppercase, letter-spacing .14–.26em | `base.css`, `docview.css` |
-| Badge | `.dv-badge`, `.badge` | JetBrains Mono 9px, uppercase, .12em | `docview.css`, `base.css` |
-| Code / ID cell | `.cell-mono` | JetBrains Mono 12px | `docview.css` |
+| Token | Size | Role |
+|---|---|---|
+| `--fs-xs` | 12px | badges, table headers, meta, hints, counts |
+| `--fs-sm` | 13px | table cells, labels, buttons, breadcrumbs, menu items |
+| `--fs-base` | 14px | body, inputs, nav items, card titles |
+| `--fs-md` | 16px | modal title, toolbar title on legacy pages |
+| `--fs-lg` | 20px | KPI values on phones, page title on phones |
+| `--fs-xl` | 24px | page title (h1), KPI values |
 
-Numbers in tables and stats use `font-variant-numeric: tabular-nums`.
+Weights: 400 body, 500 labels/buttons/nav, 600 titles and the primary cell. 700 is not used by
+shared components. Letter-spacing 0 except titles (−0.015em). **Sentence case everywhere**; no
+uppercase tracked labels. `font-variant-numeric: tabular-nums` on table cells and KPI values
+(`.num` utility for anything else). Nothing below 12px.
 
-## 4. Component Stylings
+## 4. Components
 
-All shared components live in `static/css/base.css` (global, loaded by `base.html`) and
-`static/css/docview.css` (list/form primitives, also loaded by `base.html`).
+`static/css/base.css` holds the reset, the shell and the global primitives; `static/css/docview.css`
+holds page patterns. Both are loaded once by `base.html` — pages must not link them again.
 
-**Buttons** — square, 12.5px / 600, padding 9px 16px, lift 1px on hover.
-- Primary: `.dv-btn.dv-btn-primary` (docview pages) or `.btn` (base) — green fill. One per screen.
-- Secondary: `.dv-btn.dv-btn-ghost` (= `.dv-btn-secondary`) or `.btn.btn-outline` — white, `--line-2` border.
-- Destructive: `.dv-btn.dv-btn-danger` — transparent, red text, red-tint hover.
-- Sizes: `.dv-btn-xs` (5px 10px, 11.5px), `.btn-sm` (7px 12px, 12px).
-- Loading: `.dv-btn` containing `.btn-label` + `.btn-spinner`; add `.loading`. Example: `layouts/form_view.html` Save.
-- Icon-only: a `.dv-btn-xs` with one `<i>` and a `title` (form_view Delete).
+**Buttons** — `.dv-btn` + one variant (+ optional size):
+- `.dv-btn-primary` — filled green. One per screen.
+- `.dv-btn-secondary` — white, `--control` border. Cancel, Back, secondary actions.
+- `.dv-btn-tertiary` — text only, grey hover. Low-weight actions ("Clear selection", "Change").
+- `.dv-btn-danger` — white with red text and border: a destructive *trigger*.
+- `.dv-btn-danger-solid` — red fill: the final confirm of a destructive action.
+- Sizes: default 34px, `.dv-btn-sm` 28px, `.dv-btn-lg` 40px; `.dv-btn-icon` makes it square
+  (give it `aria-label`); `.dv-btn-block` full width. On touch screens buttons grow to ≥40px.
+- Loading: put `<span class="btn-label">…</span><span class="btn-spinner"></span>` inside and toggle
+  `.loading` (example: Save in `layouts/form_view.html`).
+- Legacy names that still render correctly: `.dv-btn-ghost` (= secondary), `.dv-btn-xs` (= sm),
+  `.btn` (= primary), `.btn.btn-outline` (= secondary), `.btn-sm`.
 
-**Inputs** — `.dv-input`, `.dv-select` (`docview.css`): 9px 12px, `--line-2` border, radius 0,
-transparent fill; on focus green border + `--green-tint` fill + `--ring`. Modifiers: `.mono`,
-`.error-border`, `[readonly]` (gray, not-allowed). Wrap each in `.dv-field` with a `.dv-label`
-(`<span class="req">*</span>` for required, `.dv-label-opt` for optional) and `.dv-hint`.
-Toggle switch: `.dv-toggle-wrap > label.dv-toggle > input + .dv-toggle-track` (36×20, the one
-rounded control). Search box: `.dv-search > .dv-search-icon + .dv-search-input`.
-Static (create-only) value on edit: `.dv-field-static`.
+**Form controls** (`base.css`, `docview.css`)
+- `.dv-field` (column, 6px gap) > `label.dv-label` (13/500, `for=` the input) + control + `.dv-hint`.
+  Required: `<span class="req" aria-hidden="true">*</span><span class="sr-only">(required)</span>`.
+- `.dv-input`, `.dv-select` (custom chevron), `textarea.dv-input`: 34px, 6px radius, white,
+  `--control` border, green border + `--ring` on focus, `aria-invalid="true"` or `.error-border`
+  for errors, `[readonly]`/`:disabled` render on `--bg-subtle`. 40px and 16px text on phones.
+- `.dv-toggle-wrap > label.dv-toggle > input + .dv-toggle-track` + `.dv-toggle-label` — 34×20 switch.
+- Checkboxes: native, `accent-color: var(--primary)`, 16px (`.dv-check`, `.dv-row-check`).
+- `.dv-field-static` — a create-only value shown on an existing record.
+- `.dv-secret-wrap` / `.dv-secret-saved` — masked secret with a Change button.
 
-**Tables** — `.dv-list-card > .dv-list-meta + table.dv-table` (`docview.css`): mono uppercase
-headers on `--bg`, 12px 20px cells, whole row clickable (`cursor:pointer`, green-tint hover with a
-2px green inset on the first cell), staggered `rowIn` entrance, trailing `.dv-row-open` chevron.
-A second, older table style `.table-wrap > table.table` exists in `base.css` with the same look.
+**Badges** — `.dv-badge` + `-success | -danger | -warning | -info | -neutral | -outline`, optional
+`.dv-badge-dot` (6px dot in the text colour). 22px, 4px radius, 12/500, sentence case, pale tint +
+dark ink of the same hue. One status mark per row. Legacy: `-green/-red/-blue/-gray/-amber` and
+`.badge.green|red|blue|gray|orange`.
 
-**Cards** — `.card > .card-header(.card-title) + .card-body` (`base.css`); `.dv-section >
-.dv-section-header(.dv-section-label) + .dv-section-body` for form sections (2-column grid,
-gap 18px 24px). Stat tiles: `.stats-grid > .stat-card > .stat-info + .stat-icon.{green|blue|orange|red}`.
-Accent card: `.welcome-card` (3px green left border).
+**Cards** — `.card` (white, `--border`, 8px radius, no shadow) > `.card-header` (`.card-title`,
+`.card-sub`) + `.card-body` (`.p-0` for a flush table) + optional `.card-footer`. KPI tiles:
+`.stats-grid > .stat-card > .stat-info(h3 value + p label) + .stat-icon` — label under value,
+icon plain grey, no tinted tile, no hover lift.
 
-**Badges / status chips** — `.dv-badge.dv-badge-{green|red|blue|gray}` (`docview.css`) is the
-default; `.badge.{green|orange|red|blue|gray}` in `base.css` is the same design with an orange
-variant. Many pages define their own (see Open Questions).
+**Tables** — `.dv-table-wrap > table.dv-table` (`.table-wrap > table.table` is the legacy twin).
+12px grey sentence-case headers on the surface (no band), 44px rows, `--rule` row dividers, grey
+hover, `td.num`/`th.num` right-aligned with tabular figures. Inside `.dv-list-card`, cells don't
+wrap and the wrapper scrolls sideways — the page never does. Cell helpers: `.cell-bold`,
+`.cell-mono`, `.cell-muted` (missing value `—`).
+- **Clickable rows**: the row keeps its `onclick` for the pointer, and the record's name cell is a
+  real link (`a.dv-row-link`) — that is the keyboard path. The trailing `.dv-row-open` chevron is
+  `aria-hidden` and `tabindex="-1"`.
 
-**Modals** — `.modal-backdrop.open > .modal > .modal-header(.modal-title, .modal-close) +
-.modal-body + .modal-footer` (`base.css`), max-width 440px, `--shadow-pop`, scale-in. Reference:
-Change Password modal in `base.html`. Close on backdrop click and on the × / Cancel button.
+**Page header** — `.dv-page-header` > (`h1.dv-title` 24/600 + `p.dv-subtitle` — the count with its
+noun, "12 users") + `.dv-actions`.
 
-**Inline feedback (instead of toasts)** — there is **no toast component**. Feedback is:
-`.dv-inline-error` / `.dv-inline-success` (inside modals), `.dv-form-error.visible` (form banner),
-`.dv-save-status.success|error` (form toolbar), and `.dv-delete-confirm.visible` (inline
-"Delete this X? Yes, delete / Cancel" in place of a dialog). Several pages still use `alert()` /
-`confirm()` (see Open Questions).
+**Breadcrumb** — the topbar is the breadcrumb (`base.html` block `topbar_crumbs`): on a list it
+shows "Group / Page"; a page with a parent overrides the block with a link back
+("Users / rahul.menon", see `form_view.html`). `.dv-breadcrumb` remains for in-page use on legacy
+pages.
 
-**Empty states** — `.dv-empty > .dv-empty-icon + .dv-empty-text + .dv-empty-hint` (with a link to
-create the first record when permitted). Search no-match uses the same block. Example:
-`layouts/list_view.html`.
+**Toolbar + search** — `.dv-toolbar` > `.dv-search` (`role="search"`) > `.dv-search-icon` +
+`input[type=search].dv-search-input` with an `aria-label`.
 
-**Tabs** — `.cd-tabs > button.cd-tab(.active)` with `.cd-panel(.active)` panels, underline style,
-defined in `static/css/whatsapp.css`. `form_view.html` reuses them for doctypes with `form_tabs`.
+**List card** — `.dv-list-card` holds the bulk bar, the table wrap, the no-match state and the empty
+state. `.dv-list-meta` (title + count strip) is legacy; new lists put the count in the subtitle.
 
-**Pagination** — `layouts/_pagination.html` (needs `page` and `page_url`), renders nothing for
-one page. Its `.pg-*` styles are currently copied into each page that uses it.
+**Bulk bar** — `.dv-bulkbar(.visible)` > `.dv-bulkbar-count` + `.dv-btn-tertiary` "Clear selection"
++ `.dv-btn-danger` "Delete". Hidden until a row is ticked. Delete goes through `confirmDialog()`.
 
-**Bulk selection** — `.dv-bulkbar(.visible)` with `.dv-bulkbar-count`, hidden until a row is
-ticked; opt-in per doctype via `bulk_delete` (`layouts/list_view.html`).
+**Empty state** — `.dv-empty` > `i.dv-empty-icon` (40px neutral disc) + `.dv-empty-text`
+("No users yet") + `.dv-empty-hint` (one sentence or one link). Search no-match uses the same block.
 
-**Timestamps** — `{{ ts(value) }}`, `{{ ts(value, 'date') }}`, `{{ ts(value, 'time') }}` from
-`app/core/templating.py`. It emits `<time datetime="…Z" data-fmt="…">server fallback</time>`;
-`base.html` localises it to the viewer's timezone (24-hour, `02 Sep 2026, 12:02`) and puts full
-precision in the `title`. Rows injected after load must call `window.renderTimestamps(root)`.
+**Pager** — `{% include "layouts/_pagination.html" %}` (needs `page`, `page_url`); styles `.pg-*`
+are shared in `docview.css`. `nav[aria-label=Pagination]`, current page `aria-current="page"`,
+prev/next labelled. Renders nothing for one page.
 
-## 5. Layout Principles
+**Tabs** — `.dv-tabs > button.dv-tab[role=tab]` + `.dv-panel[role=tabpanel]` (`.active` on both).
+Underline style: ink label, green 2px underline. Arrow keys move between tabs (see the switcher in
+`form_view.html`). `.cd-tabs / .cd-tab / .cd-panel` are the same component under the old name and
+render identically.
 
-**Skeleton** (`app/templates/base.html` + `base.css`):
+**Form view** — `.dv-form-toolbar.dv-form-toolbar--bleed > .dv-form-toolbar-inner` (sticky under the
+topbar, title left, actions right, aligned to the 880px form column; gains a bottom rule only when
+stuck via `.is-stuck`), then `.dv-form-wrap` > `.dv-form-error` banner > sections. A plain
+`.dv-form-toolbar` (no modifier) is the white bar-card used by legacy pages.
+Sections: `.dv-section` > `.dv-section-header > h2.dv-section-label` + `.dv-section-body`
+(2-column grid, 20px/24px gaps; one column ≤640px; `.dv-field.col-2` spans both).
+Save feedback: `.dv-save-status.success|error` beside the buttons ("Saved").
+Delete: `.dv-btn-danger` "Delete" swaps in place for `.dv-delete-confirm` ("Delete this user?
+Cancel / **Delete**"), focus moves to Cancel.
+
+**Alerts / inline feedback** — `.dv-alert` + `-danger | -success | -warning` (info by default):
+6px radius, tint + border + ink. Legacy names `.dv-inline-error` / `.dv-inline-success` render
+identically. A failure is reported inside the block that failed.
+
+**Modal** — the one implementation, `z-index: var(--z-modal)`:
+```html
+<div class="modal-backdrop" id="xBackdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="xTitle">   <!-- .modal-lg = 640px -->
+    <div class="modal-header"><h2 class="modal-title" id="xTitle">…</h2>
+      <button type="button" class="modal-close" aria-label="Close"><i class="ti ti-x"></i></button></div>
+    <div class="modal-body"> .modal-field > .dv-label + .dv-input + .dv-hint … </div>
+    <div class="modal-footer"> secondary Cancel, then the primary </div>
+  </div>
+</div>
 ```
+Open/close with `wamModal.open(el, {onClose})` / `wamModal.close(el)` from `base.html`: Esc, focus
+into the first field, Tab trapped inside, focus returned on close. On phones it becomes a bottom
+sheet with full-width stacked buttons. Reference: Change password in `base.html`.
+
+**Confirm dialog** — `await confirmDialog({ title, message, items, moreIndex, confirmLabel,
+cancelLabel, danger })` → `true|false`. The replacement for `confirm()`. Name the object and the
+consequence ("Delete 7 users?" / "Everything inside them is deleted too. This cannot be undone." /
+button "Delete 7 users"). Reference: bulk delete in `layouts/list_view.html`.
+
+**Toast** — `toast(message, type?, { timeout })`, type `success | error | warning | info`. Bottom
+right (full width on phones), 4s (errors 7s), pauses on hover, dismiss button, errors are
+`role=alert`. The replacement for `alert()`. For a message that must survive a reload, set
+`sessionStorage.wam_flash = JSON.stringify({msg, type})` before reloading; `base.html` shows it on
+the next page.
+
+**Session-expired banner** — `showSessionBanner()` in `base.html`, styled by `.session-banner`
+(`--z-banner`).
+
+**Timestamps** — `{{ ts(value) }}` / `ts(value, 'date')` / `ts(value, 'time')` from
+`app/core/templating.py` (see CLAUDE.md). Rows injected after load call `renderTimestamps(root)`.
+
+## 5. Layout
+
+**Skeleton** (`app/templates/base.html`, `base.css`):
+```
+a.skip-link → #main
 .dash-layout
-├── aside.sidebar (fixed, --sidebar-w, white, right hairline)
-│     .sidebar-logo (green vertical gradient) · .sidebar-nav (.nav-label + .nav-item) · .sidebar-footer
-├── .sidebar-overlay (mobile)
-└── .dash-main (margin-left: --sidebar-w)
-      header.dash-header (sticky, --topbar-h, title from `active` + user menu)
-      .dash-content.page-enter  ← {% block content %}
+├── aside.sidebar#sidebar (fixed, --sidebar-w, on --bg, right hairline)
+│     a.sidebar-logo (mark + "SIL WhatsApp" + "Business messaging")
+│     nav.sidebar-nav: Dashboard, then sentence-case .nav-label groups of .nav-item
+├── .sidebar-overlay (phone/tablet scrim)
+└── .dash-main
+      header.dash-header (sticky, --topbar-h 52px, on --bg): menu button · nav.topbar-crumbs · user menu
+      main.dash-content#main  ← {% block content %}
 ```
-Blocks a page fills: `title`, `extra_css`, `content`, `extra_js`.
+Blocks a page fills: `title`, `extra_css`, `topbar_crumbs` (optional), `content`, `extra_js`.
+Sidebar items come from the `nav()` macro in `base.html`, which sets `.active` and
+`aria-current="page"`.
 
-| Measure | Value | Source |
-|---|---|---|
-| Sidebar width | 196px · 216px ≥1440 · 220px ≥1600 · 236px ≥1920 · 256px ≥2560 | `theme.css`, `base.css` |
-| Topbar height | 46px · 52px ≥1920 · 56px ≥2560 | same |
-| Content padding | 28px · 20px ≤1366 · 30px ≥1440 · 36px ≥1600 · 44px ≥1920 · 56px ≥2560 | `base.css` |
-| Form max width | `.dv-form-wrap` 900px (1060 ≥1920, 1280 ≥2560); `.cd-wrap` 900px | `docview.css`, `whatsapp.css` |
-| List pages | full width | |
-
-**Spacing** — there are no spacing tokens; values are raw px on a loose 4px rhythm. The house values:
-
-| Context | Value |
+| Measure | Value |
 |---|---|
-| Page header bottom margin (`.dv-page-header`) | 24px |
-| Gap between stat cards / dashboard columns | 16px |
-| `.grid-2` / `.grid-3` gap | 20px |
-| Between form sections (`.dv-section`) | 16px |
-| Form field grid gap | 18px row, 24px column |
-| Label → input | 5px |
-| Card / section / modal body padding | 20px |
-| Card header / list meta padding | 14px 20px / 11px 20px |
-| Toolbar → list card | 16px |
-| Button group gap (`.dv-actions`, modal footer) | 8px |
-| Icon → text inside button | 6–7px |
+| Sidebar | 232px (248px ≥1920); drawer ≤900px |
+| Topbar | 52px |
+| Page padding `--page-pad` | 32px · 24px ≤1024 · 16px ≤640 · 40px ≥1920 |
+| Form column `--form-max` | 880px |
+| Lists | fluid, full width |
 
-**Page header pattern** (list): `.dv-page-header` = left `.dv-title` + `.dv-subtitle` (record
-count), right `.dv-actions` (primary "New X"). **Form/detail pattern**: `.dv-breadcrumb`
-(Parent / Record) above a **sticky** `.dv-form-toolbar` (doc title left; status, Delete, Cancel,
-Save right), sticking under the topbar at `top: var(--topbar-h)`.
+**Spacing** — 4px base: `--s-0_5` 2 · `--s-1` 4 · `--s-1_5` 6 · `--s-2` 8 · `--s-2_5` 10 ·
+`--s-3` 12 · `--s-4` 16 · `--s-5` 20 · `--s-6` 24 · `--s-8` 32 · `--s-10` 40 · `--s-12` 48.
 
-## 6. Depth & Elevation
+| Context | Token |
+|---|---|
+| Page header → content | `--s-6` |
+| Toolbar → list card | `--s-3` |
+| Between cards / sections / grid gap | `--s-4` |
+| Card / section / modal padding | `--s-5` |
+| Field gap: row / column | `--s-5` / `--s-6` |
+| Label → control | `--s-1_5` |
+| Button group gap | `--s-2` |
+| Icon → text in a button | `--s-1_5` |
 
-- **Radius: 0.** Square corners are the house style — buttons, inputs, cards, modals, badges
-  (`border-radius: 0` is stated explicitly in `base.css`, `docview.css`, `login.css`,
-  `templates.css`). Allowed exceptions: circles (`50%`: spinners, avatar dots), the toggle track
-  (20px), and WhatsApp-style chat bubbles in previews/conversations.
-- **Borders first, shadows second.** Every surface has a 1px `--line` border; shadows are faint.
+**Control heights** — `--h-sm` 28 · `--h-md` 34 (default) · `--h-lg` 40 (sign-in, phones).
 
-| Token | Value | Use |
+## 6. Depth, radius, layers, motion
+
+- **Radius**: `--r-sm` 4px (badges, checkbox), `--r-md` 6px (buttons, inputs, menu items, pager),
+  `--r-lg` 8px (cards, tables, sections, modals, toasts), `--r-full` (toggle, avatar, dots).
+- **A border or a shadow, never both at rest.** Surfaces are white with a `--border` edge and no
+  shadow. Controls get `--shadow-xs`. Shadows belong to what floats: `--shadow-menu` (dropdown,
+  toast), `--shadow-pop` (modal, mobile drawer). No hover lifts.
+
+**z-index layers** (tokens in `theme.css`)
+
+| Layer | Token | Value |
 |---|---|---|
-| `--shadow-card` | `0 1px 3px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.04)` | cards, tables, sections, toolbar |
-| `--shadow-lift` | `0 2px 6px rgba(0,0,0,.07), 0 8px 24px rgba(0,0,0,.07)` | stat-card hover |
-| `--shadow-pop` | `0 4px 16px rgba(0,0,0,.10), 0 24px 64px rgba(0,0,0,.18)` | modals |
-| `--shadow-green` | `0 4px 24px rgba(8,154,77,.3), 0 1px 4px rgba(0,0,0,.1)` | login |
+| Sticky form toolbar / sticky headers | `--z-sticky` | 40 |
+| Topbar | `--z-topbar` | 50 |
+| Drawer scrim | `--z-overlay` | 90 |
+| Sidebar | `--z-sidebar` | 100 |
+| Dropdowns, popovers | `--z-dropdown` | 200 |
+| Modal (`.modal-backdrop`) | `--z-modal` | 300 |
+| Toasts | `--z-toast` | 400 |
+| Session banner | `--z-banner` | 500 |
 
-**z-index layers in use**
+Legacy page modals still use 200 / 9999 until migrated (§12).
 
-| Layer | z-index | Where |
-|---|---|---|
-| Sticky form toolbar | 40 | `docview.css` |
-| Topbar | 50 | `base.css` |
-| Campaign page sticky bars | 60 | `broadcast/campaign_detail.html`, `campaign_new.html` |
-| Mobile sidebar overlay / sidebar | 99 / 100 | `base.css` |
-| User dropdown, page-local modals (`.cl-`, `.bl-`, `.cn-`, `.ak-`) | 200 | `base.css`, broadcast + companies pages, `docview.css` |
-| Global modal (`.modal-backdrop`) | 300 | `base.css` |
-| Template / WhatsApp wizard modals | 9999 | `templates.css`, `whatsapp.css` |
-| Session-expired banner | 99999 | inline in `base.html` |
+**Motion** — `--t-fast` 120ms, `--t-base` 180ms, `--ease`, `--ease-out`. Only: menu/popover in
+(fade + 4px), modal in (fade + 8px + scale .98), toast in, drawer slide, colour transitions on
+hover. No entrance animation on pages, cards or rows (`pageEnter`, `cardIn`, `rowIn` are kept as
+no-op keyframes so page CSS that names them does nothing). `prefers-reduced-motion: reduce` turns
+all of it off except spinners, which keep turning slowly.
 
-**Motion** — `--ease: cubic-bezier(.2,.7,.2,1)`. Durations 120–350ms. Entrance animations:
-`pageEnter` (content), `cardIn` (cards, tables, sections), `rowIn` (staggered table rows),
-`modalIn`, `popoverIn`. Hover lift `translateY(-1px)` on buttons, `-2px` on stat cards.
-
-## 7. Do's and Don'ts
+## 7. Do's and don'ts
 
 **Do**
-- Extend `base.html`; put page CSS in `{% block extra_css %}` and JS in `{% block extra_js %}`.
-- Use the `theme.css` tokens for every colour, font, shadow and focus ring.
-- Reuse `docview.css` classes (`dv-*`) before writing page-local CSS.
-- Print every timestamp with `{{ ts(value) }}` / `ts(value, 'date')` / `ts(value, 'time')`; in a
-  doctype list column use `"type": "datetime" | "date" | "time"` and pass the raw value.
-- Build page routes with `build_templates()` from `app/core/templating.py`.
-- Gate actions in the template on `perms[...]` (create / write / delete), the way `list_view.html` does.
-- Keep one primary (green) button per screen; destructive actions are `.dv-btn-danger`.
-- Use `—` (`EMPTY` in `templating.py`) for missing values.
-- Prefer inline confirmation (`.dv-delete-confirm`) or a `.modal` over `confirm()`.
+- Extend `base.html`; page CSS in `{% block extra_css %}`, JS in `{% block extra_js %}`.
+- Use tokens for every colour, size, space, radius, shadow and layer.
+- Reuse the components in §4 before writing page CSS; if two pages need the same thing, it goes
+  into `docview.css`.
+- Use `toast()` and `confirmDialog()` — never `alert()` / `confirm()`.
+- Give every icon-only control an `aria-label`, every input a `<label for>`, every icon
+  `aria-hidden="true"`.
+- Write sentence case, name the object in confirmations, use `—` for missing values.
+- Print timestamps with `ts()`; build routes with `build_templates()` (CLAUDE.md).
+- Gate actions on `perms[...]` the way `list_view.html` does.
 
 **Don't**
-- Don't hardcode hex colours in templates — add or use a token in `theme.css`.
-- Don't add `border-radius` to surfaces, inputs or buttons (square is the house style).
-- Don't `.strftime()` a timestamp for display, or format dates server-side in a route.
-- Don't construct `Jinja2Templates(...)` directly in a route file.
-- Don't add new fonts, CSS frameworks or icon sets. Chart.js (`chart.js@4.4.0`, analytics only) is
-  the only charting library.
-- Don't add dark-mode rules.
-- Don't let a table create page-level horizontal scroll; wrap wide tables in a scroll container.
-- Don't use WhatsApp brand colours outside a WhatsApp message preview.
+- Hardcode hex in templates; add `border-radius: 0` or any other radius outside the scale.
+- Use uppercase tracked labels, monospace for labels/headers, gradients, glows, tinted icon tiles,
+  coloured left-border accents, hover lifts, or staggered entrance animations.
+- Use the green on chrome (nav rows, tab labels, header bars) or as a large fill.
+- Use Font Awesome in new code — Tabler only (`<i class="ti ti-name" aria-hidden="true"></i>`).
+- Link `docview.css` again from a page, or invent another `xx-modal` / `xx-btn` / `xx-badge`.
+- Let a table scroll the page sideways.
+- Add fonts, CSS frameworks, icon sets or dark-mode rules. Chart.js 4.4.0 (analytics) is the
+  only charting library.
 
-## 8. Responsive Behavior
+## 8. Responsive
 
-Breakpoints used by the shared CSS:
+| Width | What changes |
+|---|---|
+| ≤ 640px | page padding 16px; one-column form sections; inputs 40px/16px text; modal becomes a bottom sheet; toasts full width; topbar shows only the page (and the parent link) |
+| ≤ 900px | sidebar becomes a drawer (`body.sidebar-open`, scrim, Esc closes, focus moves in and back); menu button appears; nav rows 44px |
+| ≤ 1024px | page padding 24px; `.grid-2`/`.grid-3` stack |
+| ≥ 1920px | sidebar 248px, page padding 40px (type does not scale up) |
+| `pointer: coarse` | buttons ≥40px, pager links 40px |
 
-| Width | What changes | File |
+Tables keep one line per cell and scroll inside `.dv-table-wrap`. Page-local breakpoints on feature
+screens (560/600/700/860/1000/1100) are migrated to 640/900/1024 in phases 2–3.
+
+## 9. Agent prompt guide
+
+1. **Read first**: `CLAUDE.md`, `PROJECT_MAP.md`, this file.
+2. **Route**: `templates = build_templates()`; `ctx=Depends(get_page_user)`; check
+   `ctx["perms"][resource]["read"]`; apply `company_filter(user)`; pass `user`, `perms`, `active`.
+3. **Simple CRUD** → no template: add a doctype to `app/core/doctypes.py` and render
+   `layouts/list_view.html` / `layouts/form_view.html` (copy `USERS_DOCTYPE`). Column types:
+   `text`, `mono`, `status`, `service_status`, `role_tag`, `datetime`/`date`/`time`.
+4. **Custom list** → copy the structure of `layouts/list_view.html`: `.dv-page-header` (h1 + count),
+   `.dv-toolbar`, `.dv-list-card` > `.dv-bulkbar` + `.dv-table-wrap > .dv-table` + `.dv-empty`.
+5. **Detail / settings page** → topbar crumbs block with a parent link, a bleed
+   `.dv-form-toolbar`, `.dv-form-wrap`, `.dv-section` cards, `.dv-tabs` for areas.
+6. **Dashboard / KPIs** → `.stats-grid` + `.stat-card` (label + value, no icon tiles).
+7. **Paged table** → `{% include "layouts/_pagination.html" %}`.
+8. **Dialogs** → the `.modal` markup in §4 + `wamModal`; for yes/no, `confirmDialog()`.
+9. **Feedback** → `toast()`; inline `.dv-alert-*` inside the failing block; `.dv-save-status` for "Saved".
+10. **Icons** → Tabler webfont only.
+11. **API calls** → `fetchWithAuth(url, options)`.
+12. **New sidebar entry** → one `{{ nav(href, key, 'ti-icon', 'Label', active) }}` line in
+    `base.html` under the right `.nav-label`, gated by `{% if perms.<resource>.read %}`; add its
+    group and display name to `nav_groups` / `nav_names` at the top of `base.html`.
+
+## 10. Components inventory
+
+| Need | Use | File |
 |---|---|---|
-| ≤ 640px | form section grid → 1 column, `col-2` fields span 1 | `docview.css` |
-| ≤ 768px | sidebar becomes an off-canvas drawer (`body.sidebar-open`), hamburger `.sidebar-toggle` appears, `.dash-main` margin 0 | `base.css`, `static/js/sidebar.js` |
-| ≤ 1024px | `.grid-2`, `.grid-3`, `.dash-cols` → 1 column | `base.css`, `dashboard/index.html` |
-| ≤ 1366px | content padding 20px, smaller stat cards | `base.css` |
-| ≥ 1440 / 1600 / 1920 / 2560px | progressively wider sidebar, more padding, larger type and table cells | `base.css`, `docview.css` |
-
-Page-local templates add their own breakpoints (560, 600, 700, 860, 900, 1000, 1100px) — 17
-distinct `@media` widths in total.
-
-- Stat grid uses `repeat(auto-fit, minmax(min(200px, calc(25% - 12px)), 1fr))` so it reflows on its own.
-- `.table-wrap` scrolls horizontally inside itself. **`.dv-list-card` has no `overflow-x`**, so a
-  wide `dv-table` can push the page sideways on a phone (see Open Questions).
-- Touch targets: `.dv-btn` is about 38px tall (9px padding, 12.5px text at line-height 1.5, 1px
-  borders); `.dv-btn-xs` is about 29px and `.dv-row-open` 24px, which is below a 44px touch target.
-
-## 9. Agent Prompt Guide
-
-When building or changing a screen in SIL-WAM:
-
-1. **Read first**: `CLAUDE.md` (permission guards, company scoping, `build_templates()`, `ts()`),
-   `PROJECT_MAP.md`, and this file.
-2. **Route**: `templates = build_templates()` from `app/core/templating.py`. Page routes use
-   `ctx=Depends(get_page_user)`, check `ctx["perms"][resource]["read"]`, apply
-   `company_filter(user)`, and pass `user`, `perms` and `active` (the sidebar key) to the template.
-3. **Simple CRUD resource** → don't write a template. Add a doctype dict to `app/core/doctypes.py`
-   (`list_columns`, `form_sections`, optional `form_tabs`, `bulk_delete`) and render
-   `layouts/list_view.html` and `layouts/form_view.html`. Copy the shape of `USERS_DOCTYPE`
-   (tabs) or `ERPNEXT_CONFIG_DOCTYPE` (plain form). Route examples: `app/routes/users_pages.py`,
-   `app/routes/erpnext_config_pages.py`, `app/routes/broadcast_settings_pages.py`.
-4. **Custom list** (filters, per-status pills, bulk actions) → copy
-   `app/templates/broadcast/campaign_list.html`: it reuses `dv-page-header`, `dv-toolbar`,
-   `dv-list-card`, `dv-table`, `dv-bulkbar` and adds only a filter and a status pill.
-5. **Detail view** → copy `app/templates/broadcast/campaign_detail.html` (header + stats + paged
-   table) or `app/templates/conversations/detail.html` (info strip + two-column layout). For a
-   tabbed detail use the `.cd-tabs` / `.cd-panel` pattern from `static/css/whatsapp.css`
-   (as in `companies/detail.html` and `form_view.html`).
-6. **Dashboard / KPIs** → `.stats-grid` + `.stat-card` from `base.css`, as in `dashboard/index.html`.
-7. **Paged table** → `{% include "layouts/_pagination.html" %}` with `page` from
-   `app/core/pagination.py`; copy the `.pg-*` rules from `broadcast/phonebook_detail.html` until
-   they are moved into `docview.css`.
-8. **Modal** → the global `.modal-backdrop > .modal` from `base.css` (see the Change Password
-   modal in `base.html`). Do not invent another `xx-modal` prefix.
-9. **Icons** → Tabler webfont: `<i class="ti ti-<name>"></i>` (the sidebar, layouts and newer
-   screens use it). Font Awesome is also loaded but treat it as legacy (see Open Questions).
-10. **Timestamps** → `{{ ts(x) }}`; JS-inserted rows call `window.renderTimestamps(container)`.
-11. **API calls from page JS** → `fetchWithAuth(url, options)` (defined in `base.html`); it
-    refreshes the token and shows the session-expired banner.
-12. **New sidebar entry** → add it to `base.html` under the right `.nav-label`, gated by
-    `{% if perms.<resource>.read %}`, with `active` matching the route.
-13. Page-only CSS goes in `{% block extra_css %}<style>…</style>`, using tokens; if a second page
-    needs it, move it to `docview.css` instead of copying it.
-
-## 10. Components Inventory
-
-| Need | Reuse this | File |
-|---|---|---|
-| App shell (sidebar, topbar, user menu) | `base.html` | `app/templates/base.html`, `static/css/base.css` |
-| Design tokens | `:root` vars | `static/css/theme.css` |
-| Generic list page | `layouts/list_view.html` + doctype | `app/templates/layouts/list_view.html`, `app/core/doctypes.py` |
-| Generic create/edit form (with optional tabs) | `layouts/form_view.html` + doctype | `app/templates/layouts/form_view.html` |
-| Page header with primary action | `.dv-page-header`, `.dv-title`, `.dv-actions` | `static/css/docview.css` |
-| Breadcrumb | `.dv-breadcrumb` | `static/css/docview.css` |
-| Sticky form toolbar | `.dv-form-toolbar` | `static/css/docview.css` |
-| Search box | `.dv-search` | `static/css/docview.css` |
-| Data table | `.dv-list-card` + `.dv-table` | `static/css/docview.css` |
-| Bulk select bar | `.dv-bulkbar` | `layouts/list_view.html` (inline CSS) |
-| Pager | `layouts/_pagination.html` | `app/templates/layouts/_pagination.html` |
-| Status badge | `.dv-badge-{green,red,blue,gray}` | `static/css/docview.css` |
-| Campaign status pill | `.cl-status.<state>` | `broadcast/campaign_list.html` |
-| Buttons | `.dv-btn-{primary,ghost,danger}`, `.dv-btn-xs`; `.btn`, `.btn-outline`, `.btn-sm` | `docview.css`, `base.css` |
-| Form field / input / select / toggle | `.dv-field`, `.dv-input`, `.dv-select`, `.dv-toggle` | `static/css/docview.css` |
-| Masked secret field | `.dv-secret-*` | `static/css/docview.css` |
-| Form section card | `.dv-section` | `static/css/docview.css` |
-| Card | `.card`, `.card-header`, `.card-body` | `static/css/base.css` |
-| KPI tiles | `.stats-grid`, `.stat-card`, `.stat-icon.<colour>` | `static/css/base.css`, `dashboard/index.html` |
-| Key/value info grid | `.info-grid`, `.info-key`, `.info-val` | `dashboard/index.html` (inline) |
-| Tabs | `.cd-tabs`, `.cd-tab`, `.cd-panel` | `static/css/whatsapp.css` |
-| Modal | `.modal-backdrop`, `.modal` | `static/css/base.css` |
-| Inline error / success | `.dv-inline-error`, `.dv-inline-success`, `.dv-form-error` | `base.css`, `docview.css` |
-| Inline delete confirm | `.dv-delete-confirm` | `docview.css`, `form_view.html` |
-| Empty state | `.dv-empty` | `docview.css`, `list_view.html` |
-| Button spinner | `.btn-spinner` + `.loading` | `docview.css` |
+| Tokens | `:root` | `static/css/theme.css` |
+| Shell, user menu, change-password modal | `base.html` | `app/templates/base.html`, `static/css/base.css` |
+| Mobile drawer | `sidebar.js` | `static/js/sidebar.js` |
+| Generic list / form | `layouts/list_view.html`, `layouts/form_view.html` | + `app/core/doctypes.py` |
+| Pager | `layouts/_pagination.html`, `.pg-*` | `static/css/docview.css` |
+| Buttons | `.dv-btn-*` | `base.css` |
+| Inputs, select, textarea, checkbox | `.dv-input`, `.dv-select`, `.dv-check` | `base.css` |
+| Toggle, static value, secret | `.dv-toggle*`, `.dv-field-static`, `.dv-secret-*` | `docview.css` |
+| Badges | `.dv-badge-*` | `base.css` |
+| Card, KPI tile | `.card*`, `.stat-card` | `base.css` |
+| Table | `.dv-table-wrap > .dv-table` | `base.css`, `docview.css` |
+| Page header, toolbar, search | `.dv-page-header`, `.dv-toolbar`, `.dv-search` | `docview.css` |
+| Bulk bar, empty state | `.dv-bulkbar`, `.dv-empty` | `docview.css` |
+| Tabs | `.dv-tabs` (= `.cd-tabs`) | `docview.css` |
+| Form toolbar, sections | `.dv-form-toolbar--bleed`, `.dv-section` | `docview.css` |
+| Alerts | `.dv-alert-*` | `base.css` |
+| Modal / confirm / toast | `.modal`, `wamModal`, `confirmDialog()`, `toast()` | `base.css`, `base.html` |
+| API keys panel (company detail) | `.ak-*` | `docview.css` (legacy, migrate in phase 2) |
 | WhatsApp message preview | `.tpl-*` | `static/css/templates.css` |
 | CSV import dialog | `.im-*` + `static/js/csv.js` | `static/css/import-dialog.css` |
-| Chat thread | `.cd-msg`, `.cd-bubble-in/out` | `conversations/detail.html` (inline) |
 | Charts | Chart.js 4.4.0 (CDN) | `analytics/index.html` |
-| Timestamp | `ts()` | `app/core/templating.py`, script at end of `base.html` |
+| Timestamp | `ts()` / `renderTimestamps()` | `app/core/templating.py`, `base.html` |
 | Authenticated fetch | `fetchWithAuth()` | `base.html` |
 
 ## 11. Verification
 
-- **Dev server**: `venv/bin/uvicorn app.main:app --reload` → http://127.0.0.1:8000. Check with
-  `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/login` (expect 200; `curl -I`
-  returns 405 because the route is GET-only).
-- **Login**: every page except `/login` needs a session cookie. Super admin is created only via
-  `venv/bin/python run.py create-superadmin <user> <pass>`. Sidebar items depend on permissions,
-  so check a new page as an `admin` user too, not only as super_admin.
-- **Reference screens** to compare new work against: `/users` (generic list),
-  `/users/<id>` (generic form with tabs), `/broadcast/campaigns`
-  (`broadcast/campaign_list.html`), `/dashboard`.
-- **Widths**: 1440, 768, 390. At 390 check the sidebar drawer and that tables don't scroll the page.
-- **View-only browsing — mandatory**: never send a WhatsApp message, never submit a form or any
-  POST/PUT/DELETE, never click Save / Delete / Send / Launch / Approve / Confirm / Connect.
-  **SHIRIN ASAL** is the company with live WhatsApp configuration — be extra careful on its pages.
-  States that need a write (sending, failed, etc.) are designed from the code and reported as
-  "not seen live".
-- Tests: `venv/bin/pytest tests/ -v` must pass after any template change that touches routes.
+- **Dev server**: `venv/bin/uvicorn app.main:app --reload` → http://127.0.0.1:8000 (a worktree
+  preview may run on :8001). `curl -s -o /dev/null -w '%{http_code}' …/login` → 200.
+- **Login** needed for every page except `/login`. Check permission-gated pages as an `admin`, not
+  only as super_admin.
+- **Reference screens**: `/users` (list), `/users/<id>` (form with tabs), `/users/new`, `/login`.
+- **Widths**: 1440, 768, 390. At 390: drawer opens and closes, tables scroll inside their frame,
+  no page-level horizontal scroll, modals are bottom sheets.
+- **Keyboard**: Tab reaches the skip link, nav, the row name links, tabs (arrow keys), the user menu
+  (arrow keys, Esc), dialogs (Esc, trapped Tab).
+- **View-only browsing**: never send a WhatsApp message or submit a write; never click Save /
+  Delete / Send / Launch / Approve / Confirm / Connect. SHIRIN ASAL has live WhatsApp config.
+- Without a browser session, templates can be rendered offline with sample context through
+  `build_templates()` and screenshotted (phase 1 did this; see its report).
+- Tests: `venv/bin/pytest tests/ -q` must pass.
 
-## Open Questions
+## Open questions — status after phase 1
 
-Inconsistencies found in the code that a human should decide. Counts are from the working copy
-on 2026-10-31.
+| # | Question | Status |
+|---|---|---|
+| 0 | Brand contrast fails AA | **Resolved.** Primary `#0B7340` (white 5.9:1); all text tokens ≥4.5:1 on white and `--bg`; bright green kept as `--brand-bright` for decoration only. Legacy `--green` aliases the new primary. |
+| 1 | Two icon sets | **Decided: Tabler.** Shell, list, form, pager, login converted; login no longer loads FA. FA stays linked in `base.html` until phases 2–3 finish (§12), then the link is deleted. |
+| 2 | 73 hardcoded hex values | **Rule set**, tokens available (neutral, warning, info). Page hexes are phase 2–3 work. |
+| 3 | A second (Tailwind) green | **Decided:** one green family (`--primary*`). Pages using `#16a34a` etc. migrate in phase 2. |
+| 4 | Missing warning / blue-dark / orange-dark | **Resolved:** `--warning*` (amber), `--info-ink`, status `-ink` tokens. |
+| 5 | Undefined CSS variables | **Resolved:** all six now resolve (`theme.css` legacy block). |
+| 6 | Radius drift | **Decided:** 4 / 6 / 8 / full. Square corners are retired; pages that set `border-radius: 0` or 7/12px migrate in phases 2–3. |
+| 7 | Duplicated components | **Decided:** `.modal`, `.dv-btn`, `.dv-badge`, `.dv-table`, `.dv-tabs` are canonical; legacy families listed in §12. |
+| 8 | Page-local CSS volume | Open — phases 2–3 (20 templates with `<style>`, ~290 inline styles). |
+| 9 | `cd-` prefix collision | **Decided:** shared tabs are `.dv-tabs`; `.cd-tabs` kept as an alias. Conversation detail's `cd-*` page classes get renamed (`cv-`) in phase 3. |
+| 10 | No toast; native dialogs | **Resolved for shared layouts:** `toast()`, `confirmDialog()`, `wamModal`. Remaining `alert()`/`confirm()` in pages listed in §12. |
+| 11 | Font weights / 31 sizes | **Resolved for shared CSS:** one family, six sizes. Pages migrate. |
+| 12 | Spacing tokens, 17 breakpoints | **Resolved for shared CSS:** spacing scale + 640/900/1024/1920. Pages migrate. |
+| 13 | Narrow-screen tables | **Resolved:** `.dv-table-wrap` scrolls inside the card; cells don't wrap. |
+| 14 | Accessibility | **Resolved for the shell and layouts:** reduced motion, `aria-current`, skip link, labelled controls, keyboard row links, ARIA tabs, focus-managed dialogs and drawer, ≥40px touch targets on coarse pointers. |
+| 15 | Duplicate stylesheet, dead code, inline banner | **Resolved in shared files:** dead `logoutBtn` wiring removed from `sidebar.js`; banner uses `.session-banner`; `list_view`/`form_view` no longer re-link `docview.css` or `whatsapp.css`. 8 page templates still re-link `docview.css` (§12). |
+| 16 | Orphaned templates | Open — `companies/list.html`, `users/list.html`, `broadcast/coming_soon.html` are unrouted; recommend deleting in phase 3. |
+| 17 | `company_tag` cell type | Open — still renders as text; add a branch when a doctype uses it. |
+| 18 | Input border contrast | New, accepted: `--control` `#D0D5D5` is 1.5:1 against white, below WCAG 1.4.11's 3:1 for a component boundary. Kept deliberately (as GitHub Primer and Stripe do): every field has a visible label above it, a 1px shadow, and a 3:1+ focus state. Revisit if an audit requires strict 1.4.11. |
+| 19 | Doctype icons | New: `doctypes.py` still names Font Awesome icons for 5 doctypes and its tab icons. The generic layouts no longer draw them (empty states use a Tabler icon; tabs are text). Phase 3: switch the strings to Tabler or drop the key. Placeholder copy there ("John Doe", "e.g. john_doe") should become neutral examples. |
 
-0. **Brand-token contrast fails WCAG AA** (computed from the `theme.css` values):
-   white text on `--green` (primary buttons, `.dv-btn-primary`, `.btn`) is **2.88:1**;
-   `--green` on `--green-tint` (active nav item) is 2.63:1; `--green-dark` on `--green-tint`
-   (green badges, 9px text) is 3.34:1; `--subtle` `#9CA3AF` on white (counts, hints, subtitles,
-   empty states) is 2.54:1; `--muted` on `--bg` (table header text, 9.5px) is 4.35:1. Small text
-   needs 4.5:1. White on `--green-dark` is only 3.66:1, so darkening the hover state does not fix
-   it either. A darker green for text and fills (with the current green kept for accents) is a
-   brand decision, so it is listed here rather than changed.
+## 12. Migration checklist — phases 2 and 3
 
-1. **Two icon sets.** Tabler (`ti ti-*`, ~121 uses) and Font Awesome 6.5.1 (~170 uses) are both
-   loaded on every page. 11 templates use only Tabler (sidebar, layouts, dashboard, broadcast,
-   conversations, services, analytics); 8 use only Font Awesome (`companies/detail.html` alone has
-   102, plus error logs, roles, users, login); 5 mix both. `doctypes.py` icons are split 5 FA / 5
-   Tabler, so FA icons appear inside Tabler-based layouts. Which set is canonical — and can the
-   other CDN stylesheet be dropped?
-2. **Hardcoded colours.** 73 distinct hex values across 24 files, plus 43 distinct `rgba()`
-   literals. 18 neutral greys are hardcoded outside `theme.css` across 7 files
-   (`#111`, `#333`, `#555`, `#777`, `#e0e0e0`, `#e5e7eb`, `#f0f0f0`, `#f1f5f9`, `#f3f4f6`,
-   `#f8f9fa`, `#f9fafb`, `#d1d5db`, `#475569`, `#94a3b8`, …) next to the 5 grey tokens.
-   Worst offenders: `demo/messaging.html`, `webhook_config/index.html`, `companies/detail.html`,
-   `static/css/templates.css`.
-3. **A second green.** Tailwind green `#16a34a` (18 uses in 4 files) and its family (`#15803d`,
-   `#166534`, `#bbf7d0`, `#dcfce7`, `#f0fdf4`) sit beside the brand `--green` `#0FAF58`.
-4. **Missing tokens.** No warning/amber token (pages hardcode `#b45309`, `#92400e`, `#fffbeb`,
-   `#f59e0b`, `#ca8a04`); the blue badge text `#1d4ed8` is hardcoded 12 times; the orange badge
-   text `#9a3412` is hardcoded. Should `--amber*`, `--blue-dark`, `--orange-dark` be added?
-5. **Undefined CSS variables.** `--border`, `--text`, `--text-muted`, `--bg-secondary`
-   (`companies/detail.html`, `webhook_config/index.html`, `docview.css .dv-secret-saved`),
-   `--surface`, `--accent` (`analytics/index.html`) are used but never defined, so those rules
-   silently fall back.
-6. **Radius drift.** House style is square, but 6px / 7px / 8px / 12px radii appear on
-   surfaces in `webhook_config/index.html`, `analytics/index.html`, `demo/messaging.html`,
-   `companies/detail.html`, and `.dv-secret-saved` (6px) in `docview.css` — 19 distinct
-   `border-radius` values in total.
-7. **Duplicated components.** 9 modal implementations (`.modal`, `.ak-`, `.bl-`, `.cl-`, `.cn-`,
-   `.im-`, `.tpl-`, `.tpl-view-`, `.wa-`) at z-index 200, 300 or 9999; 6 button families (`.btn`,
-   `.dv-btn`, `.tpl-btn`, `.wa-btn`, `.el-btn`, `.wc-btn`); ~10 badge/status families
-   (`.dv-badge`, `.badge`, `.cl-status`, `.sd-status-*`, `.tpl-badge-*`, `.wa-status-*`,
-   `.el-badge-*`, `.cd-badge-*`, `.wc-status-badge`, …); 10 table classes. Consolidate onto
-   `.modal`, `.dv-btn`, `.dv-badge`, `.dv-table`?
-8. **Page-local CSS volume.** 21 of 25 templates carry their own `<style>` block (~2,000 lines,
-   vs ~3,600 lines of shared CSS), and there are 290 inline `style="…"` attributes across 21
-   templates (84 in `companies/detail.html`). The `.pg-*` pager and `.dv-bulkbar` styles are
-   copied between pages with small differences (pager padding 20px vs 18px).
-9. **Prefix collision.** `cd-` means "company detail" in `whatsapp.css` and "conversation detail"
-   in `conversations/detail.html`'s page CSS.
-10. **No toast; native dialogs.** 20 `alert()` and 8 `confirm()` calls in routed templates (plus
-    more in orphans) — including bulk delete in `list_view.html`. Should a shared toast and the
-    `.dv-delete-confirm` / `.modal` pattern replace them?
-11. **Font weights.** `login.html` loads different weights (Inter without 700, JetBrains Mono with
-    700) than `base.html`. 31 distinct font-sizes are in use (6px–40px, including half-pixel
-    steps 9.5 / 10.5 / 11.5 / 12.5 / 13.5 / 14.5) — no type scale tokens.
-12. **No spacing tokens and 17 breakpoints.** Spacing is raw px; page-local breakpoints (560, 600,
-    700, 860, 900, 1000, 1100) don't match the shared ones (640, 768, 1024, 1366).
-13. **Narrow-screen tables.** `.dv-list-card` has no `overflow-x: auto`, unlike `.table-wrap`.
-    Wide doctype lists likely overflow the page at 390px (not seen live).
-14. **Accessibility.** No `prefers-reduced-motion` handling for the many entrance animations; the
-    sidebar `active` page has no `aria-current`; small targets (24–26px) for row chevrons and
-    `.dv-btn-xs`; whole-row `onclick` navigation is not keyboard-reachable except via the chevron
-    link.
-15. **Duplicate stylesheet and dead code.** `docview.css` is linked by `base.html` and again by
-    9 page templates. `static/js/sidebar.js` still wires a `logoutBtn` / `logoutPopover` that no
-    longer exists in `base.html`. The session-expired banner is styled inline in JS with a hex.
-16. **Orphaned templates.** `companies/list.html`, `users/list.html` and
-    `broadcast/coming_soon.html` are not rendered by any route (lists go through
-    `layouts/list_view.html`). Delete, or keep as references?
-17. **`company_tag` cell type** is documented in `doctypes.py` but has no branch in
-    `list_view.html` (it renders as plain text).
+Counts are from the working copy after phase 1. "Migrate" means: delete page-local CSS that a §4
+component covers, swap classes to the canonical ones, replace Font Awesome with Tabler, replace
+`alert()`/`confirm()` with `toast()`/`confirmDialog()`, replace hex with tokens, drop
+`border-radius: 0`, uppercase/mono labels and entrance animations, remove the extra
+`docview.css` link, and check 1440/768/390.
+
+**Phase 2 — the heavy, most-used screens**
+- [ ] `companies/detail.html` — 109 FA icons, 7 `alert/confirm`, 84 inline styles, `.cd-*` tabs,
+      `.ak-*` API-key panel + modal (move to `.modal`), undefined-var usage, radius drift,
+      re-links `docview.css`.
+- [ ] `broadcast/campaign_new.html` — 14 FA, 42 inline styles, `.cn-modal` → `.modal`, its own
+      sticky bar (z 60), re-links `docview.css`.
+- [ ] `broadcast/campaign_list.html` — 6 `alert/confirm` (bulk delete → `confirmDialog`),
+      `.cl-modal`, `.cl-status` → `.dv-badge-*`, page bulk-bar CSS → shared `.dv-bulkbar`.
+- [ ] `broadcast/campaign_detail.html` — its own pager markup → include `_pagination.html`;
+      2 `alert/confirm`; sticky bar z 60.
+- [ ] `broadcast/phonebook_detail.html` — 6 `alert/confirm`, `.bl-modal`, 1 FA.
+- [ ] `broadcast/index.html` — page CSS, uppercase labels.
+- [ ] `dashboard/index.html` — welcome copy, KPI row on the new `.stat-card`, `info-grid` mono
+      labels, recent-activity table → `.dv-table`.
+- [ ] `users/_agent_config.html` — 2 FA, 1 `confirm`, 18 inline styles, re-links `docview.css`,
+      `.ak-delete-confirm`.
+- [ ] `static/css/whatsapp.css` (911 lines) and `static/css/templates.css` (686) — tokens,
+      radius, `.wa-`/`.tpl-` modals (z 9999) → `.modal`, `.wa-btn`/`.tpl-btn` → `.dv-btn`.
+
+**Phase 3 — the rest**
+- [ ] `conversations/detail.html` — rename page `cd-*` → `cv-*`; chat bubbles keep their shape.
+- [ ] `services/detail.html` — uppercase/mono labels.
+- [ ] `analytics/index.html` — 1 `alert`, `--surface`/`--accent` usage, radius 8–12px, chart
+      colours from tokens (one hue per chart).
+- [ ] `error_logs/list.html`, `error_logs/detail.html` — 13 FA, `.el-*` badges/buttons.
+- [ ] `roles/list.html`, `roles/permissions.html` — 10 FA, 21 inline styles.
+- [ ] `webhook_config/index.html` — 7 FA, hex greys, radius 6–8px, `.wc-*` badges/buttons.
+- [ ] `demo/messaging.html` — 8 FA, worst hex offender.
+- [ ] `static/css/import-dialog.css` — `.im-*` modal → `.modal`.
+- [ ] `app/core/doctypes.py` icons → Tabler (Open Question 19).
+- [ ] Delete orphans `companies/list.html`, `users/list.html`, `broadcast/coming_soon.html`.
+- [ ] Remove the `.ak-*` block from `docview.css`, the legacy aliases from `theme.css` and the
+      legacy class aliases from `base.css` once `grep` finds no users.
+- [ ] **Last:** delete the Font Awesome `<link>` from `base.html` when
+      `grep -rE 'fa-|"fas |fab |far ' app/templates static` returns nothing.

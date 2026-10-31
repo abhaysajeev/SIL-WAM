@@ -1,52 +1,37 @@
+/* Mobile sidebar drawer (≤900px). The desktop sidebar is always visible.
+   Opened by #sidebarToggle; closed by the scrim, Esc, or following a nav link. */
 (function () {
   var toggle  = document.getElementById('sidebarToggle');
   var overlay = document.getElementById('sidebarOverlay');
+  var sidebar = document.getElementById('sidebar');
+
+  function setOpen(open) {
+    document.body.classList.toggle('sidebar-open', open);
+    if (toggle) {
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      toggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+    }
+    if (open && sidebar) {
+      var current = sidebar.querySelector('[aria-current="page"]') || sidebar.querySelector('a');
+      if (current) current.focus();
+    } else if (!open && toggle && sidebar && sidebar.contains(document.activeElement)) {
+      toggle.focus();
+    }
+  }
 
   if (toggle) {
     toggle.addEventListener('click', function () {
-      document.body.classList.toggle('sidebar-open');
+      setOpen(!document.body.classList.contains('sidebar-open'));
     });
   }
-  if (overlay) {
-    overlay.addEventListener('click', function () {
-      document.body.classList.remove('sidebar-open');
-    });
-  }
+  if (overlay) overlay.addEventListener('click', function () { setOpen(false); });
 
-  var logoutBtn     = document.getElementById('logoutBtn');
-  var logoutPopover = document.getElementById('logoutPopover');
-  var logoutCancel  = document.getElementById('logoutCancel');
-  var logoutConfirm = document.getElementById('logoutConfirm');
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && document.body.classList.contains('sidebar-open')) setOpen(false);
+  });
 
-  if (logoutBtn && logoutPopover) {
-    logoutBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      var open = logoutPopover.classList.toggle('open');
-      logoutBtn.classList.toggle('active', open);
-    });
-
-    document.addEventListener('click', function (e) {
-      if (!logoutBtn.contains(e.target) && !logoutPopover.contains(e.target)) {
-        logoutPopover.classList.remove('open');
-        logoutBtn.classList.remove('active');
-      }
-    });
-
-    if (logoutCancel) {
-      logoutCancel.addEventListener('click', function () {
-        logoutPopover.classList.remove('open');
-        logoutBtn.classList.remove('active');
-      });
-    }
-
-    if (logoutConfirm) {
-      logoutConfirm.addEventListener('click', function () {
-        document.getElementById('dashLayout').classList.add('signing-out');
-        // Clear stored tokens
-        localStorage.removeItem('wam_access_token');
-        localStorage.removeItem('wam_refresh_token');
-        setTimeout(function () { window.location.href = '/login'; }, 350);
-      });
-    }
-  }
+  // Back to desktop width with the drawer open: drop the open state (and its scroll lock).
+  window.addEventListener('resize', function () {
+    if (window.innerWidth > 900 && document.body.classList.contains('sidebar-open')) setOpen(false);
+  });
 })();

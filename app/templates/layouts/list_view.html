@@ -10,52 +10,42 @@
 #}
 {% block title %}{{ dt.title_plural }} — SIL WhatsApp{% endblock %}
 
-{% block extra_css %}
-<link rel="stylesheet" href="/static/css/docview.css">
-<style>
-  /* Hidden until something is selected — an always-visible action bar with a
-     disabled Delete button is just clutter above every list. */
-  .dv-bulkbar {
-    display:none;align-items:center;gap:10px;
-    padding:10px 20px;border-bottom:1px solid var(--line);background:var(--green-tint);
-  }
-  .dv-bulkbar.visible { display:flex; }
-  .dv-bulkbar-count { font-size:12px;font-weight:600;color:var(--green-dark);margin-right:auto; }
-  .dv-row-check, #dvSelectAll { cursor:pointer;width:14px;height:14px;accent-color:var(--green); }
-</style>
-{% endblock %}
-
 {% block content %}
+{%- set n = rows | length -%}
+{#- Lower-case the noun for running text, unless it starts with an acronym (ERPNext). -#}
+{%- set noun_one = dt.title if dt.title[:2].isupper() else dt.title | lower -%}
+{%- set noun_many = dt.title_plural if dt.title_plural[:2].isupper() else dt.title_plural | lower -%}
+{#- Which column carries the link into the record: the title field if it is listed,
+    otherwise the first column. That link is the keyboard path into a row. -#}
+{%- set title_listed = (dt.list_columns | selectattr('field', 'equalto', dt.title_field) | list | length) > 0 -%}
+
 <div class="dv-page-header">
   <div>
-    <div class="dv-title">{{ dt.title_plural }}</div>
-    <div class="dv-subtitle">{{ rows | length }} record{{ 's' if rows | length != 1 else '' }}</div>
+    <h1 class="dv-title">{{ dt.title_plural }}</h1>
+    <p class="dv-subtitle" id="dvCount">{{ n }} {{ noun_one if n == 1 else noun_many }}</p>
   </div>
   <div class="dv-actions">
     {% if perms[dt.perm_page].create %}
     <a href="{{ dt.base_route }}/new" class="dv-btn dv-btn-primary">
-      <i class="ti ti-plus"></i>
+      <i class="ti ti-plus" aria-hidden="true"></i>
       <span>New {{ dt.title }}</span>
     </a>
     {% endif %}
   </div>
 </div>
 
+{% if rows %}
 <div class="dv-toolbar">
-  <div class="dv-search">
-    <i class="dv-search-icon ti ti-search"></i>
-    <input type="text" id="dvSearch" class="dv-search-input" placeholder="Search {{ dt.title_plural | lower }}...">
+  <div class="dv-search" role="search">
+    <i class="dv-search-icon ti ti-search" aria-hidden="true"></i>
+    <input type="search" id="dvSearch" class="dv-search-input"
+           placeholder="Search {{ noun_many }}…" aria-label="Search {{ noun_many }}" autocomplete="off">
   </div>
   <span class="dv-row-count" id="dvRowCount"></span>
 </div>
+{% endif %}
 
 <div class="dv-list-card">
-  <div class="dv-list-meta">
-    <div class="dv-list-meta-title">
-      <i class="{{ dt.icon }}"></i> {{ dt.title_plural }}
-    </div>
-    <span class="dv-list-count" id="dvCount">{{ rows | length }} total</span>
-  </div>
 
   {# Bulk selection is opt-in per doctype (dt.bulk_delete), so every existing
      list view is untouched until it chooses to adopt it. #}
@@ -66,68 +56,73 @@
      never emitted. There is also nothing to select. #}
   {% if bulk and rows %}
   <div class="dv-bulkbar" id="dvBulkBar">
-    <span class="dv-bulkbar-count" id="dvBulkCount"></span>
-    <button class="dv-btn dv-btn-danger dv-btn-xs" id="dvBulkDelete">
-      <i class="ti ti-trash"></i> Delete selected
+    <span class="dv-bulkbar-count" id="dvBulkCount" aria-live="polite"></span>
+    <button type="button" class="dv-btn dv-btn-tertiary dv-btn-sm" id="dvBulkClear">Clear selection</button>
+    <button type="button" class="dv-btn dv-btn-danger dv-btn-sm" id="dvBulkDelete">
+      <i class="ti ti-trash" aria-hidden="true"></i> Delete
     </button>
-    <button class="dv-btn dv-btn-ghost dv-btn-xs" id="dvBulkClear">Clear</button>
   </div>
   {% endif %}
 
   {% if rows %}
+  <div class="dv-table-wrap">
   <table class="dv-table" id="dvTable">
     <thead>
       <tr>
         {% if bulk %}
-        <th style="width:38px;"><input type="checkbox" id="dvSelectAll" title="Select all"></th>
+        <th class="col-check" scope="col"><input type="checkbox" id="dvSelectAll" aria-label="Select all {{ noun_many }}"></th>
         {% endif %}
         {% for col in dt.list_columns %}
-        <th>{{ col.label }}</th>
+        <th scope="col">{{ col.label }}</th>
         {% endfor %}
         {% if perms[dt.perm_page].write or perms[dt.perm_page].delete %}
-        <th style="width:48px;"></th>
+        <th class="col-open" scope="col"><span class="sr-only">Open</span></th>
         {% endif %}
       </tr>
     </thead>
     <tbody>
       {% for row in rows %}
+      {%- set row_href = dt.base_route ~ '/' ~ row.id -%}
+      {%- set row_label = row[dt.title_field] or row.id -%}
       <tr data-id="{{ row.id }}" data-search="{{ row | dv_search_text }}"
           onclick="window.location='{{ dt.base_route }}/{{ row.id }}'">
         {% if bulk %}
         {# stopPropagation, or ticking the box navigates into the record #}
-        <td onclick="event.stopPropagation();">
+        <td class="col-check" onclick="event.stopPropagation();">
           <input type="checkbox" class="dv-row-check" value="{{ row.id }}"
-                 data-label="{{ row[dt.title_field] }}">
+                 data-label="{{ row[dt.title_field] }}" aria-label="Select {{ row_label }}">
         </td>
         {% endif %}
         {% for col in dt.list_columns %}
+        {%- set is_link = (col.field == dt.title_field) or (not title_listed and loop.first) -%}
         <td>
           {%- set val = row[col.field] -%}
+          {%- if is_link %}<a class="dv-row-link" href="{{ row_href }}" onclick="event.stopPropagation();">{% endif -%}
           {%- if col.type == 'status' -%}
             {% if val %}
-            <span class="dv-badge dv-badge-green">Active</span>
+            <span class="dv-badge dv-badge-success dv-badge-dot">Active</span>
             {% else %}
-            <span class="dv-badge dv-badge-red">Inactive</span>
+            <span class="dv-badge dv-badge-neutral dv-badge-dot">Inactive</span>
             {% endif %}
           {%- elif col.type == 'service_status' -%}
             {% if val == 'completed' %}
-            <span class="dv-badge dv-badge-green">Completed</span>
+            <span class="dv-badge dv-badge-success">Completed</span>
             {% elif val == 'in_progress' %}
-            <span class="dv-badge dv-badge-blue">In Progress</span>
+            <span class="dv-badge dv-badge-info">In progress</span>
             {% elif val == 'waiting' %}
-            <span class="dv-badge dv-badge-gray">Waiting</span>
+            <span class="dv-badge dv-badge-neutral">Waiting</span>
             {% elif val == 'failed' %}
-            <span class="dv-badge dv-badge-red">Failed</span>
+            <span class="dv-badge dv-badge-danger">Failed</span>
             {% elif val == 'expired' %}
-            <span class="dv-badge dv-badge-gray">Expired</span>
+            <span class="dv-badge dv-badge-neutral">Expired</span>
             {% else %}
-            <span style="color:var(--subtle)">—</span>
+            <span class="cell-muted">—</span>
             {% endif %}
           {%- elif col.type == 'role_tag' -%}
             {% if val %}
-            <span class="dv-badge dv-badge-blue">{{ val }}</span>
+            <span class="dv-badge dv-badge-neutral">{{ val }}</span>
             {% else %}
-            <span class="dv-badge dv-badge-gray">No Role</span>
+            <span class="dv-badge dv-badge-outline">No role</span>
             {% endif %}
           {%- elif col.type in ('datetime', 'date', 'time') -%}
             {# The route passes the raw instant; ts() emits a <time> the browser
@@ -135,15 +130,17 @@
                server does not know the viewer's timezone. #}
             {{ ts(val, 'date' if col.type == 'date' else ('time' if col.type == 'time' else 'datetime')) }}
           {%- elif col.type == 'mono' -%}
-            <span class="cell-mono {% if col.bold %}cell-bold{% endif %}">{{ val or '—' }}</span>
+            {% if val %}<span class="cell-mono {% if col.bold %}cell-bold{% endif %}">{{ val }}</span>{% else %}<span class="cell-muted">—</span>{% endif %}
           {%- else -%}
-            <span class="{% if col.bold %}cell-bold{% endif %}">{{ val or '—' }}</span>
+            {% if val %}<span class="{% if col.bold %}cell-bold{% endif %}">{{ val }}</span>{% else %}<span class="cell-muted">—</span>{% endif %}
           {%- endif -%}
+          {%- if is_link %}</a>{% endif -%}
         </td>
         {% endfor %}
         {% if perms[dt.perm_page].write or perms[dt.perm_page].delete %}
-        <td onclick="event.stopPropagation();">
-          <a href="{{ dt.base_route }}/{{ row.id }}" class="dv-row-open" title="Open">
+        <td class="col-open">
+          <a href="{{ row_href }}" class="dv-row-open" tabindex="-1" aria-hidden="true"
+             onclick="event.stopPropagation();">
             <i class="ti ti-chevron-right"></i>
           </a>
         </td>
@@ -152,21 +149,23 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 
   <div id="dvNoMatch" class="dv-hidden">
     <div class="dv-empty">
-      <i class="dv-empty-icon ti ti-search"></i>
-      <div class="dv-empty-text">No records match your search.</div>
+      <i class="dv-empty-icon ti ti-search" aria-hidden="true"></i>
+      <div class="dv-empty-text">No {{ noun_many }} match your search</div>
+      <div class="dv-empty-hint">Try a shorter term, or search by another column.</div>
     </div>
   </div>
 
   {% else %}
   <div class="dv-empty">
-    <i class="dv-empty-icon {{ dt.icon }}"></i>
-    <div class="dv-empty-text">No {{ dt.title_plural | lower }} yet.</div>
+    <i class="dv-empty-icon ti ti-inbox" aria-hidden="true"></i>
+    <div class="dv-empty-text">No {{ noun_many }} yet</div>
     {% if perms[dt.perm_page].create %}
     <div class="dv-empty-hint">
-      <a href="{{ dt.base_route }}/new">Create the first {{ dt.title | lower }}</a>
+      <a href="{{ dt.base_route }}/new">Create the first {{ noun_one }}</a>
     </div>
     {% endif %}
   </div>
@@ -175,12 +174,19 @@
 {% endblock %}
 
 {% block extra_js %}
+{#- Blocks do not share {% set %} variables, so the nouns are worked out again here. -#}
+{%- set noun_one = dt.title if dt.title[:2].isupper() else dt.title | lower -%}
+{%- set noun_many = dt.title_plural if dt.title_plural[:2].isupper() else dt.title_plural | lower -%}
 <script>
 (function () {
   var input = document.getElementById('dvSearch');
   var count = document.getElementById('dvCount');
   var noMatch = document.getElementById('dvNoMatch');
   if (!input) return;
+
+  var TOTAL = {{ rows | length }};
+  var ONE   = {{ noun_one | tojson }};
+  var MANY  = {{ noun_many | tojson }};
 
   input.addEventListener('input', function () {
     var q = input.value.trim().toLowerCase();
@@ -192,7 +198,13 @@
       tr.style.display = show ? '' : 'none';
       if (show) visible++;
     });
-    if (count) count.textContent = visible + ' total';
+    if (count) {
+      count.textContent = q
+        ? visible + ' of ' + TOTAL + ' ' + (TOTAL === 1 ? ONE : MANY)
+        : TOTAL + ' ' + (TOTAL === 1 ? ONE : MANY);
+    }
+    var table = document.getElementById('dvTable');
+    if (table) table.closest('.dv-table-wrap').style.display = (visible === 0 && q) ? 'none' : '';
     if (noMatch) noMatch.style.display = (visible === 0 && q) ? 'block' : 'none';
   });
 })();
@@ -210,8 +222,8 @@
   if (!bar || !selectAll) return;
 
   var API   = {{ dt.api_prefix | tojson }};
-  var NOUN  = {{ dt.title | lower | tojson }};
-  var NOUNP = {{ dt.title_plural | lower | tojson }};
+  var NOUN  = {{ noun_one | tojson }};
+  var NOUNP = {{ noun_many | tojson }};
   var countEl   = document.getElementById('dvBulkCount');
   var delBtn    = document.getElementById('dvBulkDelete');
 
@@ -242,14 +254,28 @@
     refresh();
   });
 
+  // A message that must survive the reload below is handed to the next page load.
+  function flash(msg, type) {
+    try { sessionStorage.setItem('wam_flash', JSON.stringify({ msg: msg, type: type })); } catch (_) {}
+  }
+
   delBtn.addEventListener('click', async function () {
     var picked = chosen();
     if (!picked.length) return;
 
-    var names = picked.slice(0, 5).map(function (c) { return '· ' + c.dataset.label; }).join('\n');
-    if (picked.length > 5) names += '\n· …and ' + (picked.length - 5) + ' more';
-    if (!confirm('Delete ' + picked.length + ' ' + (picked.length === 1 ? NOUN : NOUNP) +
-                 '?\n\n' + names + '\n\nEverything inside them is deleted too. This cannot be undone.')) return;
+    var label = picked.length + ' ' + (picked.length === 1 ? NOUN : NOUNP);
+    var names = picked.slice(0, 5).map(function (c) { return c.dataset.label; });
+    if (picked.length > 5) names.push('and ' + (picked.length - 5) + ' more');
+
+    var ok = await confirmDialog({
+      title: 'Delete ' + label + '?',
+      message: 'Everything inside them is deleted too. This cannot be undone.',
+      items: names,
+      moreIndex: picked.length > 5 ? 5 : -1,
+      confirmLabel: 'Delete ' + label,
+      danger: true,
+    });
+    if (!ok) return;
 
     delBtn.disabled = true;
     try {
@@ -261,19 +287,21 @@
       if (res.ok) {
         var out = await res.json();
         if (out.failed && out.failed.length) {
-          alert('Deleted ' + out.deleted + '. ' + out.failed.length + ' could not be deleted.');
+          flash('Deleted ' + out.deleted + '. ' + out.failed.length + ' could not be deleted.', 'warning');
+        } else {
+          flash('Deleted ' + out.deleted + ' ' + (out.deleted === 1 ? NOUN : NOUNP) + '.', 'success');
         }
         window.location.reload();
         return;
       }
       if (res.status === 401 || res.status === 403) {
-        alert('Your session has expired. Reload the page and sign in again.');
+        toast('Your session has expired. Reload the page and sign in again.', 'error');
       } else {
         var d = await res.json().catch(function () { return {}; });
-        alert(d.detail || ('Request failed (' + res.status + ').'));
+        toast(d.detail || ('Delete failed (' + res.status + ').'), 'error');
       }
     } catch (_) {
-      alert('Could not reach the server. Check your connection and try again.');
+      toast('Could not reach the server. Check your connection and try again.', 'error');
     } finally {
       delBtn.disabled = false;
     }

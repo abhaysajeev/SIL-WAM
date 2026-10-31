@@ -1,65 +1,195 @@
 /* ============================================================
-   SIL WAM · Design Tokens
-   Load this file first — before login.css and base.css.
+   SIL WAM · Design tokens  (see DESIGN.md §2–§6)
+   Load first — before base.css, docview.css and login.css.
+
+   Rules
+   - Templates and page CSS use only these variables. No hex in templates.
+   - Contrast: every text token below reaches 4.5:1 on --bg-card AND on --bg.
+   - Light theme only. No dark-mode rules.
+   - The "Legacy aliases" block at the bottom keeps pages that still use the
+     old names (--green, --ink, --line, …) working until phases 2–3 migrate them.
+     New code must not use the legacy names.
    ============================================================ */
 
 :root {
-  /* Brand green */
-  --g-start:    #17B85C;
-  --g-mid:      #0FAF58;
-  --g-end:      #089A4D;
+  /* ── Brand / primary ─────────────────────────────────────
+     #0B7340 is the brand green taken dark enough for white text
+     (5.9:1). The old bright #0FAF58 failed (2.9:1); it survives only
+     as --brand-bright for the logo and non-text decoration. */
+  --primary:         #0B7340;
+  --primary-hover:   #095F35;
+  --primary-active:  #084F2C;
+  --primary-tint:    #E8F5EE;   /* selected / success surface */
+  --primary-tint-2:  #D3EDDF;   /* success border */
+  --primary-ink:     #085C33;   /* text on --primary-tint, 7.1:1 */
+  --brand-bright:    #0FAF58;   /* decoration only — never text, never a fill under text */
 
-  --green-gradient:          linear-gradient(to right,  var(--g-start) 0%, var(--g-mid) 50%, var(--g-end) 100%);
-  --green-gradient-diagonal: linear-gradient(135deg,    var(--g-start) 0%, var(--g-mid) 50%, var(--g-end) 100%);
-  --green-gradient-vertical: linear-gradient(to bottom, var(--g-start) 0%, var(--g-end) 100%);
+  /* ── Neutrals ────────────────────────────────────────────
+     Very slightly cool-green greys so they sit with the brand. */
+  --bg:          #F6F7F7;   /* page ground, sidebar */
+  --bg-card:     #FFFFFF;   /* surfaces: cards, tables, modals, topbar */
+  --bg-subtle:   #FAFBFB;   /* inset wells, read-only inputs */
+  --bg-hover:    #F0F2F2;   /* row / item hover */
+  --bg-active:   #E7EAEA;   /* active nav pill, pressed */
 
-  --green:       #0FAF58;
-  --green-dark:  #089A4D;
-  --green-light: #17B85C;
-  --green-tint:  #E6F9EE;
+  --border:      #E3E6E6;   /* card and section edges */
+  --rule:        #ECEEEE;   /* table row rules, inner dividers */
+  --control:     #D0D5D5;   /* input / outline-button borders */
+  --control-hover: #B4BBBB;
 
-  /* Backgrounds */
-  --bg:       #F0F4F0;
-  --bg-card:  #FFFFFF;
+  /* ── Text (all ≥ 4.5:1 on white and on --bg) ─────────── */
+  --text:        #141717;   /* headings, primary cell, values      18:1 */
+  --text-2:      #3D4444;   /* body copy, secondary cells           10:1 */
+  --text-3:      #5C6363;   /* labels, meta, table headers         6.1:1 */
+  --text-4:      #646B6B;   /* placeholders, hints, counts         5.4:1 */
+  --icon:        #7A8282;   /* decorative icons only (not text)    3.9:1 */
+  --text-on-primary: #FFFFFF;
 
-  /* Borders */
-  --line:   rgba(0,0,0,.09);
-  --line-2: rgba(0,0,0,.15);
+  /* ── Status (pale tint + dark ink of the same hue) ───── */
+  --success:        var(--primary);
+  --success-tint:   var(--primary-tint);
+  --success-border: var(--primary-tint-2);
+  --success-ink:    var(--primary-ink);
 
-  /* Text */
-  --black:  #0A0A0A;
-  --ink:    #111827;
-  --ink-2:  #374151;
-  --muted:  #6B7280;
-  --subtle: #9CA3AF;
+  --danger:         #B42318;   /* text on white 6.6:1; white on it 6.6:1 */
+  --danger-hover:   #912018;
+  --danger-tint:    #FEF3F2;
+  --danger-border:  #FECDCA;
+  --danger-ink:     #912018;
 
-  /* Status */
-  --red:         #DC2626;
-  --red-dark:    #B91C1C;
-  --red-tint:    #FEF2F2;
-  --orange:      #f97316;
-  --orange-tint: #fff7ed;
-  --blue:        #3b82f6;
-  --blue-tint:   #eff6ff;
+  --warning:        #DC6803;   /* icons / bars only */
+  --warning-tint:   #FFF8EB;
+  --warning-border: #FEDF89;
+  --warning-ink:    #93370D;   /* 7:1 on tint */
 
-  /* Motion */
-  --ease: cubic-bezier(.2,.7,.2,1);
+  --info:           #2E6BD6;
+  --info-tint:      #EFF5FF;
+  --info-border:    #C7DAFE;
+  --info-ink:       #1849A9;   /* 7.5:1 on tint */
 
-  /* Typography */
-  --f-ui:   'Inter', 'Helvetica Neue', Arial, sans-serif;
-  --f-disp: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
-  --f-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --neutral-tint:   #EEF0F0;
+  --neutral-border: #E0E3E3;
+  --neutral-ink:    #3D4444;
 
-  /* Layout */
-  --sidebar-w: 196px;
-  --topbar-h:  46px;
+  /* ── Typography ──────────────────────────────────────────
+     One face (Inter). Mono only for IDs, keys, codes, phone/E.164. */
+  --f-ui:   'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Arial, sans-serif;
+  --f-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* Shadows */
-  --shadow-green: 0 4px 24px rgba(8,154,77,.3), 0 1px 4px rgba(0,0,0,.1);
-  --shadow-card:  0 1px 3px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.04);
-  --shadow-lift:  0 2px 6px rgba(0,0,0,.07), 0 8px 24px rgba(0,0,0,.07);
-  --shadow-pop:   0 4px 16px rgba(0,0,0,.10), 0 24px 64px rgba(0,0,0,.18);
+  --fs-xs:   12px;   /* badges, meta, table headers, hints */
+  --fs-sm:   13px;   /* table cells, labels, buttons, nav */
+  --fs-base: 14px;   /* body, inputs */
+  --fs-md:   16px;   /* card / section / modal titles */
+  --fs-lg:   20px;   /* KPI values, form doc title */
+  --fs-xl:   24px;   /* page title (h1) */
 
-  /* Focus ring — square, green */
-  --ring: 0 0 0 3px rgba(15,175,88,.15);
+  --lh-tight: 1.25;
+  --lh-base:  1.5;
+
+  --fw-regular:  400;
+  --fw-medium:   500;
+  --fw-semibold: 600;
+
+  /* ── Spacing (4px base) ──────────────────────────────── */
+  --s-0_5: 2px;
+  --s-1:  4px;
+  --s-1_5: 6px;
+  --s-2:  8px;
+  --s-2_5: 10px;
+  --s-3:  12px;
+  --s-4:  16px;
+  --s-5:  20px;
+  --s-6:  24px;
+  --s-8:  32px;
+  --s-10: 40px;
+  --s-12: 48px;
+
+  /* ── Radius: tight, chosen once ──────────────────────── */
+  --r-sm:   4px;    /* badges, checkboxes, kbd */
+  --r-md:   6px;    /* buttons, inputs, menu items, pager */
+  --r-lg:   8px;    /* cards, tables, sections, modals, toasts */
+  --r-full: 999px;  /* toggles, avatars, dots */
+
+  /* ── Control sizes ───────────────────────────────────── */
+  --h-sm: 28px;
+  --h-md: 34px;
+  --h-lg: 40px;
+
+  /* ── Elevation: borders at rest, shadows only on what floats ── */
+  --shadow-xs:   0 1px 2px rgba(16, 24, 24, .05);
+  --shadow-menu: 0 4px 12px rgba(16, 24, 24, .08), 0 1px 3px rgba(16, 24, 24, .06);
+  --shadow-pop:  0 16px 40px rgba(16, 24, 24, .16), 0 2px 6px rgba(16, 24, 24, .08);
+
+  --ring:        0 0 0 3px rgba(11, 115, 64, .22);
+  --ring-danger: 0 0 0 3px rgba(180, 35, 24, .18);
+
+  /* ── Layers (z-index) ────────────────────────────────── */
+  --z-sticky:   40;    /* sticky form toolbar, sticky table header */
+  --z-topbar:   50;
+  --z-overlay:  90;    /* mobile drawer scrim */
+  --z-sidebar:  100;
+  --z-dropdown: 200;   /* user menu, popovers */
+  --z-modal:    300;   /* .modal-backdrop — the one modal */
+  --z-toast:    400;
+  --z-banner:   500;   /* session-expired banner */
+
+  /* ── Motion ──────────────────────────────────────────── */
+  --ease:     cubic-bezier(.2, .7, .2, 1);
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --t-fast:   120ms;
+  --t-base:   180ms;
+
+  /* ── Layout ──────────────────────────────────────────── */
+  --sidebar-w: 232px;
+  --topbar-h:  52px;
+  --page-pad:  32px;
+  --form-max:  880px;
+
+  /* ════════════════════════════════════════════════════════
+     Legacy aliases — keep old pages working. Do not use in new code.
+     ════════════════════════════════════════════════════════ */
+  --green:        var(--primary);
+  --green-dark:   var(--primary-hover);
+  --green-light:  var(--primary);
+  --green-tint:   var(--primary-tint);
+  --g-start:      var(--primary);
+  --g-mid:        var(--primary);
+  --g-end:        var(--primary);
+  /* Gradients are retired: these resolve to a flat fill. */
+  --green-gradient:          linear-gradient(var(--primary), var(--primary));
+  --green-gradient-diagonal: linear-gradient(var(--primary), var(--primary));
+  --green-gradient-vertical: linear-gradient(var(--primary), var(--primary));
+
+  --line:    var(--border);
+  --line-2:  var(--control);
+
+  --black:   var(--text);
+  --ink:     var(--text);
+  --ink-2:   var(--text-2);
+  --muted:   var(--text-3);
+  --subtle:  var(--text-4);
+
+  --red:         var(--danger);
+  --red-dark:    var(--danger-ink);
+  --red-tint:    var(--danger-tint);
+  --orange:      var(--warning);
+  --orange-tint: var(--warning-tint);
+  --blue:        var(--info);
+  --blue-tint:   var(--info-tint);
+
+  --f-disp: var(--f-ui);   /* Space Grotesk retired */
+
+  --shadow-card:  none;
+  --shadow-lift:  none;
+  --shadow-green: none;
+
+  /* Were used but never defined (DESIGN.md Open Question 5) */
+  --text-muted:   var(--text-3);
+  --bg-secondary: var(--bg);
+  --surface:      var(--bg-card);
+  --accent:       var(--primary);
 }
+
+@media (max-width: 1024px) { :root { --page-pad: 24px; } }
+@media (max-width: 640px)  { :root { --page-pad: 16px; --topbar-h: 52px; } }
+@media (min-width: 1920px) { :root { --sidebar-w: 248px; --page-pad: 40px; } }

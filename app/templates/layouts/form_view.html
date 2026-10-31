@@ -15,59 +15,54 @@
   {% if record %}{{ record[dt.title_field] }} — {% endif %}{{ dt.title }} — SIL WhatsApp
 {% endblock %}
 
-{% block extra_css %}
-<link rel="stylesheet" href="/static/css/docview.css">
-{# Only for doctypes declaring form_tabs. .cd-tabs / .cd-tab / .cd-panel already
-   exist here for the company detail page; reusing them keeps one tab appearance
-   in the app rather than introducing a second. #}
-{% if dt.get('form_tabs') %}<link rel="stylesheet" href="/static/css/whatsapp.css">{% endif %}
+{% block topbar_crumbs %}
+{#- The topbar carries the way back to the list, so the page has no second breadcrumb. -#}
+<a class="crumb-group crumb-link" href="{{ dt.base_route }}">{{ dt.title_plural }}</a>
+<span class="crumb-sep" aria-hidden="true">/</span>
+<span class="page-title" aria-current="page">{{ record[dt.title_field] if record else 'New ' ~ dt.title }}</span>
 {% endblock %}
 
 {% block content %}
-<div class="dv-form-wrap">
+{%- set doc_name = record[dt.title_field] if record else 'New ' ~ dt.title -%}
 
-  <!-- Breadcrumb -->
-  <div class="dv-breadcrumb">
-    <a href="{{ dt.base_route }}">{{ dt.title_plural }}</a>
-    <span class="sep">/</span>
-    <span>{% if record %}{{ record[dt.title_field] }}{% else %}New {{ dt.title }}{% endif %}</span>
-  </div>
-
-  <!-- Sticky toolbar -->
-  <div class="dv-form-toolbar">
-    <div class="dv-form-doc-title">
-      {% if record %}{{ record[dt.title_field] }}{% else %}New {{ dt.title }}{% endif %}
-    </div>
+<!-- Sticky toolbar -->
+<span class="dv-sticky-sentinel" id="dvToolbarSentinel" aria-hidden="true"></span>
+<div class="dv-form-toolbar dv-form-toolbar--bleed" id="dvFormToolbar">
+  <div class="dv-form-toolbar-inner">
+    <h1 class="dv-form-doc-title">{{ doc_name }}</h1>
     <div class="dv-form-doc-status">
-      <span class="dv-save-status" id="saveStatus"></span>
+      <span class="dv-save-status" id="saveStatus" role="status"></span>
       {% if record and (perms[dt.perm_page].delete) %}
-      <div class="dv-delete-confirm" id="deleteConfirm">
-        Delete this {{ dt.title | lower }}?
-        <button class="dv-btn dv-btn-danger dv-btn-xs" id="confirmDeleteBtn">
-          <span class="btn-label">Yes, delete</span>
-          <div class="btn-spinner"></div>
+      <div class="dv-delete-confirm" id="deleteConfirm" role="group" aria-label="Confirm delete">
+        Delete this {{ dt.title if dt.title[:2].isupper() else dt.title | lower }}?
+        <button type="button" class="dv-btn dv-btn-tertiary dv-btn-sm" id="cancelDeleteBtn">Cancel</button>
+        <button type="button" class="dv-btn dv-btn-danger-solid dv-btn-sm" id="confirmDeleteBtn">
+          <span class="btn-label">Delete</span>
+          <span class="btn-spinner" aria-hidden="true"></span>
         </button>
-        <button class="dv-btn dv-btn-ghost dv-btn-xs" id="cancelDeleteBtn">Cancel</button>
       </div>
-      <button class="dv-btn dv-btn-danger dv-btn-xs" id="deleteBtn" title="Delete">
-        <i class="ti ti-trash"></i>
+      <button type="button" class="dv-btn dv-btn-danger" id="deleteBtn">
+        <i class="ti ti-trash" aria-hidden="true"></i> Delete
       </button>
       {% endif %}
       {% if (record and perms[dt.perm_page].write) or (not record and perms[dt.perm_page].create) %}
-      <button class="dv-btn dv-btn-ghost" onclick="window.location='{{ dt.base_route }}'">Cancel</button>
-      <button class="dv-btn dv-btn-primary" id="saveBtn">
-        <span class="btn-label"><i class="ti ti-device-floppy"></i> Save</span>
-        <div class="btn-spinner"></div>
+      <a href="{{ dt.base_route }}" class="dv-btn dv-btn-secondary">Cancel</a>
+      <button type="button" class="dv-btn dv-btn-primary" id="saveBtn">
+        <span class="btn-label">{% if record %}Save changes{% else %}Create {{ dt.title if dt.title[:2].isupper() else dt.title | lower }}{% endif %}</span>
+        <span class="btn-spinner" aria-hidden="true"></span>
       </button>
       {% else %}
-      <a href="{{ dt.base_route }}" class="dv-btn dv-btn-ghost">Back</a>
+      <a href="{{ dt.base_route }}" class="dv-btn dv-btn-secondary">Back</a>
       {% endif %}
     </div>
   </div>
+</div>
+
+<div class="dv-form-wrap">
 
   <!-- Error banner -->
-  <div class="dv-form-error" id="formError">
-    <i class="fas fa-exclamation-circle"></i>
+  <div class="dv-form-error" id="formError" role="alert">
+    <i class="ti ti-alert-circle" aria-hidden="true"></i>
     <span id="formErrorText"></span>
   </div>
 
@@ -83,10 +78,12 @@
   {% set tabs = dt.get('form_tabs') if record else None %}
 
   {% if tabs %}
-  <div class="cd-tabs" id="dvTabs">
+  <div class="cd-tabs" id="dvTabs" role="tablist" aria-label="{{ dt.title }} sections">
     {% for tab in tabs %}
-    <button type="button" class="cd-tab" data-panel="{{ tab.key }}">
-      {% if tab.get('icon') %}<i class="{{ tab.icon }}"></i>{% endif %} {{ tab.label }}
+    {# Tab icons from doctypes.py are not drawn: a label is enough, and they were Font Awesome. #}
+    <button type="button" class="cd-tab" role="tab" id="tab-{{ tab.key }}"
+            data-panel="{{ tab.key }}" aria-controls="panel-{{ tab.key }}" aria-selected="false">
+      {{ tab.label }}
     </button>
     {% endfor %}
   </div>
@@ -94,14 +91,14 @@
 
   <!-- Sections -->
   {% for tab in (tabs or [{'key': '_all'}]) %}
-  <div class="{% if tabs %}cd-panel{% endif %}" id="panel-{{ tab.key }}">
+  <div class="{% if tabs %}cd-panel{% endif %}" id="panel-{{ tab.key }}"{% if tabs %} role="tabpanel" aria-labelledby="tab-{{ tab.key }}"{% endif %}>
 
   {% for section in dt.form_sections %}
   {% if (not tabs) or (section.get('tab', tabs[0].key) == tab.key) %}
   {% if not section.get('create_only') or not record %}
   <div class="dv-section">
     <div class="dv-section-header">
-      <span class="dv-section-label">{{ section.label }}</span>
+      <h2 class="dv-section-label">{{ section.label }}</h2>
     </div>
     <div class="dv-section-body">
 
@@ -113,7 +110,7 @@
       <div class="dv-field {% if field.get('cols') == 2 %}col-2{% endif %}">
         <label class="dv-label" for="f_{{ field.name }}">
           {{ field.label }}
-          {% if field.get('required') and not is_readonly %}<span class="req">*</span>{% endif %}
+          {% if field.get('required') and not is_readonly %}<span class="req" aria-hidden="true">*</span><span class="sr-only">(required)</span>{% endif %}
         </label>
 
         {% if is_readonly %}
@@ -165,9 +162,9 @@
           <div class="dv-secret-wrap" id="sw_{{ field.name }}">
             <div class="dv-secret-saved">
               <span class="dv-secret-mask">••••••••••••</span>
-              <button type="button" class="dv-btn dv-btn-ghost dv-btn-xs"
+              <button type="button" class="dv-btn dv-btn-tertiary dv-btn-sm"
                       onclick="dvUnlockSecret('{{ field.name }}')">
-                <i class="ti ti-edit"></i> Change
+                <i class="ti ti-pencil" aria-hidden="true"></i> Change
               </button>
             </div>
             <input type="password" id="f_{{ field.name }}" name="{{ field.name }}"
@@ -251,6 +248,15 @@
 (function () {
   var RECORD_ID   = {{ (('"' + record_id + '"') if record_id else 'null') | safe }};
 
+  /* Sticky toolbar: draw its bottom rule only once it is actually stuck. */
+  var sentinel = document.getElementById('dvToolbarSentinel');
+  var toolbar  = document.getElementById('dvFormToolbar');
+  if (sentinel && toolbar && 'IntersectionObserver' in window) {
+    new IntersectionObserver(function (entries) {
+      toolbar.classList.toggle('is-stuck', !entries[0].isIntersecting);
+    }, { rootMargin: '-' + (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h'), 10) || 52) + 'px 0px 0px 0px' }).observe(sentinel);
+  }
+
   /* ── Tabs ──────────────────────────────────────────────────────────────
      Same switcher the company detail page uses, including the #hash deep link,
      so a tab survives a reload and can be linked to. Absent unless the doctype
@@ -264,7 +270,10 @@
     var switchTab = function (name) {
       if (panelKeys.indexOf(name) === -1) name = panelKeys[0];
       tabButtons.forEach(function (t) {
-        t.classList.toggle('active', t.dataset.panel === name);
+        var on = t.dataset.panel === name;
+        t.classList.toggle('active', on);
+        t.setAttribute('aria-selected', on ? 'true' : 'false');
+        t.tabIndex = on ? 0 : -1;
       });
       document.querySelectorAll('.cd-panel').forEach(function (p) {
         p.classList.toggle('active', p.id === 'panel-' + name);
@@ -275,8 +284,15 @@
       document.dispatchEvent(new CustomEvent('dv:tab', { detail: { panel: name } }));
     };
 
-    tabButtons.forEach(function (tab) {
+    tabButtons.forEach(function (tab, i) {
       tab.addEventListener('click', function () { switchTab(tab.dataset.panel); });
+      // Arrow keys move between tabs (WAI-ARIA tabs pattern).
+      tab.addEventListener('keydown', function (e) {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        var next = tabButtons[(i + (e.key === 'ArrowRight' ? 1 : -1) + tabButtons.length) % tabButtons.length];
+        switchTab(next.dataset.panel);
+        next.focus();
+      });
     });
     switchTab((window.location.hash || '').replace('#', '') || panelKeys[0]);
   }
@@ -385,7 +401,7 @@
               showError((hookErr && hookErr.message) || 'Save failed. Please try again.');
               return;
             }
-            statusEl.innerHTML = '<i class="fas fa-check-circle"></i> Saved';
+            statusEl.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Saved';
             statusEl.className = 'dv-save-status success';
             setTimeout(function () { statusEl.className = 'dv-save-status'; }, 3000);
           }
@@ -412,10 +428,12 @@
     deleteBtn.addEventListener('click', function () {
       deleteBtn.style.display = 'none';
       confirmWrap.classList.add('visible');
+      cancelBtn && cancelBtn.focus();
     });
     cancelBtn && cancelBtn.addEventListener('click', function () {
       confirmWrap.classList.remove('visible');
       deleteBtn.style.display = '';
+      deleteBtn.focus();
     });
     confirmBtn && confirmBtn.addEventListener('click', async function () {
       confirmBtn.classList.add('loading');

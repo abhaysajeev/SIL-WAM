@@ -6,7 +6,8 @@
   <title>{% block title %}SIL WhatsApp{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  {# Legacy: Font Awesome stays until every page is on Tabler (DESIGN.md, migration checklist). #}
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="/static/css/theme.css">
@@ -15,72 +16,73 @@
   {% block extra_css %}{% endblock %}
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+{#- Topbar breadcrumb: which sidebar group the page sits in, and its proper name. -#}
+{%- set nav_groups = {
+  'companies': 'Management', 'users': 'Management', 'roles': 'Management',
+  'error-logs': 'Management', 'webhook_config': 'Management', 'demo_messaging': 'Management',
+  'services': 'Messaging', 'conversations': 'Messaging', 'erpnext_configs': 'Messaging',
+  'broadcast': 'Broadcast', 'broadcast_settings': 'Broadcast',
+  'reports': 'Analytics',
+} -%}
+{%- set nav_names = {
+  'error-logs': 'Error Logs', 'webhook_config': 'Webhook Config', 'demo_messaging': 'Demo Messaging',
+  'erpnext_configs': 'ERPNext Config', 'broadcast': 'Broadcast Messages',
+  'broadcast_settings': 'Broadcast Settings',
+} -%}
+
+{%- macro nav(href, key, icon, label, current) -%}
+<a href="{{ href }}" class="nav-item {% if current == key %}active{% endif %}"{% if current == key %} aria-current="page"{% endif %}>
+  <i class="nav-icon ti {{ icon }}" aria-hidden="true"></i><span>{{ label }}</span>
+</a>
+{%- endmacro %}
 
 <div class="dash-layout" id="dashLayout">
 
   <!-- ── Sidebar ─────────────────────────────────────── -->
-  <aside class="sidebar" id="sidebar">
+  <aside class="sidebar" id="sidebar" aria-label="Main navigation">
 
-    <div class="sidebar-logo">
-      <div class="sidebar-brand-icon">
-        <img src="/static/img/sil_logo_new.png" alt="SIL">
-      </div>
-      <div class="sidebar-brand-text">
+    <a href="/dashboard" class="sidebar-logo">
+      <span class="sidebar-brand-icon">
+        <img src="/static/img/sil_logo_new.png" alt="" width="26" height="26">
+      </span>
+      <span class="sidebar-brand-text">
         <span class="sidebar-brand-name">SIL WhatsApp</span>
-      </div>
-    </div>
+        <span class="sidebar-brand-sub">Business messaging</span>
+      </span>
+    </a>
 
     <nav class="sidebar-nav">
 
-      <span class="nav-label">Main</span>
-      <a href="/dashboard" class="nav-item {% if active == 'dashboard' %}active{% endif %}">
-        <i class="nav-icon ti ti-layout-grid"></i> Dashboard
-      </a>
+      {{ nav('/dashboard', 'dashboard', 'ti-layout-grid', 'Dashboard', active) }}
 
       {% if perms.companies.read or perms.users.read or user.role_name == 'super_admin' %}
       <span class="nav-label">Management</span>
       {% if perms.companies.read %}
-      <a href="/companies" class="nav-item {% if active == 'companies' %}active{% endif %}">
-        <i class="nav-icon ti ti-building"></i> Companies
-      </a>
+      {{ nav('/companies', 'companies', 'ti-building', 'Companies', active) }}
       {% endif %}
       {% if perms.users.read %}
-      <a href="/users" class="nav-item {% if active == 'users' %}active{% endif %}">
-        <i class="nav-icon ti ti-users"></i> Users
-      </a>
+      {{ nav('/users', 'users', 'ti-users', 'Users', active) }}
       {% endif %}
       {% if user.role_name == 'super_admin' %}
-      <a href="/roles" class="nav-item {% if active == 'roles' %}active{% endif %}">
-        <i class="nav-icon ti ti-shield-lock"></i> Roles
-      </a>
-      <a href="/error-logs" class="nav-item {% if active == 'error-logs' %}active{% endif %}">
-        <i class="nav-icon ti ti-bug"></i> Error Logs
-      </a>
-      <a href="/webhook-config" class="nav-item {% if active == 'webhook_config' %}active{% endif %}">
-        <i class="nav-icon ti ti-webhook"></i> Webhook Config
-      </a>
-      <a href="/demo-messaging" class="nav-item {% if active == 'demo_messaging' %}active{% endif %}">
-        <i class="nav-icon ti ti-brand-whatsapp"></i> Demo Messaging
-      </a>
+      {{ nav('/roles', 'roles', 'ti-shield-lock', 'Roles', active) }}
+      {{ nav('/error-logs', 'error-logs', 'ti-bug', 'Error Logs', active) }}
+      {{ nav('/webhook-config', 'webhook_config', 'ti-webhook', 'Webhook Config', active) }}
+      {{ nav('/demo-messaging', 'demo_messaging', 'ti-brand-whatsapp', 'Demo Messaging', active) }}
       {% endif %}
       {% endif %}
 
       {% if perms.services.read or perms.conversations.read or perms.erpnext_configs.read %}
       <span class="nav-label">Messaging</span>
       {% if perms.services.read %}
-      <a href="/services" class="nav-item {% if active == 'services' %}active{% endif %}">
-        <i class="nav-icon ti ti-message-bolt"></i> Services
-      </a>
+      {{ nav('/services', 'services', 'ti-message-bolt', 'Services', active) }}
       {% endif %}
       {% if perms.conversations.read %}
-      <a href="/conversations" class="nav-item {% if active == 'conversations' %}active{% endif %}">
-        <i class="nav-icon ti ti-messages"></i> Conversations
-      </a>
+      {{ nav('/conversations', 'conversations', 'ti-messages', 'Conversations', active) }}
       {% endif %}
       {% if perms.erpnext_configs.read %}
-      <a href="/erpnext-configs" class="nav-item {% if active == 'erpnext_configs' %}active{% endif %}">
-        <i class="nav-icon ti ti-plug-connected"></i> ERPNext Config
-      </a>
+      {{ nav('/erpnext-configs', 'erpnext_configs', 'ti-plug-connected', 'ERPNext Config', active) }}
       {% endif %}
       {% endif %}
 
@@ -90,27 +92,19 @@
       {% if perms.phonebooks.read or perms.broadcast_settings.read %}
       <span class="nav-label">Broadcast</span>
       {% if perms.phonebooks.read %}
-      <a href="/broadcast" class="nav-item {% if active == 'broadcast' %}active{% endif %}">
-        <i class="nav-icon ti ti-speakerphone"></i> Broadcast Messages
-      </a>
+      {{ nav('/broadcast', 'broadcast', 'ti-speakerphone', 'Broadcast Messages', active) }}
       {% endif %}
       {% if perms.broadcast_settings.read %}
-      <a href="/broadcast-settings" class="nav-item {% if active == 'broadcast_settings' %}active{% endif %}">
-        <i class="nav-icon ti ti-adjustments"></i> Broadcast Settings
-      </a>
+      {{ nav('/broadcast-settings', 'broadcast_settings', 'ti-adjustments', 'Broadcast Settings', active) }}
       {% endif %}
       {% endif %}
 
       {% if perms.reports.read %}
       <span class="nav-label">Analytics</span>
-      <a href="/reports" class="nav-item {% if active == 'reports' %}active{% endif %}">
-        <i class="nav-icon ti ti-chart-bar"></i> Reports
-      </a>
+      {{ nav('/reports', 'reports', 'ti-chart-bar', 'Reports', active) }}
       {% endif %}
 
     </nav>
-
-    <div class="sidebar-footer">&copy; 2026 SIL WAM</div>
   </aside>
 
   <div class="sidebar-overlay" id="sidebarOverlay"></div>
@@ -120,36 +114,54 @@
 
     <header class="dash-header" id="topbar">
       <div class="header-left">
-        <button class="sidebar-toggle" id="sidebarToggle" title="Menu">
-          <i class="ti ti-menu-2"></i>
+        <button type="button" class="sidebar-toggle" id="sidebarToggle"
+                aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">
+          <i class="ti ti-menu-2" aria-hidden="true"></i>
         </button>
         {% if active %}
-        <span class="page-title">{{ active | replace('-', ' ') | replace('_', ' ') | title }}</span>
+        <nav class="topbar-crumbs" aria-label="Breadcrumb">
+          {#- A page with a parent (a record inside a list) overrides this block with
+              a link back to the list — see layouts/form_view.html. -#}
+          {% block topbar_crumbs %}
+          {% if nav_groups.get(active) %}
+          <span class="crumb-group">{{ nav_groups[active] }}</span>
+          <span class="crumb-sep" aria-hidden="true">/</span>
+          {% endif %}
+          <span class="page-title" aria-current="page">{{ nav_names.get(active) or (active | replace('-', ' ') | replace('_', ' ') | title) }}</span>
+          {% endblock %}
+        </nav>
         {% endif %}
       </div>
       <div class="header-right">
         <div class="user-menu-wrap" id="userMenuWrap">
-          <button class="user-menu-btn" id="userMenuBtn">
-            <i class="ti ti-user-circle"></i>
-            <span>{{ user.username }}</span>
-            <i class="ti ti-chevron-down user-menu-caret"></i>
+          <button type="button" class="user-menu-btn" id="userMenuBtn" aria-label="Account menu, {{ user.username }}"
+                  aria-haspopup="menu" aria-expanded="false" aria-controls="userMenuDropdown">
+            <span class="user-avatar" aria-hidden="true">{{ (user.username or '?')[:1] | upper }}</span>
+            <span class="user-menu-name">{{ user.username }}</span>
+            <i class="ti ti-chevron-down user-menu-caret" aria-hidden="true"></i>
           </button>
-          <div class="user-menu-dropdown" id="userMenuDropdown">
-            <button class="user-menu-item" id="changePasswordBtn">
-              <i class="ti ti-key"></i> Change Password
+          <div class="user-menu-dropdown" id="userMenuDropdown" role="menu" aria-label="Account">
+            <div class="user-menu-head">
+              <div class="user-menu-head-name">{{ user.username }}</div>
+              {% if user.role_name %}
+              <div class="user-menu-head-role">{{ user.role_name | replace('_', ' ') | capitalize }}</div>
+              {% endif %}
+            </div>
+            <button type="button" class="user-menu-item" id="changePasswordBtn" role="menuitem">
+              <i class="ti ti-key" aria-hidden="true"></i> Change password
             </button>
-            <div class="user-menu-divider"></div>
-            <button class="user-menu-item user-menu-item--danger" id="signOutBtn">
-              <i class="ti ti-logout"></i> Sign Out
+            <div class="user-menu-divider" role="separator"></div>
+            <button type="button" class="user-menu-item user-menu-item--danger" id="signOutBtn" role="menuitem">
+              <i class="ti ti-logout" aria-hidden="true"></i> Sign out
             </button>
           </div>
         </div>
       </div>
     </header>
 
-    <div class="dash-content page-enter">
+    <main class="dash-content page-enter" id="main" tabindex="-1">
       {% block content %}{% endblock %}
-    </div>
+    </main>
 
   </div>
 
@@ -157,25 +169,38 @@
 
 <!-- Change Password Modal -->
 <div class="modal-backdrop" id="changePasswordBackdrop">
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="changePasswordTitle">
     <div class="modal-header">
-      <span class="modal-title">Change Password</span>
-      <button class="modal-close" id="changePasswordClose">&times;</button>
+      <h2 class="modal-title" id="changePasswordTitle">Change password</h2>
+      <button type="button" class="modal-close" id="changePasswordClose" aria-label="Close">
+        <i class="ti ti-x" aria-hidden="true"></i>
+      </button>
     </div>
     <div class="modal-body">
-      <div id="changePwError" class="dv-inline-error" style="display:none"></div>
-      <div id="changePwSuccess" class="dv-inline-success" style="display:none">Password updated successfully.</div>
-      <label class="dv-label">Current Password</label>
-      <input type="password" id="currentPw" class="dv-input" placeholder="Enter current password">
-      <label class="dv-label" style="margin-top:12px">New Password</label>
-      <input type="password" id="newPw" class="dv-input" placeholder="Min 8 characters">
+      <div id="changePwError" class="dv-inline-error" role="alert" style="display:none"></div>
+      <div id="changePwSuccess" class="dv-inline-success" style="display:none">Password updated.</div>
+      <div class="modal-field">
+        <label class="dv-label" for="currentPw">Current password</label>
+        <input type="password" id="currentPw" class="dv-input" autocomplete="current-password">
+      </div>
+      <div class="modal-field">
+        <label class="dv-label" for="newPw">New password</label>
+        <input type="password" id="newPw" class="dv-input" autocomplete="new-password" aria-describedby="newPwHint">
+        <div class="dv-hint" id="newPwHint">At least 8 characters.</div>
+      </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-outline btn-sm" id="changePasswordCancel">Cancel</button>
-      <button class="btn btn-sm" id="changePasswordSave">Save</button>
+      <button type="button" class="dv-btn dv-btn-secondary" id="changePasswordCancel">Cancel</button>
+      <button type="button" class="dv-btn dv-btn-primary" id="changePasswordSave">
+        <span class="btn-label">Update password</span>
+        <span class="btn-spinner" aria-hidden="true"></span>
+      </button>
     </div>
   </div>
 </div>
+
+<!-- Toasts: window.toast(message, type) -->
+<div class="toast-region" id="toastRegion" aria-live="polite" aria-relevant="additions"></div>
 
 <script src="/static/js/sidebar.js" defer></script>
 <script>
@@ -186,14 +211,10 @@
     if (document.getElementById('wamSessionBanner')) return;
     var b = document.createElement('div');
     b.id = 'wamSessionBanner';
-    b.style.cssText = [
-      'position:fixed;top:0;left:0;right:0;z-index:99999',
-      'background:#1d4ed8;color:#fff;padding:12px 20px',
-      'font-size:13px;font-weight:500;font-family:var(--f-ui)',
-      'display:flex;align-items:center;justify-content:space-between;gap:16px',
-    ].join(';');
-    b.innerHTML = '<span><i class="fas fa-lock" style="margin-right:8px"></i>Your session has expired.</span>' +
-      '<a href="/login" style="color:#fff;font-weight:700;text-decoration:underline">Log in again</a>';
+    b.className = 'session-banner';
+    b.setAttribute('role', 'alert');
+    b.innerHTML = '<span><i class="ti ti-lock" aria-hidden="true"></i>Your session has expired.</span>' +
+      '<a href="/login">Sign in again</a>';
     document.body.prepend(b);
   }
 
@@ -247,17 +268,177 @@
   }
 </script>
 <script>
+/* ── UI kit: toast, modal, confirm dialog ─────────────────────────────────────
+   One implementation each, for every page. Replaces alert() / confirm().
+
+   toast(message, type?, opts?)
+     type: 'success' | 'error' | 'warning' | 'info' (default)
+     opts.timeout: ms before it closes (default 4000; errors 7000; 0 = stays)
+
+   wamModal.open(backdropEl, { onClose })  /  wamModal.close(backdropEl)
+     For any .modal-backdrop. Brings Esc, backdrop click, focus-in, a Tab trap and
+     focus-return with it.
+
+   confirmDialog({ title, message, items, confirmLabel, cancelLabel, danger }) -> Promise<boolean>
+     The replacement for confirm(). `items` (optional) is a list of strings shown
+     as a short list — e.g. the names about to be deleted. */
+(function () {
+  var ICONS = { success: 'ti-circle-check', error: 'ti-alert-circle',
+                warning: 'ti-alert-triangle', info: 'ti-info-circle' };
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  window.toast = function (message, type, opts) {
+    type = ICONS[type] ? type : 'info';
+    opts = opts || {};
+    var region = document.getElementById('toastRegion');
+    if (!region) return;
+    var el = document.createElement('div');
+    el.className = 'toast toast-' + type;
+    if (type === 'error') el.setAttribute('role', 'alert');
+    el.innerHTML = '<i class="toast-icon ti ' + ICONS[type] + '" aria-hidden="true"></i>' +
+      '<div class="toast-msg">' + esc(message) + '</div>' +
+      '<button type="button" class="toast-close" aria-label="Dismiss"><i class="ti ti-x" aria-hidden="true"></i></button>';
+    region.appendChild(el);
+
+    var timeout = opts.timeout != null ? opts.timeout : (type === 'error' ? 7000 : 4000);
+    var timer = null;
+    function dismiss() {
+      clearTimeout(timer);
+      el.classList.add('leaving');
+      setTimeout(function () { el.remove(); }, 150);
+    }
+    function arm() { if (timeout) timer = setTimeout(dismiss, timeout); }
+    el.querySelector('.toast-close').addEventListener('click', dismiss);
+    el.addEventListener('mouseenter', function () { clearTimeout(timer); });
+    el.addEventListener('mouseleave', arm);
+    arm();
+    return { dismiss: dismiss };
+  };
+
+  // A page that reloads after an action leaves its message here for the next load:
+  //   sessionStorage.setItem('wam_flash', JSON.stringify({ msg: '…', type: 'success' }))
+  try {
+    var flash = sessionStorage.getItem('wam_flash');
+    if (flash) {
+      sessionStorage.removeItem('wam_flash');
+      flash = JSON.parse(flash);
+      document.addEventListener('DOMContentLoaded', function () { toast(flash.msg, flash.type); });
+    }
+  } catch (_) {}
+
+  var FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+  window.wamModal = {
+    open: function (backdrop, opts) {
+      if (!backdrop || backdrop.classList.contains('open')) return;
+      opts = opts || {};
+      backdrop._wamReturn = document.activeElement;
+      backdrop._wamOnClose = opts.onClose || null;
+      backdrop.classList.add('open');
+      var first = backdrop.querySelector('[data-autofocus]') ||
+                  backdrop.querySelector('.modal-body ' + 'input:not([type=hidden]), .modal-body select, .modal-body textarea') ||
+                  backdrop.querySelector('.modal-footer .dv-btn-primary, .modal-footer .dv-btn-danger-solid') ||
+                  backdrop.querySelector(FOCUSABLE);
+      if (first) setTimeout(function () { first.focus(); }, 30);
+    },
+    close: function (backdrop) {
+      if (!backdrop || !backdrop.classList.contains('open')) return;
+      backdrop.classList.remove('open');
+      var cb = backdrop._wamOnClose; backdrop._wamOnClose = null;
+      if (backdrop._wamReturn && backdrop._wamReturn.focus) backdrop._wamReturn.focus();
+      if (cb) cb();
+    },
+  };
+
+  // Esc closes the top-most open modal; Tab stays inside it.
+  document.addEventListener('keydown', function (e) {
+    var open = document.querySelectorAll('.modal-backdrop.open');
+    if (!open.length) return;
+    var top = open[open.length - 1];
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      var closer = top.querySelector('[data-modal-cancel], .modal-close');
+      if (closer) closer.click(); else wamModal.close(top);
+    } else if (e.key === 'Tab') {
+      var items = Array.prototype.filter.call(top.querySelectorAll(FOCUSABLE),
+        function (n) { return n.offsetParent !== null; });
+      if (!items.length) return;
+      var firstEl = items[0], lastEl = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === firstEl) { e.preventDefault(); lastEl.focus(); }
+      else if (!e.shiftKey && document.activeElement === lastEl) { e.preventDefault(); firstEl.focus(); }
+    }
+  });
+
+  window.confirmDialog = function (o) {
+    o = o || {};
+    return new Promise(function (resolve) {
+      var bd = document.createElement('div');
+      bd.className = 'modal-backdrop';
+      var items = (o.items || []).map(function (t, i) {
+        return '<li' + (o.moreIndex === i ? ' class="more"' : '') + '>' + esc(t) + '</li>';
+      }).join('');
+      bd.innerHTML =
+        '<div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="wamConfirmTitle" aria-describedby="wamConfirmMsg">' +
+          '<div class="modal-header"><h2 class="modal-title" id="wamConfirmTitle">' + esc(o.title || 'Are you sure?') + '</h2></div>' +
+          '<div class="modal-body"><p id="wamConfirmMsg">' + esc(o.message || '') + '</p>' +
+            (items ? '<ul class="modal-list">' + items + '</ul>' : '') + '</div>' +
+          '<div class="modal-footer">' +
+            // A destructive confirm starts focused on Cancel, so Enter alone never deletes.
+            '<button type="button" class="dv-btn dv-btn-secondary" data-modal-cancel' + (o.danger ? ' data-autofocus' : '') + '>' + esc(o.cancelLabel || 'Cancel') + '</button>' +
+            '<button type="button" class="dv-btn ' + (o.danger ? 'dv-btn-danger-solid' : 'dv-btn-primary') + '" data-modal-ok' + (o.danger ? '' : ' data-autofocus') + '>' +
+              esc(o.confirmLabel || 'Confirm') + '</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(bd);
+      var settled = false;
+      function done(val) {
+        if (settled) return; settled = true;
+        wamModal.close(bd);
+        setTimeout(function () { bd.remove(); }, 200);
+        resolve(val);
+      }
+      bd.querySelector('[data-modal-ok]').addEventListener('click', function () { done(true); });
+      bd.querySelector('[data-modal-cancel]').addEventListener('click', function () { done(false); });
+      bd.addEventListener('click', function (e) { if (e.target === bd) done(false); });
+      // next frame, so the opacity transition runs
+      requestAnimationFrame(function () { wamModal.open(bd); });
+    });
+  };
+})();
+</script>
+<script>
   (function () {
     // ── User menu dropdown ──────────────────────────────────────
     var menuBtn = document.getElementById('userMenuBtn');
     var dropdown = document.getElementById('userMenuDropdown');
 
+    function setMenu(open) {
+      dropdown.classList.toggle('open', open);
+      menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
     menuBtn.addEventListener('click', function (e) {
       e.stopPropagation();
-      dropdown.classList.toggle('open');
+      var open = !dropdown.classList.contains('open');
+      setMenu(open);
+      // Keyboard activation (Enter/Space reports detail 0) moves focus into the menu;
+      // a mouse click leaves it on the button.
+      if (open && e.detail === 0) { var f = dropdown.querySelector('.user-menu-item'); if (f) f.focus(); }
     });
-    document.addEventListener('click', function () {
-      dropdown.classList.remove('open');
+    document.addEventListener('click', function () { setMenu(false); });
+    dropdown.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { setMenu(false); menuBtn.focus(); }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        var items = Array.prototype.slice.call(dropdown.querySelectorAll('.user-menu-item'));
+        var i = items.indexOf(document.activeElement);
+        i = e.key === 'ArrowDown' ? (i + 1) % items.length : (i - 1 + items.length) % items.length;
+        items[i].focus();
+      }
     });
 
     // ── Sign out (no confirmation) ──────────────────────────────
@@ -265,7 +446,7 @@
       document.getElementById('dashLayout').classList.add('signing-out');
       localStorage.removeItem('wam_access_token');
       localStorage.removeItem('wam_refresh_token');
-      setTimeout(function () { window.location.href = '/auth/logout'; }, 300);
+      setTimeout(function () { window.location.href = '/auth/logout'; }, 150);
     });
 
     // ── Change password modal ───────────────────────────────────
@@ -274,15 +455,15 @@
     var successEl = document.getElementById('changePwSuccess');
 
     function openModal() {
-      dropdown.classList.remove('open');
+      setMenu(false);
       document.getElementById('currentPw').value = '';
       document.getElementById('newPw').value = '';
       errorEl.style.display = 'none';
       successEl.style.display = 'none';
-      backdrop.classList.add('open');
+      wamModal.open(backdrop);
     }
     function closeModal() {
-      backdrop.classList.remove('open');
+      wamModal.close(backdrop);
     }
 
     document.getElementById('changePasswordBtn').addEventListener('click', openModal);
@@ -299,19 +480,19 @@
       successEl.style.display = 'none';
 
       if (!currentPw || !newPw) {
-        errorEl.textContent = 'Both fields are required.';
-        errorEl.style.display = 'block';
+        errorEl.textContent = 'Enter your current password and a new one.';
+        errorEl.style.display = 'flex';
         return;
       }
       if (newPw.length < 8) {
-        errorEl.textContent = 'New password must be at least 8 characters.';
-        errorEl.style.display = 'block';
+        errorEl.textContent = 'The new password needs at least 8 characters.';
+        errorEl.style.display = 'flex';
         return;
       }
 
       var saveBtn = document.getElementById('changePasswordSave');
       saveBtn.disabled = true;
-      saveBtn.textContent = 'Saving…';
+      saveBtn.classList.add('loading');
 
       fetchWithAuth('/api/auth/change-password', {
         method: 'POST',
@@ -320,22 +501,22 @@
       })
       .then(function (res) {
         if (res.status === 204) {
-          successEl.style.display = 'block';
-          setTimeout(closeModal, 1200);
+          closeModal();
+          toast('Password updated.', 'success');
         } else {
           return res.json().then(function (data) {
             errorEl.textContent = data.detail || 'Something went wrong.';
-            errorEl.style.display = 'block';
+            errorEl.style.display = 'flex';
           });
         }
       })
       .catch(function () {
-        errorEl.textContent = 'Network error. Please try again.';
-        errorEl.style.display = 'block';
+        errorEl.textContent = 'Could not reach the server. Check your connection and try again.';
+        errorEl.style.display = 'flex';
       })
       .finally(function () {
         saveBtn.disabled = false;
-        saveBtn.textContent = 'Save';
+        saveBtn.classList.remove('loading');
       });
     });
   })();

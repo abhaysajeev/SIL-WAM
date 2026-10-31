@@ -3,77 +3,58 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign In &mdash; SIL Whatsapp</title>
+  <title>Sign in — SIL WhatsApp</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="/static/css/theme.css">
   <link rel="stylesheet" href="/static/css/login.css">
 </head>
 <body>
 
-<div class="login-card">
+<main class="auth">
 
-  <!-- ── LEFT ───────────────────────────────────────────── -->
-  <div class="card-left">
-    <img src="/static/img/sil_logo_new.png" alt="SIL Whatsapp" class="brand-logo">
-    <div class="brand-title">SIL WhatsApp</div>
-    <div class="brand-rule"></div>
-    <div class="brand-sub">Business Messaging<br>Manager</div>
+  <div class="auth-brand">
+    <img src="/static/img/sil_logo_new.png" alt="" class="auth-logo" width="40" height="40">
+    <span class="auth-brand-name">SIL WhatsApp</span>
   </div>
 
-  <!-- ── RIGHT ──────────────────────────────────────────── -->
-  <div class="card-right">
+  <div class="auth-card">
+    <h1 class="auth-title">Sign in</h1>
+    <p class="auth-sub">Manage WhatsApp Business messaging.</p>
 
-    <span class="form-eyebrow">Platform Access</span>
-    <h1 class="form-headline">Welcome back</h1>
-    <p class="form-sub">Sign in to manage your WhatsApp Business messages.</p>
+    <div id="errorContainer" aria-live="assertive"></div>
 
-    <div class="divider"></div>
-
-    <div id="errorContainer"></div>
-
-    <form id="loginForm" class="form" novalidate>
-      <div class="field">
-        <label class="label" for="username">Username</label>
-        <div class="input-wrap">
-          <i class="fas fa-user input-prefix-icon"></i>
-          <input type="text" id="username" name="username" class="input input-with-icon"
-                 placeholder="Enter your username"
-                 required autofocus autocomplete="username">
-        </div>
+    <form id="loginForm" class="auth-form" novalidate>
+      <div class="auth-field">
+        <label class="auth-label" for="username">Username</label>
+        <input type="text" id="username" name="username" class="auth-input"
+               required autofocus autocomplete="username" autocapitalize="none" spellcheck="false">
       </div>
 
-      <div class="field">
-        <label class="label" for="password">Password</label>
-        <div class="input-wrap">
-          <i class="fas fa-lock input-prefix-icon"></i>
-          <input type="password" id="password" name="password" class="input input-with-icon"
-                 placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
+      <div class="auth-field">
+        <label class="auth-label" for="password">Password</label>
+        <div class="auth-input-wrap">
+          <input type="password" id="password" name="password" class="auth-input"
                  required autocomplete="current-password">
-          <button type="button" class="input-suffix-btn" id="pwdToggle" tabindex="-1"
-                  aria-label="Toggle password visibility">
-            <i class="fas fa-eye" id="pwdIcon"></i>
+          <button type="button" class="auth-reveal" id="pwdToggle"
+                  aria-label="Show password" aria-pressed="false">
+            <i class="ti ti-eye" id="pwdIcon" aria-hidden="true"></i>
           </button>
         </div>
       </div>
 
-      <button type="submit" class="btn-submit" id="loginBtn">
-        <span class="btn-label">Sign In</span>
-        <span class="btn-arrow">&rarr;</span>
-        <div class="btn-spinner"></div>
+      <button type="submit" class="auth-submit" id="loginBtn">
+        <span class="btn-label">Sign in</span>
+        <span class="btn-spinner" aria-hidden="true"></span>
       </button>
     </form>
-
-    <div class="card-footer">
-      <span class="footer-note">SIL WAM &middot; 2026</span>
-      <span class="footer-dot"></span>
-    </div>
-
   </div>
 
-</div><!-- /.login-card -->
+  <p class="auth-foot">Forgot your password? Ask an administrator to reset it.</p>
+
+</main>
 
 <script>
   (function () {
@@ -84,12 +65,22 @@
     pwdToggle.addEventListener('click', function () {
       var show = pwdInput.type === 'password';
       pwdInput.type = show ? 'text' : 'password';
-      pwdIcon.className = show ? 'fas fa-eye-slash' : 'fas fa-eye';
+      pwdIcon.className = show ? 'ti ti-eye-off' : 'ti ti-eye';
+      pwdToggle.setAttribute('aria-pressed', show ? 'true' : 'false');
+      pwdToggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
     });
 
     function showError(msg) {
-      document.getElementById('errorContainer').innerHTML =
-        '<div class="error-msg"><i class="fas fa-exclamation-circle"></i> ' + msg + '</div>';
+      var box = document.createElement('div');
+      box.className = 'auth-error';
+      box.setAttribute('role', 'alert');
+      box.innerHTML = '<i class="ti ti-alert-circle" aria-hidden="true"></i>';
+      var text = document.createElement('span');
+      text.textContent = msg;
+      box.appendChild(text);
+      var c = document.getElementById('errorContainer');
+      c.innerHTML = '';
+      c.appendChild(box);
     }
 
     document.getElementById('loginForm').addEventListener('submit', async function (e) {
@@ -118,11 +109,11 @@
           var err = await res.json().catch(function () { return {}; });
           showError(res.status === 403
             ? 'Your account is disabled. Contact your administrator.'
-            : (err.detail || 'Invalid username or password.'));
+            : (err.detail || 'Incorrect username or password.'));
           btn.classList.remove('loading');
         }
       } catch (_) {
-        showError('Unable to reach the server. Please check your connection.');
+        showError('Could not reach the server. Check your connection and try again.');
         btn.classList.remove('loading');
       }
     });
