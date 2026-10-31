@@ -9,7 +9,26 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     MAX_LOGIN_ATTEMPTS: int = 5      # failed attempts before lockout
     LOCKOUT_MINUTES: int = 15        # how long the account stays locked
+
+    # ── Agent app sessions ────────────────────────────────────────────────────
+    # Agent tokens have no absolute expiry — they live until revoked. This is the
+    # idle cutoff instead: a session unused for this long stops working. It is
+    # housekeeping for handsets replaced or wiped without anyone saying so, not a
+    # security control; disabling a user or revoking a session is already instant.
+    AGENT_SESSION_IDLE_DAYS: int = 90
+    # last_used_at is only rewritten when it is older than this. Touching it on
+    # every request would mean a row UPDATE per read and needless contention, and
+    # since the cutoff above is measured in days the imprecision is irrelevant.
+    AGENT_SESSION_TOUCH_MINUTES: int = 5
     APP_TITLE: str = "SIL WhatsApp Manager"
+
+    # The timezone the ADMIN PANEL renders timestamps in. Storage is always UTC —
+    # Postgres runs on Etc/UTC and every column is timezone-aware — because the
+    # message pipeline compares instants across Meta webhooks, schedulers and the
+    # agent app, and a localised database makes those comparisons quietly wrong.
+    # This setting only decides what a person reads on screen.
+    # Any IANA name: "Asia/Kolkata", "Asia/Dubai", "UTC".
+    DISPLAY_TIMEZONE: str = "Asia/Kolkata"
     DEBUG: bool = True
     FB_APP_ID: str = ""
     META_APP_SECRET: str = ""

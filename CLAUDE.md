@@ -37,7 +37,32 @@ venv/bin/python run.py create-superadmin <username> <password>
 - **super_admin = code bypass** — no permission rows in DB; code checks `role_name == "super_admin"` directly
 - **super_admin cannot be created/edited/deleted from UI** — CLI only
 - **NULL role_id SQL filter** — `(col != val) | col.is_(None)` because `NULL != UUID` = NULL in SQL
-- **`dv_search_text` filter** — must register in each route file using `list_view.html`
+- **Page routes build templates with `build_templates()`** from `app/core/templating.py` —
+  never `Jinja2Templates(...)` directly. It registers every shared filter and global
+  (`dv_search_text`, `ts`, `page_url`) in one place, so a new route file gets them for free.
+- **A customer's message history lives in `agent_threads` / `agent_messages`**, written
+  only through `app/services/agent_timeline.py`. Never write those tables directly: the
+  `seq` must be allocated with `UPDATE ... RETURNING` under the thread's row lock, or the
+  sequence gaps and the app's "everything after seq N" sync silently loses messages.
+  Timeline writes join the caller's transaction, never commit, and are wrapped in a
+  SAVEPOINT so a failure there can never discard the caller's staged work.
+- **Only an inbound message opens the 24-hour window.** Sending never does. Set
+  `last_inbound_at` from `record_inbound` and nowhere else — treating a template send as
+  opening the window produces free-text sends Meta rejects with 131047.
+- **Broadcast tuning is per-company** — read it with `broadcast_config.get(db, company_id)`
+  from `app/core/broadcast_config.py`, never a hardcoded constant. It always returns a
+  usable frozen snapshot, falling back to `DEFAULTS` for a company with no row, and it
+  clamps every value it reads so a bad row degrades rather than stalling the queue.
+- **Worker threads must never touch a mapped object.** `expire_on_commit` is on, so an
+  attribute read after a commit is a lazy SELECT on a Session owned by another thread.
+  Copy what you need into a frozen dataclass on the main thread first — see `_Creds`,
+  `_Tpl` and `_Job` in `broadcast_scheduler.py`. This is also why send concurrency costs
+  threads and not connections from the shared pool.
+- **Never `.strftime()` a timestamp for display.** Storage and the JSON APIs are UTC; only
+  the browser knows the viewer's timezone. Print `{{ ts(value) }}` — or `{{ ts(value, 'date') }}` /
+  `'time'` — which emits a `<time>` tag that `base.html` localises. In a list_view doctype,
+  give the column `"type": "datetime"` (or `"date"`/`"time"`) and pass the raw value from the
+  route, not a pre-formatted string.
 
 ## Permission Guards — Never Omit These
 
@@ -107,7 +132,14 @@ omitting it.
 2. Use `require("resource_name", "action")` in the API router/routes
 3. Check `ctx["perms"]["resource_name"]["read"]` in the page route
 4. Add sidebar link in `base.html` gated by `{% if perms.resource_name.read %}`
-5. Do NOT add Messaging-style resources to RESOURCES until the routes actually exist
+5. **Add a migration granting the resource to the `admin` role.** The original seed
+   granted admin only the pages that existed when it ran, so anything added later is
+   invisible to every non-super-admin until a migration says so. See
+   `c1f8a3d76e42` (agents) and `f2b5d8c03e49` (broadcast_settings).
+   **The test suite cannot catch this** — tests authenticate as `super_admin`, which
+   bypasses `require()` entirely, so the page passes every test and then 403s for the
+   only people meant to use it. Verify by logging in as an `admin`.
+6. Do NOT add Messaging-style resources to RESOURCES until the routes actually exist
 
 ## Auth Pattern
 
@@ -123,7 +155,7 @@ omitting it.
 4. `venv/bin/alembic revision --autogenerate -m "add <name>"` + review + `upgrade head`
 5. `app/schemas/<name>.py` — Pydantic Out/Create/Update schemas
 6. `app/api/<name>_api.py` — CRUD with `require()` guards
-7. `app/routes/<name>_pages.py` — SSR list + form routes; register `dv_search_text` filter
+7. `app/routes/<name>_pages.py` — SSR list + form routes; use `build_templates()`
 8. `app/core/doctypes.py` — add doctype config dict
 9. `app/templates/base.html` — add sidebar link with permission check
 10. `app/main.py` — `include_router` for both API and page routers

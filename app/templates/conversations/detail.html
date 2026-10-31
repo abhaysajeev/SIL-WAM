@@ -140,11 +140,11 @@
   </div>
   <div class="cd-info-item">
     <div class="cd-info-label">First Contact</div>
-    <div class="cd-info-val">{{ conv.first_contact_at.strftime('%d %b %Y') if conv.first_contact_at else '—' }}</div>
+    <div class="cd-info-val">{{ ts(conv.first_contact_at, 'date') }}</div>
   </div>
   <div class="cd-info-item">
     <div class="cd-info-label">Last Activity</div>
-    <div class="cd-info-val">{{ conv.last_activity_at.strftime('%d %b %Y  %H:%M') if conv.last_activity_at else '—' }}</div>
+    <div class="cd-info-val">{{ ts(conv.last_activity_at) }}</div>
   </div>
 </div>
 
@@ -204,7 +204,7 @@
         </div>
 
         <div class="cd-msg-footer">
-          <span class="cd-ts">{{ msg.created_at.strftime('%d %b  %H:%M') if msg.created_at else '' }}</span>
+          <span class="cd-ts">{{ ts(msg.created_at, 'time', empty='') }}</span>
           {% if msg.message_type != 'template' %}
           <span class="cd-type">{{ msg.message_type }}</span>
           {% endif %}
@@ -242,7 +242,7 @@
           <span class="cd-svc-badge cd-badge-{{ svc.status }}">
             {{ svc.status | replace('_', ' ') | title }}
           </span>
-          <span>{{ svc.created_at.strftime('%d %b %Y') if svc.created_at else '—' }}</span>
+          <span>{{ ts(svc.created_at, 'date') }}</span>
         </div>
         <a href="/services/{{ svc.id }}" class="cd-svc-link"><i class="ti ti-external-link"></i> View full service</a>
 

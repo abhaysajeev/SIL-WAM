@@ -77,7 +77,7 @@
       <span><i class="fas fa-code"></i> {{ log.method }}</span>
       {% if log.user %}<span><i class="fas fa-user"></i> {{ log.user }}</span>{% endif %}
       {% if log.ip_address %}<span><i class="fas fa-network-wired"></i> {{ log.ip_address }}</span>{% endif %}
-      {% if log.created_at %}<span><i class="fas fa-clock"></i> {{ log.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</span>{% endif %}
+      {% if log.created_at %}<span><i class="fas fa-clock"></i> {{ ts(log.created_at) }}</span>{% endif %}
       <span>
         {% if log.seen %}
         <span class="el-badge-seen"><i class="fas fa-check-circle"></i> Seen</span>

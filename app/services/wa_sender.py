@@ -23,7 +23,38 @@ GRAPH_BASE = "https://graph.facebook.com/v21.0"
 # ok          — True if Meta accepted the message
 # meta_message_id — wamid string (e.g. "wamid.xxx") on success, None on failure
 # error       — human-readable error string on failure, None on success
-SendResult = namedtuple("SendResult", ["ok", "meta_message_id", "error"])
+# is_transient — True if retrying this exact send could plausibly succeed
+#
+# is_transient must be decided HERE, at the except/status site, because that is the
+# only place the exception type and HTTP status still exist. By the time a caller sees
+# the result it has only `error`, a human-readable string, and classifying a timeout by
+# matching on that string would be guesswork that silently breaks when a message
+# changes. Defaults to False so a failure is terminal unless something positively
+# identifies it as retryable.
+SendResult = namedtuple(
+    "SendResult",
+    ["ok", "meta_message_id", "error", "is_transient"],
+    defaults=[False],
+)
+
+
+# 5xx is Meta having a bad moment; 429 is us being asked to slow down. Both are worth
+# another attempt. Every other 4xx is a statement about the request itself, which will
+# be just as wrong the second time.
+def _status_is_transient(status_code: int) -> bool:
+    return status_code >= 500 or status_code == 429
+
+
+def _exception_is_transient(exc: Exception) -> bool:
+    """
+    Network-level failures only.
+
+    httpx.TransportError covers timeouts, connection refusals, DNS failures and read
+    errors — the send may never have reached Meta, so retrying is both safe and likely
+    to work. Anything else reaching this handler is a bug in our own code, and retrying
+    a bug just runs it again.
+    """
+    return isinstance(exc, httpx.TransportError)
 
 
 def send_template(
@@ -39,9 +70,16 @@ def send_template(
 
     body_params  — ordered list of substitution values for {{1}}, {{2}}, ...
     cta_urls     — {button_index_str: url_value} for URL-button components, or None
-    header_media — {"format": "image"|"document"|"video", "link": url, "filename": ...}
-                   for templates with a media header, or None. Meta fetches the link
-                   itself at send time, so it must be publicly reachable over HTTPS.
+    header_media — {"format": "image"|"document"|"video", "filename": ...} plus exactly
+                   one of:
+                     "link"     — a public URL Meta fetches itself at send time, so it
+                                  must be reachable over HTTPS from Meta's servers
+                     "media_id" — a file already uploaded to this phone number via
+                                  meta_media.upload_media(); Meta serves it from its own
+                                  storage, which is what a broadcast wants: one upload
+                                  for two thousand sends instead of two thousand fetches
+                                  of somebody's web server
+                   or None for a text header. `media_id` wins if both are present.
 
     header_media is deliberately the last parameter: queue_manager and
     broadcast_scheduler both call this positionally, and several tests assert on
@@ -51,9 +89,10 @@ def send_template(
 
     # Meta expects header before body. Order is not enforced by the API, but a payload
     # that reads in message order is far easier to debug against their error messages.
-    if header_media and header_media.get("link"):
+    if header_media and (header_media.get("media_id") or header_media.get("link")):
         fmt = str(header_media.get("format", "image")).lower()
-        media_obj: dict = {"link": header_media["link"]}
+        media_id = header_media.get("media_id")
+        media_obj: dict = {"id": media_id} if media_id else {"link": header_media["link"]}
         if fmt == "document" and header_media.get("filename"):
             # Without this the customer sees the URL's last path segment as the title.
             media_obj["filename"] = header_media["filename"]
@@ -104,14 +143,17 @@ def send_template(
             return SendResult(ok=True, meta_message_id=wamid, error=None)
         logger.error("Meta template send failed HTTP %s: %s | payload: %s", res.status_code, data, message_body)
         err_msg = data.get("error", {}).get("message", f"Meta returned HTTP {res.status_code}")
-        return SendResult(ok=False, meta_message_id=None, error=err_msg)
+        return SendResult(ok=False, meta_message_id=None, error=err_msg,
+                          is_transient=_status_is_transient(res.status_code))
     except Exception as e:
         log_error(
             "WhatsApp template send failed",
             f"wa_sender.send_template → {account.phone_number_id}",
             e,
         )
-        return SendResult(ok=False, meta_message_id=None, error="WhatsApp send failed (internal error)")
+        return SendResult(ok=False, meta_message_id=None,
+                          error="WhatsApp send failed (internal error)",
+                          is_transient=_exception_is_transient(e))
 
 
 def send_text(
@@ -222,11 +264,14 @@ def _post_message(account: WhatsAppAccount, message_body: dict, caller: str) -> 
             return SendResult(ok=True, meta_message_id=wamid, error=None)
         err_msg = data.get("error", {}).get("message", f"Meta returned HTTP {res.status_code}")
         # Preserve raw error for 131026 detection by callers
-        return SendResult(ok=False, meta_message_id=None, error=err_msg)
+        return SendResult(ok=False, meta_message_id=None, error=err_msg,
+                          is_transient=_status_is_transient(res.status_code))
     except Exception as e:
         log_error(
             f"WhatsApp {caller} failed",
             f"wa_sender.{caller} → {account.phone_number_id}",
             e,
         )
-        return SendResult(ok=False, meta_message_id=None, error="WhatsApp send failed (internal error)")
+        return SendResult(ok=False, meta_message_id=None,
+                          error="WhatsApp send failed (internal error)",
+                          is_transient=_exception_is_transient(e))

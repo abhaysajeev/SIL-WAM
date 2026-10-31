@@ -64,6 +64,21 @@ def login(request: Request, payload: LoginRequest, db: Session = Depends(get_db)
     if not user.is_active:
         raise _403_disabled
 
+    # Agents belong to the mobile app, not here. They hold no web permissions, so
+    # letting them in would mean a session that renders access-denied on every page —
+    # a clear refusal is kinder and stops an agent-app credential becoming a panel
+    # session. They sign in at POST /agent-api/v1/auth/login instead.
+    # No `role` relationship on User — only role_id — so the name is looked up.
+    role_name = db.execute(
+        text("SELECT name FROM roles WHERE id = :rid"),
+        {"rid": str(user.role_id)},
+    ).scalar() if user.role_id else None
+    if role_name == "agent":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is for the agent app. Sign in from the app instead.",
+        )
+
     # Successful login — reset lockout state
     user.last_login_at = datetime.now(timezone.utc)
     user.failed_login_attempts = 0

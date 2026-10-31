@@ -4,10 +4,10 @@ import uuid as uuid_mod
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.templating import build_templates
 from app.core.deps import get_page_user
 from app.core.doctypes import USERS_DOCTYPE
 from app.models.company import Company
@@ -17,7 +17,7 @@ from app.models.user import User
 _SUPER_ADMIN_ROLE_ID = uuid_mod.UUID("00000000-0000-0000-0000-000000000001")
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+templates = build_templates()
 
 
 def _dv_search_text(row: dict) -> str:

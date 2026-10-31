@@ -1,6 +1,6 @@
 # Broadcast Campaign Messaging — System Design
 
-**Status:** design agreed, nothing implemented.
+**Status:** implemented and in production. Media headers added 2026-09-01 — Standard (§5.1) and Personalized, shared or per-row (§5.2). Deferred as of 2026-08-21: agent routing (§11), broadcast settings, and the tier/quality/health checks in §6 — screening currently covers opt-out, US numbers and invalid-number warnings only.
 **Date:** 2026-07-31
 **Companion doc:** [`BROADCAST_TIPS.md`](./BROADCAST_TIPS.md) — Meta platform rules, limits,
 tiers, per-user marketing limits and the verified API reference. **Read that first**; this
@@ -29,8 +29,18 @@ deferred), RBAC permissions, broadcast settings beyond defaults.
 | Realistic max campaign | ~5,000–10,000 recipients |
 | Softland's daily tier | `TIER_10K` (10,000 unique / rolling 24h) |
 
-Throughput is **not** a constraint at this scale: 2,000 sends at ~15 concurrent is roughly
-30 seconds. Design pressure comes from compliance, correctness and shared budget — not speed.
+Throughput is **not** a constraint at this scale — but only because the send loop is
+actually concurrent, which it was not until 2026-09-07. This section previously claimed
+"2,000 sends at ~15 concurrent is roughly 30 seconds" while the implementation was a
+plain serial `for` loop; at the measured Meta round-trip of ~2.5s that was **83 minutes**,
+not 30 seconds. The gap went unnoticed because no campaign had yet exceeded a handful of
+recipients.
+
+Concurrency is now `send_concurrency` in per-company Broadcast Settings (default 10), so
+2,000 recipients take roughly 8 minutes. Design pressure still comes from compliance,
+correctness and shared budget rather than speed — but a claim about throughput in this
+document is now checked by `test_sends_actually_overlap`, which uses a thread barrier no
+serial loop can satisfy.
 
 ---
 
@@ -206,6 +216,109 @@ No temp structure, no in-memory parse, no handoff. Benefits: pagination is plain
 user can leave and return, per-row validation errors persist, and the worker reads exactly
 what the user approved.
 
+### 5.1 Header media — one file for the whole campaign
+
+A marketing broadcast reaches a cold contact, so it can only ever be an approved
+template; a bare image message would need an open 24-hour window. The only way to put a
+picture in a broadcast is therefore the template's own **media header**, which Meta
+approved as part of the template's structure. The header's *format* is fixed by the
+approval (`IMAGE`, `DOCUMENT`, `VIDEO`); only the file varies per send.
+
+Standard campaigns send one message to everyone, so they take **one file for the whole
+campaign**, stored on `broadcast_campaigns.header_media`.
+
+**Two ways to supply it, converging on one media id** — mirroring how Case 1 and Case 2
+converge on one recipient table:
+
+| Source | What happens at attach | What the send does |
+|---|---|---|
+| Upload from the user's machine | Bytes → `meta_media.upload_media` | `{"id": media_id}` |
+| Paste a public URL | `meta_media.fetch_url` downloads it **once**, then the same upload | `{"id": media_id}` |
+
+**A link is resolved on attach, never passed through to Meta.** Meta will accept a URL in
+the send payload and fetch it itself — once per recipient. At 2,000 recipients that is
+2,000 requests against somebody else's web server during the campaign, any one of which
+can time out or 404, and each failure is a customer who received nothing, discovered later
+from a delivery receipt. Downloading once and uploading once collapses that to a single
+fetch whose failure is visible immediately, in the field the user pasted into.
+
+So the two sources differ only in where the bytes came from. `source` and `source_url` are
+recorded as provenance — enough for the campaign to say "downloaded from https://…" — and
+are never used to address a send. A campaign stops depending on the original address the
+moment it is attached.
+
+> 🚩 **`fetch_url` downloads an address a user typed, from inside our network.** That is a
+> way to read what only the server can reach — cloud metadata at `169.254.169.254`, the
+> database host, an internal admin page. Every resolved address must be `is_global`, and
+> **redirects are followed by hand, three hops at most, validating each one**: following
+> them automatically lets a public URL redirect to a private address, which is the whole
+> trick. The read is also capped at the format's own size limit, so a wrong address cannot
+> pull a gigabyte into memory before the size check that would have rejected it.
+
+> ⚠️ **The file is never stored on our disk.** The app container has no persistent volume,
+> so anything written locally is lost on the next deploy. An uploaded file lives on Meta
+> (30-day retention) and is read back through `meta_media.fetch_media` when the UI needs
+> to show it. That download is the codebase's only Meta media *read*, and the agent inbox
+> design (`AGENT_INBOX_DESIGN.md` §11) needs the same one for inbound media.
+
+**The preview URL is a page route, not an API route.** `GET /broadcast/media/{company_id}/{media_id}`
+proxies the bytes under the session cookie, because the thumbnail is an `<img>` tag and
+clicking it opens a browser tab — neither can attach the Bearer token `/api/*` expects.
+Meta's own media URL can never be handed to the browser: it is short-lived and only works
+with the access token attached.
+
+**Validation is at build, not send** — the same rule §5 already applies to parameter
+counts, and for the same reason, only sharper here. A media-header template with no file
+attached is accepted by every check up to and including screening, and then Meta rejects
+**every** message for a missing header component. `_resolve_header_media` refuses both
+mismatches at `POST /{id}/recipients`: media required and absent, and media supplied for
+a template with a text header. `POST /{id}/send` re-checks, which catches the two cases
+the build check cannot see — a campaign built before this feature existed, and a template
+whose header changed after the campaign was built.
+
+### 5.2 Personalized — shared or individual images
+
+A personalized campaign varies its parameters per row, so whether the *image* varies too
+cannot be assumed. The builder asks, and the answer is stored on
+`broadcast_campaigns.header_media_mode`:
+
+| Mode | Where the file comes from | What the send addresses |
+|---|---|---|
+| `shared` | One file attached in the form, exactly as §5.1 | `{"id": media_id}` — one upload, N sends |
+| `per_row` | A URL column in the CSV, on `broadcast_recipients.header_media_url` | `{"link": url}` — that row's address |
+
+**Per-row sends a link, and that is not a reversal of §5.1.** The rule §5.1 protects is
+about *amplification*: one address fetched once per recipient turns a single dead link into
+thousands of undelivered messages. Per-row has no amplification — each row is one message,
+so each address is fetched exactly once, which is the same single request downloading it
+ourselves would have cost. Resolving them all up front would instead mean 2,000 downloads
+and 2,000 uploads during import, turning a synchronous import into a background job with
+progress reporting, for no reduction in traffic.
+
+**What is not left to send time is *discovery*.** Every distinct URL in a batch is checked
+at import (`meta_media.check_urls_reachable`), deduplicated and in parallel, and a row whose
+image cannot be fetched is skipped and reported alongside the existing missing-parameter
+skips. This keeps §5's "validate at build, not send" rule: a typo in the CSV is a line in
+the report the user is already reading, not a failed message inside a running campaign.
+
+- HEAD first, falling back to a one-byte ranged GET — a great many static file servers
+  answer HEAD with 405 while serving GET perfectly well, and treating that as unreachable
+  would reject working images.
+- The same `_assert_fetchable` guard as §5.1 applies: these are user-supplied addresses and
+  the request leaves from inside our network.
+- Content-Type is judged only when the server declares one. A missing Content-Type is
+  common on plain file hosts and is not evidence of a problem.
+
+**Shared mode does not offer the column at all.** `column_mapper.campaign_fields` adds the
+URL field only in per-row mode. Offering a column the import would ignore is precisely how
+someone comes to believe their CSV artwork was used, and there is nothing later that would
+correct them.
+
+**Blank or unreachable in per-row mode is a skipped row, not a fallback.** A media-header
+template cannot send without media, so the row was never viable; and a silent fallback to
+generic artwork is worse than a reported skip, because nothing downstream can tell you it
+happened.
+
 ### Rules at campaign build
 
 - **Template is campaign-level, never per row.** Two templates = two campaigns.
@@ -288,6 +401,29 @@ This keeps broadcast fully out of the conversation tables *and* captures every s
 `handle_inbound` and **will** create a Conversation, as all inbound does today. Outbound
 stays out; inbound does not. That is fine now and is what agent routing will need later.
 
+### "sent" is not "delivered", and neither is "unconfirmed"
+
+`sent` means Meta accepted the request and returned a wamid. Nothing is known about the
+customer's phone at that point, and the UI must never colour it as success.
+
+The failure this created in practice was subtler than mislabelling: a recipient whose
+receipt never arrived stayed in `sent` indefinitely, and a campaign three weeks old still
+read as "still settling". A state that never resolves eventually gets read as delivery.
+
+So after the company's `receipt_timeout_minutes` (default 15) a `sent` row becomes
+**`unconfirmed`** — the system stating that it does not know, rather than implying an
+answer is still coming. It is not a failure: Meta never said the send failed, and a late
+receipt still promotes the row, because `broadcast_status._RANK` scores `unconfirmed`
+level with `sent` so `delivered` and `read` continue to win.
+
+| Status | Means | Colour |
+|---|---|---|
+| `sent` | Meta accepted it. Nothing known about the phone | amber, "awaiting" |
+| `unconfirmed` | Accepted, and no receipt within the timeout | slate |
+| `delivered` | Meta confirmed it reached the device | green |
+| `read` | The customer opened it | blue |
+| `failed` | Rejected, or a failure receipt arrived | red |
+
 ### Dispatch is not settlement
 
 A campaign has **two** completion states:
@@ -336,6 +472,10 @@ inbound message
 1. **On inbound** — record the opt-out.
 2. **At pre-screening** — anti-join, so the user sees the count before confirming.
 3. **⚠️ At claim time in the worker** — **re-check immediately before each send.**
+   Implemented in `broadcast_scheduler._dispatch_one_batch`: every claimed batch is
+   anti-joined against `messaging_optouts` before any send, and matches are marked
+   `skipped` / `opted_out`. This narrows the exposure from the whole campaign
+   (~10 minutes at 2,000 recipients) to a single batch.
 
 Screening is a snapshot. A campaign runs for minutes; someone can text STOP during it. Only
 checking at screening means sending to a person who unsubscribed sixty seconds earlier —
@@ -360,16 +500,40 @@ this is one extra condition on the claim query.
 ### Worker loop — batch and observe
 
 ```
-claim batch (FOR UPDATE SKIP LOCKED, ~100)
+claim batch (FOR UPDATE SKIP LOCKED, batch_size)
   ├─ re-check opt-out                → skipped (opted_out)
-  ├─ check portfolio budget          → pause campaign if exhausted
-  ├─ send concurrently (semaphore ~15)
-  ├─ store wamid on each recipient
-  └─ PAUSE and observe:
-       batch failure rate over threshold?  → auto-pause
-       quality rating dropped?             → auto-pause
-       else                                → next batch
+  ├─ COMMIT                          ← releases row locks before any network call
+  ├─ snapshot creds/template/jobs    ← no mapped object crosses a thread boundary
+  ├─ send concurrently (ThreadPoolExecutor, send_concurrency)
+  └─ per result: write status + wamid, COMMIT EACH
 ```
+
+**Two details here are load-bearing, and both were bugs before 2026-09-07.**
+
+*Commit per result, not per batch.* The loop used to share one commit across all 20
+sends. A restart mid-batch left rows Meta had already accepted sitting in `sending` with
+no wamid; recovery returned them to `pending` and **those customers were messaged twice**.
+Committing each outcome narrows that window to a single in-flight send. It cannot be
+closed entirely without an idempotency key Meta does not offer — a crash between Meta
+accepting and our commit landing loses the wamid, and nothing downstream can tell that
+from a send that never happened. `reclaim_stale` resolves the rows where the wamid *did*
+land, by promoting them to `sent` instead of requeueing them.
+
+*Workers touch no `Session`.* `expire_on_commit` is on, so reading `account.phone_number_id`
+after a commit is not a field access — it is a lazy SELECT on a Session belonging to
+another thread. Everything a worker needs is copied into frozen dataclasses
+(`_Creds`, `_Tpl`, `_Job`) on the main thread first. This is also why concurrency costs
+threads and not connections on the normal path, and so cannot starve the other three
+schedulers. The exception is `log_error`, which opens its own short-lived session as it
+does everywhere; that is thread-safe and bounded by `send_concurrency`, well inside the
+pool's ceiling of 30.
+
+`stop_on_error` forces `send_concurrency` to 1. You cannot have ten sends in flight and
+also stop before the second; it is a serial promise, so it disables concurrency rather
+than being approximated.
+
+**Batch even at 2k.** Not for throughput — for the observation gap. A bad list is caught
+after one batch instead of 2,000.
 
 **Batch even at 2k.** Not for throughput — for the observation gap. A bad list is caught
 after 100 sends instead of 2,000.
@@ -381,7 +545,18 @@ after 100 sends instead of 2,000.
 | Sent OK | `sent` + `wamid` | Await status receipts |
 | `131026` invalid number | `failed` | Record in `invalid_numbers` |
 | **`131049`** per-user marketing limit | **`deferred`** | `retry_not_before = now + 24h`. **Never retry sooner** — repeated attempts trigger a per-user delivery suspension. **Exclude from failure-rate auto-pause** — it is a throttle, not a bad number, and would false-trip the pause |
+| Transient (timeout, 5xx, 429) | `pending` + `attempts`, `next_attempt_at` | Retried up to `max_retries` (default 2) with exponential backoff |
 | Other error | `failed` | Record code + message |
+
+**Retries are transient-only, and the classification is decided in `wa_sender`** at the
+`except`/status site where the exception type and HTTP status still exist. By the time a
+caller sees a `SendResult` it has only a human-readable string, and classifying a timeout
+by matching on that string is guesswork that breaks silently when a message changes —
+hence `SendResult.is_transient`, defaulting to `False` so a failure is terminal unless
+something positively identifies it as retryable. A second gate vetoes anything in
+`_PERMANENT_CODES` (131026, 131047, 131049, 132000, …): those fail identically however
+often they are repeated, and retrying them burns the number's daily quota and signals bad
+list hygiene to Meta.
 
 ### Budget exhaustion
 
@@ -543,6 +718,19 @@ number, end to end — to flush out integration problems while the blast radius 
 | Opt-out in its own company-scoped table | Survives multi-phonebook membership and Case 2 CSVs |
 | Opted-out contacts kept and marked | Removing loses history and they return on re-import |
 | Opt-out and invalid kept as separate tables | Compliance vs deliverability — must not be treated alike |
+| One header file per Standard campaign, on the campaign not the recipient | Case 1 is "everyone gets the same message"; per-recipient media is a Case 2 question (§5.1) |
+| A pasted link is downloaded once at attach, not sent as a URL | Handing Meta the URL means it fetches that address once per recipient; one dead link becomes thousands of undelivered messages |
+| `source_url` kept as provenance only | The campaign can say where the file came from without the send depending on that address staying up |
+| `fetch_url` guarded against private addresses, redirects revalidated per hop | The URL is user-typed and the request leaves from inside our network |
+| Uploaded bytes live on Meta, never on our disk | The app container has no persistent volume — a local file is lost on the next deploy |
+| Media preview proxied through a **page** route | The thumbnail is an `<img>` and a click opens a tab; neither carries the Bearer token `/api/*` needs |
+| Header media validated at build *and* re-checked at send | Missing header media fails every recipient at once, and the build check cannot see a template edited afterwards |
+| Personalized asks shared vs per-row rather than inferring it | A campaign that varies its text may or may not vary its image; guessing is how the wrong picture gets sent |
+| Per-row sends a link where shared sends a media id | Amplification is the thing §5.1 avoids, and per-row has none — one row is one message, so one address is one fetch |
+| Per-row URLs checked at import, deduplicated and parallel | Keeps "validate at build, not send": a typo becomes a line in the skipped-rows report, not a failure inside a running campaign |
+| No image column offered in shared mode | A column the import ignores makes people believe their CSV artwork was used |
+| Unusable per-row image = skipped row, never a fallback image | A media-header template cannot send without media, and silent generic artwork is undetectable afterwards |
+| `header_media_mode` a column, not inferred from `header_media IS NULL` | "Per-row mode" and "this template needs no media" are different states that must not look alike |
 | `agent_id` snapshotted onto the recipient | A number in two phonebooks has two agents; sender wins |
 | `_validate_mobile` everywhere, no 12-digit cap | No such Meta limit; E.164 is 7–15 digits |
 | ~~Separate worker container~~ → **in-process fourth scheduler** (2026-08-04) | Schedulers already have separate thread pools, so no starvation; a container would not isolate inbound status receipts, which always return to the main app. §12 |

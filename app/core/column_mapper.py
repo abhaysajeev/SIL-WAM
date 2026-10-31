@@ -79,13 +79,29 @@ CONTACT_FIELDS: list[FieldSpec] = [
 _MOBILE_ALIASES = CONTACT_FIELDS[1].aliases
 
 
-def campaign_fields(param_count: int) -> list[FieldSpec]:
+# Wording per header format, so the column is named after the thing the user is
+# actually putting in it rather than a generic "media".
+_MEDIA_FIELD = {
+    "IMAGE":    ("Image URL",    ["image", "image url", "imageurl", "image link",
+                                  "picture", "photo", "img", "banner", "artwork"]),
+    "DOCUMENT": ("Document URL", ["document", "document url", "pdf", "pdf url",
+                                  "file", "file url", "attachment"]),
+    "VIDEO":    ("Video URL",    ["video", "video url", "videourl", "clip", "mp4"]),
+}
+
+
+def campaign_fields(param_count: int, media_format: str | None = None) -> list[FieldSpec]:
     """
     Import targets for a personalised broadcast, for a template taking
     `param_count` parameters.
 
     Unlike CONTACT_FIELDS this is built per template, because the number of
     parameter columns is whatever the chosen template declares.
+
+    `media_format` is set only for a media-header template in **per-row** mode, and
+    adds one required URL column. It is absent in shared mode by design: that
+    campaign has one file attached in the form, and offering a column the import
+    would ignore is how a user ends up believing their CSV artwork was used.
 
     Every parameter is required: a blank leaves a hole in the message that Meta
     will happily deliver, and a customer reading "Dear ," is worse than a row
@@ -111,6 +127,15 @@ def campaign_fields(param_count: int) -> list[FieldSpec]:
             # cannot be reached by the fuzzy passes and mis-claim a column.
             [f"param {n}", f"parameter {n}", f"param{n}", f"{{{{{n}}}}}", str(n)],
             f"Required. Fills placeholder {{{{{n}}}}} in the template.",
+        ))
+
+    if media_format in _MEDIA_FIELD:
+        label, aliases = _MEDIA_FIELD[media_format]
+        fields.append(FieldSpec(
+            "header_media_url", label, True,
+            aliases,
+            "Required. A public address WhatsApp can download this recipient's "
+            f"{media_format.lower()} from.",
         ))
     return fields
 

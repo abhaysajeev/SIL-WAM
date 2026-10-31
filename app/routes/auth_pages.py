@@ -3,10 +3,10 @@ import os
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
+from app.core.templating import build_templates
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+templates = build_templates()
 
 router = APIRouter(tags=["Pages"])
 

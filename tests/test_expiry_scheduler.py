@@ -63,20 +63,30 @@ class TestExpireTimedOutServices:
         queue_entry = db.query(MobileQueue).filter(MobileQueue.service_id == svc.id).first()
         assert queue_entry.status == "completed"
 
-    def test_past_deadline_with_answered_question_not_expired(self, db):
+    def test_past_deadline_mid_flow_also_expires(self, db):
+        """
+        A customer who started answering and then went silent still times out, on the
+        same created_at + template_expiry_hours deadline.
+
+        Condition A proper is the never-tapped case, but the deadline is not waived once
+        the flow starts — otherwise a service abandoned after Q1 stays in_progress
+        forever: never expired, never notified to the client, never resolved.
+        """
         comp = make_company(db, code="EXP03")
         conv = make_conversation(db, comp.id, "91ANSWERED")
         make_wa_account(db, comp.id)
-        # sent=1 means button was tapped, flow started
+        # sent=1 means the button was tapped and Q1 went out — flow started.
         questions = [{"sequence": 1, "sent": 1, "field_key": "q1",
                       "question": "Rate?", "answer_type": 1}]
         svc = _expired_service(db, comp.id, conv.id, questions=questions, mobile="91ANSWERED")
 
-        count = _expire_timed_out_services(db)
+        with patch("app.services.queue_manager.advance_queue"):
+            count = _expire_timed_out_services(db)
 
-        assert count == 0
+        assert count == 1
         db.refresh(svc)
-        assert svc.status == "in_progress"  # not expired
+        assert svc.status == "expired"
+        assert svc.expired_reason == "timeout"
 
     def test_within_deadline_not_expired(self, db):
         comp = make_company(db, code="EXP04")

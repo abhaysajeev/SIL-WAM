@@ -17,6 +17,7 @@ RESOURCES = [
         "items": [
             {"name": "companies", "label": "Companies", "actions": ["read", "create", "write", "delete"]},
             {"name": "users",     "label": "Users",     "actions": ["read", "create", "write", "delete"]},
+            {"name": "agents",    "label": "Agents",    "actions": ["read", "create", "write", "delete"]},
         ],
     },
     {
@@ -32,6 +33,7 @@ RESOURCES = [
         "items": [
             {"name": "phonebooks", "label": "PhoneBooks", "actions": ["read", "create", "write", "delete"]},
             {"name": "campaigns",        "label": "Campaigns",       "actions": ["read", "create", "write", "delete"]},
+            {"name": "broadcast_settings", "label": "Broadcast Settings", "actions": ["read", "create", "write", "delete"]},
         ],
     },
     {

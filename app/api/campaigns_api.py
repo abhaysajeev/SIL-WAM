@@ -12,25 +12,30 @@ recipient rows, so nothing downstream needs to change.
 """
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import (
+    APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile,
+)
 from pydantic import BaseModel, ConfigDict, field_validator
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core import template_body
+from app.core import broadcast_config, template_body
 from app.core.column_mapper import campaign_fields, field_catalogue, suggest_mapping
 from app.core.database import get_db
 from app.core.deps import company_filter, get_current_user, require
 from app.core.pagination import paginate
+from app.models.agent import Agent
 from app.models.broadcast_campaign import (
     MAX_RECIPIENTS_PER_CAMPAIGN,
     BroadcastCampaign,
     BroadcastRecipient,
 )
 from app.models.phonebook import Phonebook, PhonebookContact
-from app.models.whatsapp import WhatsAppTemplate
+from app.models.whatsapp import WhatsAppAccount, WhatsAppTemplate
 from app.schemas.phonebook import _validate_mobile
-from app.services import broadcast_screening
+from app.services import broadcast_builder, broadcast_screening, meta_media
 from app.utils.error_logger import log_error
 from sqlalchemy.exc import IntegrityError
 
@@ -52,6 +57,19 @@ class CampaignCreate(BaseModel):
     # Optional: a name is a label for reports, not information the user has that we
     # do not. Omitted means auto-generated from the template and date.
     name: str | None = None
+    # Media-header templates only. "shared" needs header_media below; "per_row" takes
+    # each recipient's image from the CSV instead. Personalised campaigns settle this
+    # at creation because the mapping dialog has to know whether to offer the column.
+    header_media_mode: str | None = None
+    header_media: "HeaderMediaIn | None" = None
+
+    @field_validator("header_media_mode")
+    @classmethod
+    def known_media_mode(cls, v: str | None) -> str | None:
+        mode = (v or "").strip().lower() or None
+        if mode not in (None, "shared", "per_row"):
+            raise ValueError("header_media_mode must be 'shared' or 'per_row'")
+        return mode
 
     @field_validator("name")
     @classmethod
@@ -66,11 +84,80 @@ class CampaignCreate(BaseModel):
         return v
 
 
+class HeaderMediaIn(BaseModel):
+    """
+    The file filling an IMAGE/DOCUMENT/VIDEO template header, one per campaign.
+
+    Always a `media_id`, never a URL. Both ways of attaching a file — picking one
+    from the machine and pasting a link — are resolved to a media id by
+    POST /api/campaigns/media before this is ever built, so there is one kind of
+    thing to store and one kind of thing to send.
+
+    `source` and `source_url` are provenance: they say where the file came from, so
+    the campaign can show "fetched from https://…" rather than an anonymous id. They
+    are never used to address a send.
+    """
+    format:     str
+    media_id:   str
+    source:     str = "upload"
+    source_url: str | None = None
+    filename:   str | None = None
+    mime:       str | None = None
+
+    @field_validator("format")
+    @classmethod
+    def known_format(cls, v: str) -> str:
+        fmt = (v or "").strip().upper()
+        if fmt not in template_body.MEDIA_HEADER_FORMATS:
+            raise ValueError(
+                f"format must be one of: {', '.join(template_body.MEDIA_HEADER_FORMATS)}"
+            )
+        return fmt
+
+    @field_validator("source")
+    @classmethod
+    def known_source(cls, v: str) -> str:
+        src = (v or "").strip().lower()
+        if src not in ("upload", "link"):
+            raise ValueError("source must be 'upload' or 'link'")
+        return src
+
+    @field_validator("media_id")
+    @classmethod
+    def media_id_present(cls, v: str) -> str:
+        if not (v or "").strip():
+            raise ValueError("media_id is required — attach the file first")
+        return v.strip()
+
+    @field_validator("source_url", "filename", "mime")
+    @classmethod
+    def blank_is_absent(cls, v: str | None) -> str | None:
+        return (v or "").strip() or None
+
+    def resolved(self) -> dict:
+        """The stored shape — see BroadcastCampaign.header_media."""
+        if self.source_url:
+            parsed = urlparse(self.source_url)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise HTTPException(400, "source_url must be a full http(s) URL")
+        return {
+            "format":      self.format,
+            "source":      self.source,
+            "media_id":    self.media_id,
+            "source_url":  self.source_url,
+            "filename":    self.filename,
+            "mime":        self.mime,
+            "attached_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+
 class RecipientBuild(BaseModel):
     """Case 1: which phonebooks, and the parameter values everyone receives."""
     phonebook_ids: list[uuid.UUID]
     params:   list[str] = []
     stop_on_error: bool = False
+    # Required when the template has a media header, rejected when it does not.
+    header_media: HeaderMediaIn | None = None
 
 
 class CampaignOut(BaseModel):
@@ -82,6 +169,7 @@ class CampaignOut(BaseModel):
     param_mode:  str
     shared_params: list[str] | None
     stop_on_error: bool
+    header_media: dict | None
     total: int
     sent: int
     delivered: int
@@ -136,6 +224,170 @@ def _template_for(db: Session, campaign: BroadcastCampaign) -> WhatsAppTemplate:
     return t
 
 
+def _resolve_header_media(template: WhatsAppTemplate, supplied: HeaderMediaIn | None) -> dict | None:
+    """
+    Reconcile what the template's header needs with what the user attached.
+
+    Both mismatches are refused here, at build time, rather than at send time. A media
+    header with nothing attached is the expensive one: Meta rejects every message for a
+    missing header component, so the campaign would look fine through screening and
+    then fail on all two thousand recipients at once.
+    """
+    needed = template_body.header_format(template.components)
+    needs_media = needed in template_body.MEDIA_HEADER_FORMATS
+
+    if not needs_media:
+        if supplied:
+            raise HTTPException(
+                400,
+                f"Template '{template.name}' has no media header, so it takes no file",
+            )
+        return None
+
+    if not supplied:
+        raise HTTPException(
+            400,
+            f"Template '{template.name}' has a {needed} header — attach "
+            f"{'an' if needed == 'IMAGE' else 'a'} {needed.lower()} before continuing",
+        )
+    if supplied.format != needed:
+        raise HTTPException(
+            400,
+            f"Template '{template.name}' needs a {needed} header, but a "
+            f"{supplied.format} was attached",
+        )
+    return supplied.resolved()
+
+
+def _resolve_media_mode(
+    template: WhatsAppTemplate,
+    mode: str | None,
+    supplied: "HeaderMediaIn | None",
+) -> tuple[str | None, dict | None]:
+    """
+    Settle how this campaign's media header will be filled, or refuse it.
+
+    Returns (mode, stored_header_media). Per-row mode stores no campaign-level file —
+    the images arrive with the CSV rows and are validated there.
+    """
+    needed = template_body.header_format(template.components)
+    if needed not in template_body.MEDIA_HEADER_FORMATS:
+        if mode or supplied:
+            raise HTTPException(
+                400, f"Template '{template.name}' has no media header, so it takes no file"
+            )
+        return None, None
+
+    if mode == "per_row":
+        if supplied:
+            raise HTTPException(
+                400,
+                "Per-row mode takes each recipient's image from the CSV — do not also "
+                "attach one to the campaign",
+            )
+        return "per_row", None
+
+    # Default to shared when unstated: that is what a Standard campaign always is,
+    # and it keeps the existing /recipients contract working unchanged.
+    #
+    # A file is NOT required here. A Standard campaign attaches one at /recipients,
+    # alongside the parameters, and demanding it a step earlier would break that
+    # flow. "Shared mode with nothing attached yet" is a legitimate draft; what must
+    # never happen is *sending* in that state, which /send refuses.
+    return "shared", _resolve_header_media(template, supplied) if supplied else None
+
+
+def _media_format_for(db: Session, campaign: BroadcastCampaign) -> str | None:
+    """The header format a per-row CSV must supply a URL for, or None."""
+    if campaign.header_media_mode != "per_row":
+        return None
+    template = _template_for(db, campaign)
+    fmt = template_body.header_format(template.components)
+    return fmt if fmt in template_body.MEDIA_HEADER_FORMATS else None
+
+
+def _account_for(db: Session, company_id: uuid.UUID) -> WhatsAppAccount:
+    """The company's connected WhatsApp account, or a message saying it is not."""
+    acc = db.query(WhatsAppAccount).filter(
+        WhatsAppAccount.company_id == company_id
+    ).first()
+    if not acc or not acc.access_token_encrypted:
+        raise HTTPException(400, "This company has no connected WhatsApp account")
+    return acc
+
+
+# ── Header media ──────────────────────────────────────────────────────────────
+# Declared before the /{campaign_id}/* routes so "media" is never read as a UUID.
+
+@router.post("/media")
+async def attach_header_media(
+    request: Request,
+    company_id: uuid.UUID = Form(...),
+    file: UploadFile | None = File(None),
+    link: str | None = Form(None),
+    _perm=Depends(require("campaigns", "write")),
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Put a campaign header file on Meta's servers and return its media id.
+
+    Two ways in and one way out. A file arrives as bytes; a link is downloaded here,
+    once, and becomes the same bytes. Either way what comes back is a media id, and
+    that is the only thing a send ever uses.
+
+    **Why a link is resolved now rather than passed through.** Meta will happily take
+    a URL in the send payload and fetch it itself — once per recipient. At 2,000
+    recipients that is 2,000 requests against someone else's web server during the
+    campaign, and every one that times out or 404s is a customer who received
+    nothing, discovered later from a delivery receipt. Downloading once and uploading
+    once collapses that to a single fetch whose failure is visible immediately, while
+    the user is still looking at the field they pasted into.
+
+    Resolved on attach, like the template builder's media-handle endpoint, so a file
+    Meta will not accept is rejected before the rest of the form is filled in.
+    """
+    cid = company_filter(user)
+    if cid and str(company_id) != cid:
+        raise HTTPException(403, "Access denied")
+
+    link = (link or "").strip() or None
+    has_file = file is not None and bool(file.filename)
+    if has_file == bool(link):
+        raise HTTPException(400, "Send either a file or a link, not both and not neither")
+
+    account = _account_for(db, company_id)
+
+    try:
+        if has_file:
+            file_bytes = await file.read()
+            filename   = file.filename or "campaign-header"
+            mime       = file.content_type or ""
+        else:
+            file_bytes, mime, filename = meta_media.fetch_url(link)
+
+        # The same gate for both paths: a remote server's Content-Type is no more
+        # trustworthy than a browser's, and neither is the extension.
+        fmt = meta_media.validate_upload(file_bytes, mime)
+        media_id = meta_media.upload_media(account, file_bytes, filename, mime)
+    except meta_media.MediaUploadError as exc:
+        # Every message from this path is already written for the person attaching.
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        log_error("Campaign header media attach failed", "POST /api/campaigns/media",
+                  exc, request=request, user=str(user.id))
+        raise HTTPException(500, "Could not attach the file")
+
+    return {
+        "media_id":   media_id,
+        "format":     fmt,
+        "filename":   filename,
+        "mime":       mime,
+        "source":     "upload" if has_file else "link",
+        "source_url": link,
+    }
+
+
 # ── Campaign CRUD ─────────────────────────────────────────────────────────────
 
 @router.get("/", response_model=list[CampaignOut])
@@ -166,13 +418,19 @@ def create_campaign(
     if not template:
         raise HTTPException(404, "Approved template not found for this company")
 
+    mode, header_media = _resolve_media_mode(
+        template, payload.header_media_mode, payload.header_media
+    )
+
     campaign = BroadcastCampaign(
-        company_id    = payload.company_id,
-        name          = payload.name or _auto_name(db, payload.company_id, template),
-        template_id   = template.id,
-        param_mode    = payload.param_mode,
-        status        = "draft",
-        created_by_id = user.id,
+        company_id        = payload.company_id,
+        name              = payload.name or _auto_name(db, payload.company_id, template),
+        template_id       = template.id,
+        param_mode        = payload.param_mode,
+        status            = "draft",
+        created_by_id     = user.id,
+        header_media_mode = mode,
+        header_media      = header_media,
     )
     db.add(campaign)
     db.commit()
@@ -234,54 +492,25 @@ def build_recipients(
             f"This template needs {expected} parameter(s); {len(payload.params)} supplied",
         )
 
-    lists = db.query(Phonebook).filter(
-        Phonebook.id.in_(payload.phonebook_ids),
-        Phonebook.company_id == campaign.company_id,
-    ).all()
-    if len(lists) != len(set(payload.phonebook_ids)):
-        raise HTTPException(404, "One or more phonebooks were not found for this company")
+    # Standard campaigns are shared by definition — one message, one file. Per-row
+    # only exists for personalised, where the CSV is the list.
+    if campaign.header_media_mode == "per_row":
+        raise HTTPException(409, "This campaign takes its images from a CSV, not a form")
+    header_media = _resolve_header_media(template, payload.header_media)
 
-    contacts = db.query(PhonebookContact).filter(
-        PhonebookContact.phonebook_id.in_([l.id for l in lists])
-    ).all()
-
-    # Dedup across lists — the same number in two lists is one recipient. Meta bills
-    # unique recipients, and being messaged twice by one campaign reads as a bug.
-    # First occurrence wins, which also decides whose agent_id is snapshotted.
-    seen: dict[str, PhonebookContact] = {}
-    for c in contacts:
-        try:
-            mobile = _validate_mobile(c.mobile_no)
-        except ValueError:
-            continue          # unusable number — silently excluded, never sent
-        seen.setdefault(mobile, c)
-
-    if len(seen) > MAX_RECIPIENTS_PER_CAMPAIGN:
-        raise HTTPException(
-            400,
-            f"{len(seen)} recipients exceeds the current limit of "
-            f"{MAX_RECIPIENTS_PER_CAMPAIGN} per campaign",
+    # One implementation, shared with the agent app's POST /broadcasts. A second copy
+    # here would drift on exactly the rules that matter — dedup, number validation,
+    # the per-campaign ceiling — and the handset would be using the copy nobody reads.
+    try:
+        result = broadcast_builder.build_from_phonebooks(
+            db, campaign, template,
+            phonebook_ids=payload.phonebook_ids,
+            params=payload.params,
+            header_media=header_media,
+            stop_on_error=payload.stop_on_error,
         )
-
-    db.query(BroadcastRecipient).filter(
-        BroadcastRecipient.campaign_id == campaign.id
-    ).delete(synchronize_session=False)
-
-    for mobile, contact in seen.items():
-        db.add(BroadcastRecipient(
-            campaign_id   = campaign.id,
-            mobile_no     = mobile,
-            customer_name = contact.customer_name,
-            agent_id      = contact.agent_id,
-            params        = list(payload.params),
-            status        = "draft",
-        ))
-
-    campaign.shared_params = list(payload.params)
-    campaign.stop_on_error = payload.stop_on_error
-    campaign.total   = len(seen)
-    campaign.status  = "screening"
-    campaign.skipped = 0
+    except broadcast_builder.BuildError as exc:
+        raise HTTPException(exc.code, exc.message)
 
     try:
         db.commit()
@@ -290,27 +519,37 @@ def build_recipients(
         log_error("Campaign recipient build failed", f"POST /api/campaigns/{campaign_id}/recipients", exc)
         raise HTTPException(500, "Could not build the recipient list")
 
-    return {
-        "campaign_id": str(campaign.id),
-        "total": len(seen),
-        "duplicates_removed": len(contacts) - len(seen),
-    }
+    return result
 
 
 @router.get("/{campaign_id}/recipients")
 def list_recipients(
     campaign_id: uuid.UUID,
     request: Request,
+    status: str | None = None,
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Paginated — the preview table is a query over these rows, not a parsed file."""
+    """
+    Paginated — the preview table is a query over these rows, not a parsed file.
+
+    The detail page polls this while a campaign runs to move the per-recipient pills
+    in place, so the ordering must match the server-rendered table exactly: the page
+    patches rows by id and would otherwise show a page of statuses belonging to
+    somebody else's row.
+    """
     campaign = _owned(db, campaign_id, user)
     q = (
         db.query(BroadcastRecipient)
         .filter(BroadcastRecipient.campaign_id == campaign.id)
         .order_by(BroadcastRecipient.mobile_no)
     )
+    if status:
+        # Comma-separated so the page can ask for exactly the rows that can still
+        # change, rather than re-reading settled ones on every poll.
+        wanted = [s.strip() for s in status.split(",") if s.strip()]
+        if wanted:
+            q = q.filter(BroadcastRecipient.status.in_(wanted))
     page = paginate(q, request, per_page=50)
     return {
         "total": page.total,
@@ -352,6 +591,48 @@ def screen_campaign(
     return result.as_dict()
 
 
+def _enforce_agent_send_cap(db: Session, campaign) -> None:
+    """
+    Cap the size of a broadcast started by an agent.
+
+    Only agent-created campaigns are limited. An administrator who picks a
+    2,000-contact phonebook in the web panel meant to; an agent tapping a phonebook on
+    a handset can reach the same 2,000 people by accident, and marketing sends are
+    billed and count against the number's quality rating.
+
+    The campaign's creator is the test, not the caller, so an admin cannot lift the cap
+    by pressing Send on an agent's behalf — and equally, an agent's own campaign is
+    still capped whoever dispatches it.
+    """
+    if campaign.created_by_id is None:
+        return
+
+    agent = db.query(Agent).filter(Agent.user_id == campaign.created_by_id).first()
+    if agent is None:
+        return                      # not agent-created — no cap applies
+
+    cap = broadcast_config.get(db, campaign.company_id).agent_max_recipients_per_send
+    if cap <= 0:
+        return                      # 0 means unlimited
+
+    count = (
+        db.query(func.count(BroadcastRecipient.id))
+        .filter(
+            BroadcastRecipient.campaign_id == campaign.id,
+            BroadcastRecipient.status == "draft",
+        )
+        .scalar()
+    ) or 0
+
+    if count > cap:
+        raise HTTPException(
+            403,
+            f"This campaign has {count} recipients, above the {cap} an agent may send "
+            f"to at once. Ask an administrator to raise the limit in Broadcast "
+            f"Settings, or send to a smaller phonebook.",
+        )
+
+
 @router.post("/{campaign_id}/send")
 def send_campaign(
     campaign_id: uuid.UUID,
@@ -369,7 +650,39 @@ def send_campaign(
     campaign = _owned(db, campaign_id, user)
     if campaign.status != "ready":
         raise HTTPException(409, "Screen the campaign before sending")
-    _template_for(db, campaign)      # 409 early rather than failing every recipient
+    template = _template_for(db, campaign)   # 409 early rather than failing every recipient
+
+    # Build-time validation already covers campaigns created since header media
+    # existed. This catches the other two ways to arrive here: a campaign built
+    # before it, and a template whose header changed after the campaign was built.
+    if template_body.is_media_header(template.components):
+        fmt = template_body.header_format(template.components)
+        if campaign.header_media_mode == "per_row":
+            # Import refuses a row with no usable URL, so this can only be a campaign
+            # whose template gained a media header after the CSV was imported.
+            missing = (
+                db.query(BroadcastRecipient)
+                .filter(
+                    BroadcastRecipient.campaign_id == campaign.id,
+                    BroadcastRecipient.status == "draft",
+                    BroadcastRecipient.header_media_url.is_(None),
+                )
+                .count()
+            )
+            if missing:
+                raise HTTPException(
+                    409,
+                    f"{missing} recipient(s) have no {fmt.lower()} URL — re-import the "
+                    "CSV with the media column mapped",
+                )
+        elif not campaign.header_media:
+            raise HTTPException(
+                409,
+                f"Template '{template.name}' has a {fmt} header but this campaign has "
+                "no file attached — rebuild the recipient list to attach one",
+            )
+
+    _enforce_agent_send_cap(db, campaign)
 
     pending = (
         db.query(BroadcastRecipient)
@@ -451,27 +764,92 @@ def campaign_progress(
     """
     Counters for the progress bar, polled while a campaign runs.
 
-    `dispatched` counts send *attempts* — that is what the bar measures. Delivery is
-    separate and keeps moving after the bar completes, because Meta reports failures
-    asynchronously.
+    **Read from the recipient rows, not the campaign's denormalised counters.** Those
+    counters are maintained by two writers — the send loop and the status webhook —
+    and a receipt that arrives twice, or a campaign edited mid-flight, leaves them
+    describing something slightly different from the rows themselves. The rows are
+    the record of what happened; a GROUP BY over an indexed (campaign_id, status) is
+    cheap enough to be the answer rather than a reconciliation job.
+
+    The distinction this endpoint exists to preserve:
+
+      accepted   — Meta took the request and returned a message id. **Nothing is
+                   known about the customer's phone at this point.**
+      delivered  — Meta says it arrived on the device.
+      read       — the customer opened it.
+      awaiting   — accepted, and no receipt has come back yet.
+
+    `attempted` (the bar) counts send *attempts*, which is the only thing known in
+    real time. Everything below the bar keeps moving afterwards, and can move
+    backwards: Meta routinely accepts a send and reports failure seconds later.
     """
     campaign = _owned(db, campaign_id, user)
-    attempted = (campaign.sent or 0) + (campaign.failed or 0)
-    sendable  = max((campaign.total or 0) - (campaign.skipped or 0), 0)
+
+    by_status = dict(
+        db.query(BroadcastRecipient.status, func.count(BroadcastRecipient.id))
+        .filter(BroadcastRecipient.campaign_id == campaign.id)
+        .group_by(BroadcastRecipient.status)
+        .all()
+    )
+    n = lambda *states: sum(by_status.get(s, 0) for s in states)   # noqa: E731
+
+    accepted    = n("sent")               # no receipt yet — see above
+    unconfirmed = n("unconfirmed")        # accepted, and the receipt never came
+    delivered   = n("delivered")
+    read        = n("read")
+    failed      = n("failed")
+    skipped     = n("skipped")
+    total       = sum(by_status.values())
+
+    # A delivered, read or unconfirmed recipient was accepted first; the campaign-level
+    # "sent" number people expect means "reached Meta", so it is the union, not just
+    # the rows still sitting in "sent".
+    reached_meta = accepted + unconfirmed + delivered + read
+    confirmed    = delivered + read
+    attempted    = reached_meta + failed
+    sendable     = max(total - skipped, 0)
+
+    dispatched_at = campaign.dispatched_at
+    if dispatched_at and dispatched_at.tzinfo is None:
+        dispatched_at = dispatched_at.replace(tzinfo=timezone.utc)
+
     return {
         "status":     campaign.status,
-        "total":      campaign.total or 0,
+        "total":      total,
         "sendable":   sendable,
         "attempted":  attempted,
-        "sent":       campaign.sent or 0,
-        "failed":     campaign.failed or 0,
-        "skipped":    campaign.skipped or 0,
-        "delivered":  campaign.delivered or 0,
-        "read":       campaign.read or 0,
+        "sent":       reached_meta,
+        "failed":     failed,
+        "skipped":    skipped,
+        "delivered":  delivered,
+        "read":       read,
         "percent":    round(attempted / sendable * 100, 1) if sendable else 0.0,
         "is_running": campaign.status == "sending",
         # True while receipts may still change the numbers below the bar.
         "settling":   campaign.status == "dispatched",
+
+        # ── What the UI must not blur together ──
+        # Handed to Meta with no word back about the customer's device. Still within
+        # the window where a receipt would be normal.
+        "awaiting_confirmation": accepted,
+        # Handed to Meta, and no receipt came within receipt_timeout_minutes. NOT a
+        # failure — Meta never said it failed — but the system will not keep implying
+        # a confirmation is on its way. This is the count that stops "awaiting" from
+        # quietly becoming a claim of delivery nobody ever made.
+        "unconfirmed": unconfirmed,
+        # Meta has confirmed this many actually arrived.
+        "confirmed": confirmed,
+        # False means not one receipt has come back for this campaign. After a send
+        # completes that is not "still settling", it is a webhook that is not
+        # arriving — worth saying out loud rather than showing a hopeful spinner.
+        "receipts_seen": confirmed > 0 or failed > 0,
+        # Everything accepted has aged out with nothing back. The webhook is not
+        # arriving, and after this point saying "still settling" would be a fiction.
+        "all_unconfirmed": unconfirmed > 0 and accepted == 0 and confirmed == 0,
+        "seconds_since_dispatch": (
+            (datetime.now(timezone.utc) - dispatched_at).total_seconds()
+            if dispatched_at else None
+        ),
     }
 
 
@@ -601,6 +979,8 @@ class CampaignImportRow(BaseModel):
     customer_name: str | None = None
     # {"param_1": "Ravi", "param_2": "10234", ...} — keyed as campaign_fields names
     params:        dict[str, str] = {}
+    # Per-row media mode only; the mapper writes it under its own field name.
+    header_media_url: str | None = None
 
 
 class CampaignImportRequest(BaseModel):
@@ -645,7 +1025,12 @@ def campaign_import_fields(
     campaign = _per_row_campaign(db, campaign_id, user)
     template = _template_for(db, campaign)
     n = template_body.param_count(template.components)
-    return {"fields": field_catalogue(campaign_fields(n)), "param_count": n}
+    media_format = _media_format_for(db, campaign)
+    return {
+        "fields": field_catalogue(campaign_fields(n, media_format)),
+        "param_count": n,
+        "media_format": media_format,
+    }
 
 
 @router.post("/{campaign_id}/import/suggest-mapping")
@@ -659,7 +1044,9 @@ def campaign_suggest_mapping(
     template = _template_for(db, campaign)
     n = template_body.param_count(template.components)
     headers = payload.get("headers") or []
-    return {"mapping": suggest_mapping(headers, campaign_fields(n))}
+    return {"mapping": suggest_mapping(
+        headers, campaign_fields(n, _media_format_for(db, campaign))
+    )}
 
 
 @router.post("/{campaign_id}/import", response_model=CampaignImportResult)
@@ -681,6 +1068,7 @@ def campaign_import(
     campaign = _per_row_campaign(db, campaign_id, user)
     template = _template_for(db, campaign)
     n = template_body.param_count(template.components)
+    media_format = _media_format_for(db, campaign)
 
     if len(payload.rows) > _MAX_IMPORT_BATCH:
         raise HTTPException(413, f"Batch too large — send at most {_MAX_IMPORT_BATCH} rows")
@@ -693,6 +1081,16 @@ def campaign_import(
             400,
             f"That would take this broadcast past the current limit of "
             f"{MAX_RECIPIENTS_PER_CAMPAIGN} recipients",
+        )
+
+    # One network pass for the whole batch, deduplicated, before touching any row.
+    # Doing it per row would re-check the same address dozens of times, and doing it
+    # at send time would turn a typo in the CSV into a failed message inside a live
+    # campaign instead of a line in the report the user is already reading.
+    url_problems: dict[str, str | None] = {}
+    if media_format:
+        url_problems = meta_media.check_urls_reachable(
+            [(r.header_media_url or "").strip() for r in payload.rows]
         )
 
     imported = 0
@@ -724,14 +1122,37 @@ def campaign_import(
             ))
             continue
 
+        # A media-header template cannot send without media, so a row with no usable
+        # image was never viable — skipping and reporting it matches how a missing
+        # parameter is already handled, and beats delivering someone else's picture.
+        media_url = (raw.header_media_url or "").strip() or None
+        if media_format:
+            if not media_url:
+                errors.append(ImportError_(
+                    row=raw.row, value=mobile,
+                    reason=f"Missing {media_format.lower()} URL",
+                ))
+                continue
+            problem = url_problems.get(media_url)
+            if problem:
+                errors.append(ImportError_(
+                    row=raw.row, value=media_url, reason=problem,
+                ))
+                continue
+        else:
+            # Shared mode, or a text header: a URL column here would be ignored, and
+            # storing it would imply it was used.
+            media_url = None
+
         try:
             with db.begin_nested():
                 db.add(BroadcastRecipient(
-                    campaign_id   = campaign.id,
-                    mobile_no     = mobile,
-                    customer_name = (raw.customer_name or "").strip() or None,
-                    params        = ordered,
-                    status        = "draft",
+                    campaign_id      = campaign.id,
+                    mobile_no        = mobile,
+                    customer_name    = (raw.customer_name or "").strip() or None,
+                    params           = ordered,
+                    header_media_url = media_url,
+                    status           = "draft",
                 ))
             imported += 1
         except IntegrityError:

@@ -4,22 +4,18 @@ import uuid as _uuid
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.templating import build_templates
 from app.core.deps import get_page_user
 from app.core.doctypes import ERPNEXT_CONFIG_DOCTYPE
 from app.models.company import Company
 from app.models.erpnext_config import ERPNextConfig
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+templates = build_templates()
 
-if "dv_search_text" not in templates.env.filters:
-    templates.env.filters["dv_search_text"] = (
-        lambda r: " ".join(str(v) for v in r.values() if v is not None).lower()
-    )
 
 router = APIRouter(tags=["Pages"])
 
@@ -48,7 +44,7 @@ def erpnext_config_list(
             "company_name": companies.get(str(c.company_id), "—"),
             "pdf_method":   c.pdf_method or "—",
             "is_active":    c.is_active,
-            "created_at":   c.created_at.strftime("%Y-%m-%d %H:%M") if c.created_at else "—",
+            "created_at":   c.created_at,
         }
         for c in configs
     ]

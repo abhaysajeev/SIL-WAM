@@ -5,9 +5,12 @@ Condition A (architecture §9.6):
   If a customer does not tap the template button within template_expiry_hours,
   the service is marked expired with reason "timeout" and the queue advances.
 
-This applies only when NO questions have been answered yet (sent==0 for all questions).
-Once the customer taps the button, Q1 fires and the flow is "started" — Condition A
-no longer applies, only normal completion (or a later timeout mid-flow, same deadline).
+Condition A proper is the never-tapped case. The deadline is NOT waived once the flow
+starts, though: a customer who answers Q1 and then goes silent times out on the same
+created_at + template_expiry_hours deadline. Were it waived, an abandoned mid-flow
+service would sit in_progress forever — never expired, never notified, never resolved.
+So this job expires every in_progress service past its deadline, regardless of how many
+questions were answered; only `expired_reason` distinguishes them downstream.
 
 Template-only services (questions=None or []) are marked completed immediately on
 template send by queue_manager, so they are never in_progress when this job runs.

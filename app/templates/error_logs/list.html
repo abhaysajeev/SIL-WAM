@@ -68,7 +68,7 @@
         <td><span class="dv-mono">{{ row.method }}</span></td>
         <td><span class="dv-mono">{{ row.error_type }}</span></td>
         <td>{{ row.user }}</td>
-        <td>{{ row.created_at }}</td>
+        <td>{{ ts(row.created_at) }}</td>
         <td>
           {% if row.seen %}
           <span class="dv-badge dv-badge-active">Seen</span>

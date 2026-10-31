@@ -40,12 +40,54 @@ from app.models.conversation import (
 )
 from app.models.erpnext_config import ERPNextConfig
 from app.models.whatsapp import WhatsAppAccount
-from app.services import broadcast_status, notify_queue, queue_manager, wa_sender
+from app.services import (
+    agent_timeline, broadcast_status, notify_queue, queue_manager, wa_sender,
+)
 from app.utils.error_logger import log_error
 
 _WAMID_TTL = 86_400  # 24 h — wamid cache expiry in Redis
 
 logger = logging.getLogger(__name__)
+
+
+def _inbound_text(msg: dict) -> str | None:
+    """
+    What the customer actually said, for display in the chat window.
+
+    Each Meta message type buries it somewhere different, and a bubble showing the raw
+    payload would be unreadable. Returns None for a type with no text at all (a bare
+    image, say) rather than inventing a placeholder — the media field carries that.
+    """
+    t = msg.get("type", "")
+    if t == "text":
+        return (msg.get("text") or {}).get("body")
+    if t == "button":
+        return (msg.get("button") or {}).get("text")
+    if t == "interactive":
+        inter = msg.get("interactive") or {}
+        reply = inter.get("button_reply") or inter.get("list_reply") or {}
+        return reply.get("title")
+    # Media types carry an optional caption.
+    media = msg.get(t) or {}
+    if isinstance(media, dict):
+        return media.get("caption")
+    return None
+
+
+def _inbound_media(msg: dict) -> dict | None:
+    """Meta's media id and mime type for an attachment, or None for a text message."""
+    t = msg.get("type", "")
+    if t not in ("image", "video", "document", "audio", "sticker"):
+        return None
+    media = msg.get(t) or {}
+    if not isinstance(media, dict):
+        return None
+    return {
+        "type":      t,
+        "media_id":  media.get("id"),
+        "mime_type": media.get("mime_type"),
+        "filename":  media.get("filename"),
+    }
 
 
 # ── Public entry points ───────────────────────────────────────────────────────
@@ -116,6 +158,25 @@ def handle_inbound(db: Session, account: WhatsAppAccount, msg: dict) -> None:
     # 5. UPDATE CONVERSATION STATS
     conv.last_activity_at = datetime.now(timezone.utc)
     conv.total_messages   = (conv.total_messages or 0) + 1
+
+    # 5b. AGENT CHAT TIMELINE
+    # Deliberately here, before the branching below, so EVERY inbound is recorded —
+    # not only the out-of-flow ones that fall through to step 6. The chat window shows
+    # a whole conversation; recording only the messages that failed to match a service
+    # would produce a transcript with the customer's answers missing.
+    #
+    # This is also the only thing that opens the 24-hour service window. Sending never
+    # does, however much a template looks like the start of a conversation.
+    agent_timeline.record_inbound(
+        db, account.company_id, from_no,
+        body_rendered=_inbound_text(msg),
+        media=_inbound_media(msg),
+        wamid=wamid,
+        replies_to_wamid=context_wamid,
+        # No name from here: Conversation stores only the number. The thread's name
+        # comes from whichever broadcast or phonebook row knew one, and
+        # get_or_create_thread never overwrites a known name with nothing.
+    )
 
     # 6. NO ACTIVE SERVICE — could be a PDF button tap or a random out-of-flow message
     if not service:
@@ -253,6 +314,18 @@ def handle_status(db: Session, status: dict, account: WhatsAppAccount) -> None:
     if not wamid or not state:
         return
 
+    try:
+        ts_for_timeline = (
+            datetime.fromtimestamp(int(timestamp), tz=timezone.utc) if timestamp else None
+        )
+    except (TypeError, ValueError):
+        ts_for_timeline = None
+
+    # Applied before the branch below, because a timeline row can belong to either
+    # store — a broadcast send or an agent's own reply — and this caller should not
+    # have to know which. Committed by whichever branch follows; both commit.
+    timeline_hit = agent_timeline.apply_status(db, wamid, state, ts_for_timeline)
+
     msg = db.query(Message).filter(Message.wamid == wamid).first()
     if not msg:
         # Broadcast sends write no Message rows (BROADCAST_DESIGN.md §8), so their
@@ -265,6 +338,17 @@ def handle_status(db: Session, status: dict, account: WhatsAppAccount) -> None:
             except Exception as exc:
                 db.rollback()
                 log_error("Broadcast status update failed", f"handle_status wamid={wamid}", exc)
+            return
+        # Neither store owns this wamid — but the timeline might, for a message an
+        # agent sent directly, which creates no Message row and no broadcast recipient.
+        # Without this commit that receipt is applied in memory and thrown away, and
+        # the agent's own message would never show as delivered.
+        if timeline_hit:
+            try:
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                log_error("Timeline status update failed", f"handle_status wamid={wamid}", exc)
             return
         logger.debug("Status receipt for unknown wamid=%s state=%s", wamid, state)
         return

@@ -4,10 +4,10 @@ import uuid as _uuid
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.templating import build_templates
 from app.core.deps import get_page_user
 from app.core.doctypes import SERVICES_DOCTYPE
 from app.models.company import Company
@@ -15,12 +15,8 @@ from app.models.conversation import Conversation, Service, ServiceResponse
 from app.models.whatsapp import WhatsAppTemplate
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+templates = build_templates()
 
-if "dv_search_text" not in templates.env.filters:
-    templates.env.filters["dv_search_text"] = (
-        lambda r: " ".join(str(v) for v in r.values() if v is not None).lower()
-    )
 
 router = APIRouter(tags=["Pages"])
 
@@ -37,8 +33,8 @@ def _service_row(svc: Service, company: Company) -> dict:
         "company_name": company.name if company else "—",
         "status":       svc.status,
         "progress":     f"{answered} / {total} questions" if total else "Template only",
-        "created_at":   svc.created_at.strftime("%d %b %Y  %H:%M") if svc.created_at else "—",
-        "completed_at": svc.completed_at.strftime("%d %b %Y  %H:%M") if svc.completed_at else "—",
+        "created_at":   svc.created_at,
+        "completed_at": svc.completed_at,
     }
 
 
@@ -124,7 +120,7 @@ def service_detail(
             "answer_type":   _ANSWER_TYPE_LABELS.get(q.get("answer_type"), "?"),
             "sent":          q.get("sent", 0),
             "response":      resp.response_value if resp else None,
-            "responded_at":  resp.responded_at.strftime("%d %b %Y  %H:%M") if resp and resp.responded_at else "—",
+            "responded_at":  resp.responded_at if resp else None,
         })
 
     return templates.TemplateResponse("services/detail.html", {

@@ -17,6 +17,13 @@ companies (Company)
  │
  ├─< company_api_keys (CompanyApiKey, CASCADE)      X-API-Key auth for /client-api/v1/*
  │
+ ├─< agent_threads (AgentThread, CASCADE, unique per company+mobile)
+ │      └─< agent_messages (AgentMessage, CASCADE, unique per thread+seq)
+ │                                                  the per-contact chat timeline;
+ │                                                  written by broadcast sends, inbound
+ │                                                  replies and delivery receipts alike
+ ├─< broadcast_settings (BroadcastSettings, CASCADE, unique per company)
+ │                                                  per-company send tuning; no inheritance
  ├─< erpnext_configs (ERPNextConfig, CASCADE, unique per company)
  │
  ├─< whatsapp_accounts (WhatsAppAccount, CASCADE, unique per company)
@@ -60,6 +67,7 @@ assigned in the permission matrix UI or checked by `require()`.
 | Messaging  | `services`        | read                         |
 | Messaging  | `conversations`   | read                         |
 | Messaging  | `erpnext_configs` | read, create, write, delete  |
+| Broadcast  | `broadcast_settings` | read, create, write, delete |
 | Analytics  | `reports`         | read                         |
 
 Not yet in RESOURCES (per CLAUDE.md, do not add until routes exist): none currently
@@ -80,6 +88,7 @@ dedicated `whatsapp` resource.
 | `/api/whatsapp`            | `api/whatsapp_api.py`           | `require("companies", *)`           |
 | `/api/company-api-keys`    | `api/company_api_keys_api.py`   | `require("companies", "write")`     |
 | `/api/erpnext-configs`     | `api/erpnext_config_api.py`     | `require("erpnext_configs", *)`     |
+| `/api/broadcast-settings`  | `api/broadcast_settings_api.py` | `require("broadcast_settings", *)`  |
 | `/webhook/meta`            | `api/meta_webhook.py`           | none (Meta signature-verified)      |
 | `/api/analytics`           | `api/analytics_api.py`          | `require("reports", "read")`        |
 | `/api/stream` (SSE)        | `api/sse_api.py`                | (check file — session-based)        |
@@ -99,6 +108,7 @@ dedicated `whatsapp` resource.
 | `/roles`, `/roles/{id}/permissions`       | `routes/roles_pages.py`           |
 | `/error-logs`, `/error-logs/{id}`         | `routes/error_logs_pages.py`      |
 | `/erpnext-configs*`                       | `routes/erpnext_config_pages.py`  |
+| `/broadcast-settings*`                    | `routes/broadcast_settings_pages.py` |
 | `/reports`                                | `routes/reports_pages.py`         |
 | `/services`, `/services/{id}`             | `routes/services_pages.py`        |
 | `/conversations`, `/conversations/{id}`   | `routes/conversations_pages.py`   |

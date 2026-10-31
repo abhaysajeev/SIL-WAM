@@ -31,6 +31,27 @@
     font-size:13.5px;line-height:1.55;color:#111;white-space:pre-wrap;word-break:break-word;
   }
 
+  /* Header media — the same square as the builder, so the file reads as the same
+     object in both places. */
+  .cd-media { display:flex;align-items:center;gap:12px;margin-bottom:12px; }
+  .cd-media-thumb {
+    position:relative;flex-shrink:0;width:64px;height:64px;overflow:visible;
+    border:1px solid var(--line);background:var(--bg);text-decoration:none;
+    display:flex;align-items:center;justify-content:center;color:var(--subtle);font-size:16px;
+  }
+  .cd-media-thumb:hover { border-color:var(--green); }
+  .cd-media-thumb img { width:100%;height:100%;object-fit:cover;display:block; }
+  .cd-media-t { font-size:12.5px;font-weight:600;color:var(--black);word-break:break-all; }
+  .cd-media-s { font-size:11px;color:var(--muted);margin-top:2px; }
+  .cd-media-pop {
+    position:absolute;left:0;bottom:calc(100% + 8px);z-index:60;padding:6px;
+    background:var(--bg-card);border:1px solid var(--line);box-shadow:var(--shadow-pop);
+    opacity:0;visibility:hidden;transform:translateY(4px);pointer-events:none;
+    transition:opacity .15s ease,transform .15s ease,visibility .15s ease;
+  }
+  .cd-media-thumb:hover .cd-media-pop { opacity:1;visibility:visible;transform:translateY(0); }
+  .cd-media-pop img { max-width:240px;max-height:240px;width:auto;height:auto;object-fit:contain; }
+
   /* Screening summary */
   .cd-screen { display:flex;gap:18px;flex-wrap:wrap;align-items:center; }
   .cd-stat { display:flex;flex-direction:column;gap:2px; }
@@ -38,13 +59,20 @@
   .cd-stat-l { font-size:11px;color:var(--muted); }
   .cd-stat.warn .cd-stat-n { color:var(--orange, #b45309); }
   .cd-stat.skip .cd-stat-n { color:var(--red-dark); }
+  /* Confirmed by Meta — the only numbers that mean a phone actually received it. */
+  .cd-stat.ok   .cd-stat-n { color:var(--green-dark); }
 
   /* Progress — thin bar, deliberately labelled as dispatch not delivery */
   .cd-bar-wrap { height:6px;background:var(--line);overflow:hidden;margin-bottom:8px; }
   .cd-bar { height:100%;width:0;background:var(--green);transition:width .3s ease; }
   .cd-bar-label { font-size:12px;color:var(--ink-2);display:flex;justify-content:space-between;gap:12px; }
-  .cd-settling { font-size:11.5px;color:var(--muted);margin-top:10px;display:flex;align-items:center;gap:6px; }
-  .cd-settling i { color:var(--green); }
+  .cd-settling { font-size:11.5px;color:var(--muted);margin-top:10px;display:flex;align-items:flex-start;gap:6px;line-height:1.5; }
+  .cd-settling i { color:var(--green);flex-shrink:0;margin-top:1px; }
+  .cd-settling.warn {
+    color:var(--red-dark);background:var(--red-tint);
+    border:1px solid rgba(220,38,38,.2);padding:9px 12px;
+  }
+  .cd-settling.warn i { color:var(--red-dark); }
 
   .cd-results { display:flex;gap:18px;flex-wrap:wrap;margin-top:14px; }
 
@@ -63,13 +91,29 @@
     font-family:var(--f-mono);font-size:9px;text-transform:uppercase;letter-spacing:.1em;
     padding:3px 7px;border:1px solid var(--line-2);color:var(--muted);white-space:nowrap;
   }
-  .cd-pill.sent      { color:var(--green-dark);border-color:var(--green);background:var(--green-tint); }
+  /* Amber, not green: "sent" is Meta accepting the request. Nothing is known about
+     the customer's phone until a delivery receipt arrives, and colouring it like a
+     success is exactly the overstatement this page is trying not to make. */
+  .cd-pill.sent      { color:var(--orange, #b45309);border-color:var(--orange, #b45309);background:#fffbeb; }
   .cd-pill.delivered { color:var(--green-dark);border-color:var(--green);background:var(--green-tint); }
   .cd-pill.read      { color:#1d4ed8;border-color:#1d4ed8;background:#eff6ff; }
   .cd-pill.failed    { color:var(--red-dark);border-color:var(--red);background:var(--red-tint); }
   .cd-pill.skipped   { color:var(--muted);background:var(--bg); }
+  /* Slate, deliberately neither amber nor red: nothing failed, and nothing was
+     confirmed. The row aged out with no receipt, and the colour should read as
+     "we do not know" rather than as either outcome. */
+  .cd-pill.unconfirmed { color:#475569;border-color:#94a3b8;background:#f1f5f9; }
 
   .cd-err { font-size:11.5px;color:var(--red-dark);display:block;margin-top:3px; }
+
+  /* Per-row image, one per recipient. Small on purpose — it is a check that the
+     right picture is attached, not a gallery. */
+  .cd-row-thumb {
+    display:block;width:36px;height:36px;border:1px solid var(--line-2);
+    background:var(--bg);overflow:hidden;text-decoration:none;
+  }
+  .cd-row-thumb:hover { border-color:var(--green); }
+  .cd-row-thumb img { width:100%;height:100%;object-fit:cover;display:block; }
 
   .pg-bar { display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 18px;border-top:1px solid var(--line);flex-wrap:wrap; }
   .pg-count { font-family:var(--f-mono);font-size:11px;color:var(--subtle); }
@@ -130,7 +174,31 @@
 {% if template %}
 <div class="cd-card">
   <div class="cd-card-hd"><i class="ti ti-eye"></i> What each recipient receives</div>
-  <div class="cd-card-bd"><div class="cd-preview">{{ preview }}</div></div>
+  <div class="cd-card-bd">
+    {% if header_media_url %}
+    {% set hm = campaign.header_media %}
+    <div class="cd-media">
+      <a class="cd-media-thumb" href="{{ header_media_url }}" target="_blank" rel="noopener"
+         title="Open in a new tab">
+        {% if hm.format == 'IMAGE' %}
+        <img src="{{ header_media_url }}" alt="">
+        <span class="cd-media-pop"><img src="{{ header_media_url }}" alt=""></span>
+        {% else %}
+        <i class="fas {{ 'fa-file-pdf' if hm.format == 'DOCUMENT' else 'fa-video' }}"></i>
+        {% endif %}
+      </a>
+      <div style="min-width:0">
+        <div class="cd-media-t">{{ hm.filename or 'Header file' }}</div>
+        <div class="cd-media-s">
+          {{ hm.format|title }} header ·
+          {% if hm.source == 'link' %}downloaded from {{ hm.source_url }} and stored on Meta
+          {% else %}uploaded to Meta{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+    <div class="cd-preview">{{ preview }}</div>
+  </div>
 </div>
 {% endif %}
 
@@ -166,6 +234,19 @@
       <i class="ti ti-loader-2"></i>
       <span>Delivery results still arriving — WhatsApp reports some failures after the send completes.</span>
     </div>
+
+    {# Shown instead of the spinner once it is clear no receipt is coming. A
+       campaign whose messages were accepted but never confirmed is not "still
+       settling" — something is wrong, and the spinner would hide it forever. #}
+    <div class="cd-settling warn" id="cdNoReceipts" style="display:none">
+      <i class="ti ti-alert-triangle"></i>
+      <span>
+        WhatsApp accepted these messages but has sent back no delivery confirmations.
+        That usually means the status webhook is not reaching this server — until it
+        does, <strong>we cannot tell you whether anyone received this</strong>.
+        Check the callback URL under Webhook config.
+      </span>
+    </div>
   </div>
 </div>
 
@@ -180,7 +261,9 @@
   <table class="cd-table">
     <thead>
       <tr>
-        <th>Number</th><th>Name</th><th>Agent</th><th>Parameters</th><th style="width:130px">Status</th>
+        <th>Number</th><th>Name</th><th>Agent</th>
+        {% if campaign.header_media_mode == 'per_row' %}<th style="width:52px">Image</th>{% endif %}
+        <th>Parameters</th><th style="width:130px">Status</th>
       </tr>
     </thead>
     <tbody>
@@ -189,10 +272,38 @@
         <td class="cd-mono">{{ r.mobile_no }}</td>
         <td class="cd-name">{{ r.customer_name or '—' }}</td>
         <td class="cd-mono">{{ r.agent_id or '—' }}</td>
-        <td>{{ (r.params or []) | join(' · ') }}</td>
+        {% if campaign.header_media_mode == 'per_row' %}
+        {# Loaded straight from the source URL, not proxied: per-row images are
+           public addresses Meta fetches directly, so there is no token to protect
+           and nothing of ours in the path. This is also the honest preview — it is
+           literally what Meta will fetch. #}
         <td>
-          <span class="cd-pill {{ r.status }}">
-            {{ r.skip_reason.replace('_', ' ') if r.status == 'skipped' and r.skip_reason else r.status }}
+          {% if r.header_media_url %}
+          <a class="cd-row-thumb" href="{{ r.header_media_url }}" target="_blank"
+             rel="noopener" title="{{ r.header_media_url }}">
+            <img src="{{ r.header_media_url }}" alt="" loading="lazy">
+          </a>
+          {% else %}<span class="cd-mono" style="color:var(--subtle)">—</span>{% endif %}
+        </td>
+        {% endif %}
+        <td>{{ (r.params or []) | join(' · ') }}</td>
+        {# data-rid is what the poll patches against. Matching by id rather than row
+           position means a reordered or re-paginated table can never show one
+           recipient's status against another's number. #}
+        <td class="cd-status-cell" data-rid="{{ r.id }}">
+          <span class="cd-pill {{ r.status }}"
+                title="{{ {
+                  'sent':        'WhatsApp accepted this message. No confirmation yet that it reached the phone.',
+                  'unconfirmed': 'WhatsApp accepted this message but never confirmed delivery. It may have arrived; we have no receipt saying so.',
+                  'delivered':   'WhatsApp confirmed this arrived on the customer\'s phone.',
+                  'read':        'The customer opened this message.',
+                  'sending':     'Being handed to WhatsApp now.',
+                  'pending':     'Queued, not yet attempted.',
+                  'failed':      'WhatsApp rejected or could not deliver this.',
+                }.get(r.status, '') }}">
+            {# "awaiting" rather than "sent": the row is not evidence of receipt. #}
+            {{ r.skip_reason.replace('_', ' ') if r.status == 'skipped' and r.skip_reason
+               else ('awaiting' if r.status == 'sent' else r.status) }}
           </span>
           {% if r.error_message %}<span class="cd-err">{{ r.error_message }}</span>{% endif %}
         </td>
@@ -226,6 +337,24 @@
 (function () {
   var ID     = "{{ campaign.id }}";
   var STATUS = "{{ campaign.status }}";
+  // Which slice of recipients is on screen. The poll asks the API for exactly this
+  // page so the rows it gets back are the rows the table is showing.
+  var PAGE   = {{ page.page if page else 1 }};
+  var PER    = {{ page.per_page if page else 50 }};
+
+  // Mirrors the Jinja map in the table above. The duplication is unavoidable — one
+  // renders on the server, the other patches in the browser — so if a status is
+  // added it must be added in both places or the pill silently loses its wording.
+  var STATUS_META = {
+    pending:     { label: 'pending',     title: 'Queued, not yet attempted.' },
+    sending:     { label: 'sending',     title: 'Being handed to WhatsApp now.' },
+    sent:        { label: 'awaiting',    title: 'WhatsApp accepted this message. No confirmation yet that it reached the phone.' },
+    unconfirmed: { label: 'unconfirmed', title: 'WhatsApp accepted this message but never confirmed delivery. It may have arrived; we have no receipt saying so.' },
+    delivered:   { label: 'delivered',   title: "WhatsApp confirmed this arrived on the customer's phone." },
+    read:        { label: 'read',        title: 'The customer opened this message.' },
+    failed:      { label: 'failed',      title: 'WhatsApp rejected or could not deliver this.' },
+    skipped:     { label: 'skipped',     title: '' }
+  };
 
   var el = function (id) { return document.getElementById(id); };
   var errEl = el('cdError');
@@ -347,21 +476,48 @@
 
         bar.style.width = p.percent + '%';
         el('cdBarPct').textContent = p.percent + '%';
+        // "handed to WhatsApp", not "sent": the bar measures what left this server.
+        // Whether it reached anyone is the row of numbers underneath.
         el('cdBarText').textContent =
-          p.attempted + ' of ' + p.sendable + ' sent' +
+          p.attempted + ' of ' + p.sendable + ' handed to WhatsApp' +
           (p.skipped ? '  ·  ' + p.skipped + ' skipped' : '');
 
+        // Three different facts, never merged into one "sent" number:
+        //   awaiting  — Meta took it, nothing known about the phone
+        //   delivered — Meta confirmed it arrived
+        //   read      — the customer opened it
         el('cdResults').innerHTML =
-          stat(p.sent, 'sent') +
-          (p.delivered ? stat(p.delivered, 'delivered') : '') +
-          (p.read ? stat(p.read, 'read') : '') +
+          (p.delivered ? stat(p.delivered, 'delivered', 'ok') : '') +
+          (p.read ? stat(p.read, 'read', 'ok') : '') +
+          (p.awaiting_confirmation
+            ? stat(p.awaiting_confirmation, 'awaiting confirmation', 'warn') : '') +
+          // Shown separately from "awaiting", never added to it: these have stopped
+          // waiting. Folding them together would keep implying a confirmation is
+          // still on its way long after the system concluded otherwise.
+          (p.unconfirmed ? stat(p.unconfirmed, 'unconfirmed', 'skip') : '') +
           (p.failed ? stat(p.failed, 'failed', 'skip') : '');
 
         el('cdStatus').textContent = p.status;
         el('cdStatus').className = 'cd-status ' + p.status;
-        el('cdSettling').style.display = p.settling ? '' : 'none';
+
+        // Two different situations that look identical if you only show a spinner:
+        // receipts still trickling in, versus no receipt has EVER arrived, which
+        // means the status webhook is not reaching this server at all. The second
+        // one never resolves on its own, so saying "still arriving" is a lie.
+        var quietFor = p.seconds_since_dispatch || 0;
+        // all_unconfirmed means every accepted row aged out with nothing back — the
+        // same diagnosis the 2-minute heuristic guesses at, but now established
+        // rather than inferred, so it is worth saying however long ago it dispatched.
+        var silent = (p.settling && !p.receipts_seen && quietFor > 120) || p.all_unconfirmed;
+        el('cdSettling').style.display = (p.settling && !silent) ? '' : 'none';
+        el('cdNoReceipts').style.display = silent ? '' : 'none';
 
         if (p.failed) loadInsights();
+
+        // The per-recipient table is server-rendered once. Without this the pills sit
+        // at whatever they were when the page loaded, and watching a 50-contact
+        // campaign means reloading to find out what happened to each person.
+        if (p.is_running || p.settling) refreshRows();
 
         if (!p.is_running) {
           clearInterval(timer);
@@ -378,6 +534,44 @@
             timer = setInterval(poll, 10000);
           }
         }
+      } catch (_) { /* transient — the next tick retries */ }
+    }
+
+    async function refreshRows() {
+      var cells = document.querySelectorAll('.cd-status-cell');
+      if (!cells.length) return;
+      try {
+        var res = await fetchWithAuth(
+          '/api/campaigns/' + ID + '/recipients?page=' + PAGE + '&per_page=' + PER);
+        if (!res.ok) return;
+        var data = await res.json();
+
+        // Indexed by id, then matched against the DOM. Position would be fragile:
+        // both sides order by mobile_no today, but a row patched by position after
+        // any ordering change would show one person's status against another's
+        // number — a wrong answer that looks entirely plausible.
+        var byId = {};
+        (data.items || []).forEach(function (r) { byId[r.id] = r; });
+
+        cells.forEach(function (cell) {
+          var r = byId[cell.getAttribute('data-rid')];
+          if (!r) return;
+          var meta  = STATUS_META[r.status] || { label: r.status, title: '' };
+          var label = (r.status === 'skipped' && r.skip_reason)
+            ? r.skip_reason.replace(/_/g, ' ')
+            : meta.label;
+          var html = '<span class="cd-pill ' + esc(r.status) + '" title="' +
+                     esc(meta.title) + '">' + esc(label) + '</span>';
+          if (r.error_message) {
+            html += '<span class="cd-err">' + esc(r.error_message) + '</span>';
+          }
+          // Only touch the DOM when something actually changed, so a tooltip the
+          // user is reading is not torn out from under them every poll.
+          if (cell.innerHTML.replace(/\s+/g, ' ').trim() !==
+              html.replace(/\s+/g, ' ').trim()) {
+            cell.innerHTML = html;
+          }
+        });
       } catch (_) { /* transient — the next tick retries */ }
     }
 

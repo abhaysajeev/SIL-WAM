@@ -27,6 +27,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
@@ -57,6 +58,28 @@ class BroadcastCampaign(Base):
     # "per_row" — parameters supplied per recipient via CSV (Case 2, not yet built)
     param_mode    = Column(String(20), nullable=False, default="same")
     shared_params = Column(JSONB, nullable=True)   # Case 1 values, ordered by {{n}}
+
+    # The file that fills an IMAGE/DOCUMENT/VIDEO template header — one file for the
+    # whole campaign. NULL for templates with a text header or none at all, and NULL
+    # in per-row mode, where each recipient carries its own image instead.
+    #
+    #   {"format": "IMAGE", "source": "upload"|"link",
+    #    "media_id": "...", "source_url": "https://..." | None,
+    #    "filename": "...", "mime": "image/jpeg", "attached_at": "<iso8601>"}
+    #
+    # Always a media_id: a pasted link is downloaded once at attach time and uploaded
+    # to Meta like any other file, so every send addresses the same id. Handing Meta
+    # the URL instead would have it fetch that address once per recipient. `source`
+    # and `source_url` are provenance only — never used to address a send.
+    header_media  = Column(JSONB, nullable=True)
+
+    # How a media-header template gets its file:
+    #   "shared"  — one file for everyone, on header_media above
+    #   "per_row" — each recipient's own URL, on broadcast_recipients.header_media_url
+    # NULL means the template has no media header at all. A column rather than
+    # something inferred from header_media being NULL, because "per-row mode" and
+    # "no media needed" are different things that must not look alike.
+    header_media_mode = Column(String(20), nullable=True)
 
     # draft → screening → ready → sending → dispatched → settled
     # "dispatched" means every send was attempted; "settled" means the receipts are in.
@@ -104,9 +127,22 @@ class BroadcastRecipient(Base):
     # know whether they came from shared_params or from a CSV row.
     params        = Column(JSONB, nullable=True)
 
+    # This recipient's own header image, personalised per-row mode only. Stored as
+    # the URL rather than a Meta media id: each row is one message, so Meta fetches
+    # each address exactly once — the amplification that made a shared link wrong
+    # (one URL fetched N times) does not arise here. Reachability is checked at
+    # import instead, so a dead link is a reported skipped row, not a failed send.
+    header_media_url = Column(String(2048), nullable=True)
+
     # draft → pending → sending → sent → delivered → read
+    #                          ↘ unconfirmed (accepted, no receipt within the timeout)
     #                          ↘ failed
     #         skipped (never sent — see skip_reason)
+    #
+    # "sent" means Meta accepted the request. It is NOT evidence the message reached
+    # a phone, and nothing downstream may treat it as such. A row that stays "sent"
+    # past the company's receipt_timeout_minutes becomes "unconfirmed" — the system
+    # saying it does not know, rather than implying delivery is still coming.
     status      = Column(String(20), nullable=False, default="draft")
     skip_reason = Column(String(40), nullable=True)   # opted_out | invalid_flagged | us_number | validation
 
@@ -115,6 +151,21 @@ class BroadcastRecipient(Base):
     wamid         = Column(String(200), nullable=True)
     error_code    = Column(String(20), nullable=True)
     error_message = Column(String(500), nullable=True)
+
+    # Set when the worker claims this row, cleared when it reaches a terminal state.
+    # Crash recovery uses the age of this stamp to tell a row stranded by a dead
+    # process from one another instance is actively sending. Without it, a booting
+    # instance resets every "sending" row — including in-flight ones — and those
+    # recipients are messaged twice.
+    claimed_at   = Column(DateTime(timezone=True), nullable=True)
+
+    # Retry bookkeeping. Only transient failures are retried — a rejection Meta will
+    # repeat identically (invalid number, parameter mismatch) is terminal on the first
+    # attempt, because retrying it burns quota and signals bad list hygiene to Meta.
+    # next_attempt_at NULL means "eligible now", which is what every existing row
+    # backfills to.
+    attempts        = Column(Integer, nullable=False, server_default=text("0"))
+    next_attempt_at = Column(DateTime(timezone=True), nullable=True)
 
     sent_at      = Column(DateTime(timezone=True), nullable=True)
     delivered_at = Column(DateTime(timezone=True), nullable=True)
@@ -132,4 +183,8 @@ class BroadcastRecipient(Base):
         Index("ix_broadcast_recipients_wamid", "wamid"),
         # "which campaigns has this customer been sent?" for the contact panel.
         Index("ix_broadcast_recipients_mobile_no", "mobile_no"),
+        # The claim query filters on all three; without this a retry-heavy campaign
+        # turns every 3-second tick into a scan of its recipients.
+        Index("ix_broadcast_recipients_next_attempt",
+              "campaign_id", "status", "next_attempt_at"),
     )

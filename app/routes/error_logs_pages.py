@@ -4,16 +4,16 @@ import os
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.templating import build_templates
 from app.core.deps import get_page_user
 from app.core.doctypes import ERROR_LOGS_DOCTYPE
 from app.models.error_log import ErrorLog
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+templates = build_templates()
 
 router = APIRouter(tags=["Pages"])
 
@@ -44,7 +44,7 @@ def error_logs_list(
             "error_type": log.error_type,
             "user":       log.user or "—",
             "seen":       log.seen,
-            "created_at": log.created_at.strftime("%Y-%m-%d %H:%M") if log.created_at else "—",
+            "created_at": log.created_at,
         }
         for log in logs
     ]

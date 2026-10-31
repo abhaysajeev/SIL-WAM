@@ -41,6 +41,40 @@ def is_media_header(components: list | None) -> bool:
     return header_format(components) in MEDIA_HEADER_FORMATS
 
 
+def header_text(components: list | None) -> str | None:
+    """The HEADER's text, for a TEXT header only. None for media or no header."""
+    for c in components or []:
+        if str(c.get("type", "")).upper() == "HEADER":
+            if str(c.get("format", "")).upper() == "TEXT":
+                return c.get("text") or None
+            return None
+    return None
+
+
+def footer_text(components: list | None) -> str | None:
+    """The FOOTER's text, or None."""
+    footer = next(
+        (c for c in (components or []) if str(c.get("type", "")).upper() == "FOOTER"), None
+    )
+    return (footer or {}).get("text") or None
+
+
+def buttons(components: list | None) -> list[dict]:
+    """
+    The template's buttons as {type, text}, or an empty list.
+
+    Type matters to a client rendering them: a QUICK_REPLY comes back as an inbound
+    message when tapped, a URL just opens a link and is never heard from again.
+    """
+    comp = next(
+        (c for c in (components or []) if str(c.get("type", "")).upper() == "BUTTONS"), None
+    )
+    return [
+        {"type": str(b.get("type", "")).upper(), "text": b.get("text") or ""}
+        for b in (comp or {}).get("buttons") or []
+    ]
+
+
 def param_indices(components: list | None) -> list[int]:
     """
     Placeholder numbers in the body, ascending and de-duplicated.

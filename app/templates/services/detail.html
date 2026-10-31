@@ -79,7 +79,7 @@
     <div class="sd-title">{{ svc.service_id }}</div>
     <div class="sd-meta">
       {% if company %}<span><i class="ti ti-building"></i> {{ company.name }}</span>{% endif %}
-      <span><i class="ti ti-clock"></i> {{ svc.created_at.strftime('%d %b %Y  %H:%M') if svc.created_at else '—' }}</span>
+      <span><i class="ti ti-clock"></i> {{ ts(svc.created_at) }}</span>
       {% if conv %}
       <span><i class="ti ti-device-mobile"></i>
         <a href="/conversations/{{ conv.id }}" style="color:var(--green);font-weight:600;">{{ conv.mobile_no }}</a>
@@ -117,11 +117,11 @@
       </div>
       <div class="sd-field">
         <div class="sd-label">Created</div>
-        <div class="sd-value">{{ svc.created_at.strftime('%d %b %Y  %H:%M UTC') if svc.created_at else '—' }}</div>
+        <div class="sd-value">{{ ts(svc.created_at) }}</div>
       </div>
       <div class="sd-field">
         <div class="sd-label">Completed</div>
-        <div class="sd-value">{{ svc.completed_at.strftime('%d %b %Y  %H:%M UTC') if svc.completed_at else '—' }}</div>
+        <div class="sd-value">{{ ts(svc.completed_at) }}</div>
       </div>
       {% if svc.failed_reason %}
       <div class="sd-field">
@@ -189,7 +189,7 @@
             <div class="sd-resp-pending">Not yet sent</div>
             {% endif %}
           </td>
-          <td><span class="sd-resp-ts">{{ row.responded_at }}</span></td>
+          <td><span class="sd-resp-ts">{{ ts(row.responded_at) }}</span></td>
         </tr>
         {% endfor %}
       </tbody>

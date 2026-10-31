@@ -17,6 +17,10 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/docview.css">
+{# Only for doctypes declaring form_tabs. .cd-tabs / .cd-tab / .cd-panel already
+   exist here for the company detail page; reusing them keeps one tab appearance
+   in the app rather than introducing a second. #}
+{% if dt.get('form_tabs') %}<link rel="stylesheet" href="/static/css/whatsapp.css">{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -67,8 +71,33 @@
     <span id="formErrorText"></span>
   </div>
 
+  {#
+    Tabs — optional, and absent for every doctype that does not ask for them, which is
+    why the fallback below is the original flat loop rather than a one-tab special case.
+
+    A section opts into a tab with "tab": "<key>"; anything without one lands in the
+    first tab. Only shown on an existing record: the extra tabs configure things that
+    need the record to exist (an agent's device, its sessions), so on a create form
+    there is nothing for them to talk to yet.
+  #}
+  {% set tabs = dt.get('form_tabs') if record else None %}
+
+  {% if tabs %}
+  <div class="cd-tabs" id="dvTabs">
+    {% for tab in tabs %}
+    <button type="button" class="cd-tab" data-panel="{{ tab.key }}">
+      {% if tab.get('icon') %}<i class="{{ tab.icon }}"></i>{% endif %} {{ tab.label }}
+    </button>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   <!-- Sections -->
+  {% for tab in (tabs or [{'key': '_all'}]) %}
+  <div class="{% if tabs %}cd-panel{% endif %}" id="panel-{{ tab.key }}">
+
   {% for section in dt.form_sections %}
+  {% if (not tabs) or (section.get('tab', tabs[0].key) == tab.key) %}
   {% if not section.get('create_only') or not record %}
   <div class="dv-section">
     <div class="dv-section-header">
@@ -161,6 +190,19 @@
                  {% if field.get('maxlength') %}maxlength="{{ field.maxlength }}"{% endif %}
                  {% if field.get('minlength') %}data-minlength="{{ field.minlength }}"{% endif %}>
 
+        {% elif field.type == 'number' %}
+          {# Integer settings. min/max are advisory here — the server clamps every
+             value it reads, so a hand-crafted request cannot set a concurrency of
+             500 or a stale window shorter than the send timeout. #}
+          <input type="number"
+                 id="f_{{ field.name }}" name="{{ field.name }}"
+                 class="dv-input"
+                 value="{{ fval }}"
+                 {% if field.get('min') is not none %}min="{{ field.min }}"{% endif %}
+                 {% if field.get('max') is not none %}max="{{ field.max }}"{% endif %}
+                 step="1"
+                 {% if field.get('placeholder') %}placeholder="{{ field.placeholder }}"{% endif %}>
+
         {% elif field.type == 'textarea' %}
           <textarea id="f_{{ field.name }}" name="{{ field.name }}"
                     class="dv-input"
@@ -189,7 +231,17 @@
     </div>
   </div>
   {% endif %}{# end section create_only check #}
-  {% endfor %}
+  {% endif %}{# end tab filter #}
+  {% endfor %}{# end sections #}
+
+  {# A tab may carry its own template instead of doctype fields — anything with its
+     own widgets and its own endpoints, which doctype fields cannot express. #}
+  {% if tabs and tab.get('template') %}
+  {% include tab.template %}
+  {% endif %}
+
+  </div>{# end panel #}
+  {% endfor %}{# end tabs #}
 
 </div>
 {% endblock %}
@@ -198,6 +250,37 @@
 <script>
 (function () {
   var RECORD_ID   = {{ (('"' + record_id + '"') if record_id else 'null') | safe }};
+
+  /* ── Tabs ──────────────────────────────────────────────────────────────
+     Same switcher the company detail page uses, including the #hash deep link,
+     so a tab survives a reload and can be linked to. Absent unless the doctype
+     declares form_tabs. */
+  var tabButtons = document.querySelectorAll('.cd-tab');
+  if (tabButtons.length) {
+    var panelKeys = Array.prototype.map.call(tabButtons, function (t) {
+      return t.dataset.panel;
+    });
+
+    var switchTab = function (name) {
+      if (panelKeys.indexOf(name) === -1) name = panelKeys[0];
+      tabButtons.forEach(function (t) {
+        t.classList.toggle('active', t.dataset.panel === name);
+      });
+      document.querySelectorAll('.cd-panel').forEach(function (p) {
+        p.classList.toggle('active', p.id === 'panel-' + name);
+      });
+      history.replaceState(null, '', '#' + name);
+      // Lets a panel load its own data the first time it is opened, rather than
+      // every form view paying for every tab's requests up front.
+      document.dispatchEvent(new CustomEvent('dv:tab', { detail: { panel: name } }));
+    };
+
+    tabButtons.forEach(function (tab) {
+      tab.addEventListener('click', function () { switchTab(tab.dataset.panel); });
+    });
+    switchTab((window.location.hash || '').replace('#', '') || panelKeys[0]);
+  }
+
   var API_PREFIX  = '{{ dt.api_prefix | safe }}';
   var BASE_ROUTE  = '{{ dt.base_route | safe }}';
   var IS_NEW      = !RECORD_ID;
@@ -286,6 +369,22 @@
           if (IS_NEW) {
             window.location.href = BASE_ROUTE + '/' + data.id;
           } else {
+            // A tab panel can own data this form knows nothing about — the Agent
+            // Config tab, for one. Without this the toolbar Save would report success
+            // having silently ignored everything on the tab the user was looking at,
+            // which is worse than no save button at all.
+            //
+            // Panels register with:  (window.dvSaveHooks = window.dvSaveHooks || []).push(fn)
+            // A hook throws to fail the save; its message reaches the form's error banner.
+            try {
+              var hooks = window.dvSaveHooks || [];
+              for (var hi = 0; hi < hooks.length; hi++) {
+                await hooks[hi]();
+              }
+            } catch (hookErr) {
+              showError((hookErr && hookErr.message) || 'Save failed. Please try again.');
+              return;
+            }
             statusEl.innerHTML = '<i class="fas fa-check-circle"></i> Saved';
             statusEl.className = 'dv-save-status success';
             setTimeout(function () { statusEl.className = 'dv-save-status'; }, 3000);

@@ -4,22 +4,18 @@ import uuid as _uuid
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.templating import build_templates
 from app.core.deps import get_page_user
 from app.core.doctypes import CONVERSATIONS_DOCTYPE
 from app.models.company import Company
 from app.models.conversation import Conversation, Message, MobileQueue, Service, ServiceResponse
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+templates = build_templates()
 
-if "dv_search_text" not in templates.env.filters:
-    templates.env.filters["dv_search_text"] = (
-        lambda r: " ".join(str(v) for v in r.values() if v is not None).lower()
-    )
 
 router = APIRouter(tags=["Pages"])
 
@@ -67,10 +63,7 @@ def conversations_list(
             "mobile_no":        conv.mobile_no,
             "company_name":     company.name if company else "—",
             "total_messages":   str(conv.total_messages or 0),
-            "last_activity_at": (
-                conv.last_activity_at.strftime("%d %b %Y  %H:%M")
-                if conv.last_activity_at else "—"
-            ),
+            "last_activity_at": conv.last_activity_at,
             "active_service":   (
                 f"{active_status[str(conv.id)]} active" if active_status.get(str(conv.id)) else "—"
             ),

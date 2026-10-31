@@ -109,7 +109,7 @@
     <div class="bl-meta">
       <span><i class="ti ti-building"></i> {{ company.name if company else '—' }}</span>
       <span><i class="ti ti-users"></i> {{ page.total }} contact{{ '' if page.total == 1 else 's' }}</span>
-      <span><i class="ti ti-calendar"></i> {{ pb.created_at.strftime('%d %b %Y') if pb.created_at else '—' }}</span>
+      <span><i class="ti ti-calendar"></i> {{ ts(pb.created_at, 'date') }}</span>
     </div>
   </div>
   <div style="display:flex;gap:8px;align-items:center">

@@ -32,6 +32,136 @@
     background:var(--green-tint);padding:6px 4px;text-align:center;
   }
 
+  /* ── Header media ──────────────────────────────────────────────────────
+     The template's header is the first thing a recipient sees, so this block
+     sits above the parameter rows — the form reads in message order. */
+  .cn-media { border:1px solid var(--line-2);margin-bottom:16px; }
+  .cn-media-hd {
+    display:flex;align-items:center;gap:10px;padding:9px 12px;
+    background:var(--bg);border-bottom:1px solid var(--line-2);
+  }
+  .cn-media-kind {
+    font-family:var(--f-mono);font-size:9.5px;font-weight:500;text-transform:uppercase;
+    letter-spacing:.12em;color:var(--muted);display:flex;align-items:center;gap:6px;
+  }
+  .cn-media-kind i { font-size:11px;color:var(--green-dark); }
+  .cn-media-req { color:var(--red-dark);font-weight:600; }
+
+  /* Segmented switch — two ways to supply one file, so they read as one control
+     with two sides rather than two independent buttons. */
+  .cn-seg { margin-left:auto;display:flex;border:1px solid var(--line-2);background:var(--bg-card); }
+  .cn-seg-btn {
+    font:inherit;font-size:11.5px;padding:4px 11px;border:none;background:none;
+    color:var(--muted);cursor:pointer;transition:background .15s,color .15s;
+  }
+  .cn-seg-btn + .cn-seg-btn { border-left:1px solid var(--line-2); }
+  .cn-seg-btn:hover  { color:var(--ink); }
+  .cn-seg-btn.active { background:var(--green-tint);color:var(--green-dark);font-weight:600; }
+
+  .cn-media-body { display:flex;gap:12px;align-items:stretch;padding:12px; }
+  .cn-media-input { flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:6px; }
+
+  .cn-drop {
+    display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;
+    border:1px dashed var(--line-2);background:var(--bg);
+    transition:border-color .15s,background .15s;
+  }
+  .cn-drop:hover, .cn-drop.over { border-color:var(--green);background:var(--green-tint); }
+  .cn-drop i { font-size:15px;color:var(--subtle);flex-shrink:0; }
+  .cn-drop.over i, .cn-drop:hover i { color:var(--green-dark); }
+  .cn-drop-t { font-size:12.5px;color:var(--ink);font-weight:600; }
+  .cn-drop-s { font-size:11px;color:var(--muted);margin-top:2px; }
+
+  .cn-file {
+    display:flex;align-items:center;gap:10px;padding:10px 12px;
+    border:1px solid var(--green);background:var(--green-tint);
+  }
+  .cn-file i    { color:var(--green-dark);font-size:14px; }
+  .cn-file-n    { font-size:12.5px;font-weight:600;color:var(--black);overflow:hidden;
+                  text-overflow:ellipsis;white-space:nowrap; }
+  .cn-file-s    { font-size:11px;color:var(--ink-2);margin-top:1px; }
+  .cn-file-acts { margin-left:auto;flex-shrink:0;display:flex;align-items:center;gap:10px; }
+  .cn-file-swap { font-size:11.5px;color:var(--green-dark);
+                  background:none;border:none;cursor:pointer;text-decoration:underline;font-family:inherit;padding:0; }
+  /* Removing is the destructive one of the pair, and it reads that way. */
+  .cn-file-swap.rm { color:var(--red-dark); }
+
+  .cn-media-status { font-size:11.5px;padding:0 12px 12px;color:var(--muted);display:none; }
+  .cn-media-status.show  { display:block; }
+  .cn-media-status.error { color:var(--red-dark); }
+  .cn-media-status.ok    { color:var(--green-dark); }
+
+  /* ── Thumbnail + hover preview ───────────────────────────────────────── */
+  .cn-thumb {
+    position:relative;flex-shrink:0;width:64px;height:64px;
+    border:1px solid var(--line-2);background:var(--bg);
+    display:flex;align-items:center;justify-content:center;
+    color:var(--subtle);font-size:16px;text-decoration:none;overflow:visible;
+  }
+  .cn-thumb.empty { border-style:dashed; }
+  .cn-thumb.filled { cursor:pointer;border-color:var(--line); }
+  .cn-thumb.filled:hover { border-color:var(--green); }
+  .cn-thumb img {
+    width:100%;height:100%;object-fit:cover;display:block;
+  }
+  .cn-thumb-badge {
+    position:absolute;right:-5px;bottom:-5px;width:16px;height:16px;border-radius:50%;
+    background:var(--green);color:#fff;font-size:8px;display:none;
+    align-items:center;justify-content:center;
+  }
+  .cn-thumb.filled .cn-thumb-badge { display:flex; }
+
+  /* Opens upward-left of the square so it never pushes the layout or leaves the
+     card. Pointer-events off: the popover must not swallow the click that opens
+     the file in a new tab. */
+  .cn-pop {
+    position:absolute;bottom:calc(100% + 8px);right:0;z-index:60;
+    background:var(--bg-card);border:1px solid var(--line);box-shadow:var(--shadow-pop);
+    padding:6px;opacity:0;visibility:hidden;transform:translateY(4px);
+    transition:opacity .15s ease,transform .15s ease,visibility .15s ease;
+    pointer-events:none;
+  }
+  .cn-thumb.filled:hover .cn-pop { opacity:1;visibility:visible;transform:translateY(0); }
+  .cn-pop img { display:block;max-width:240px;max-height:240px;width:auto;height:auto;object-fit:contain; }
+  .cn-pop-meta {
+    font-size:10.5px;color:var(--muted);padding:5px 4px 2px;max-width:240px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .cn-pop-file {
+    display:flex;align-items:center;gap:8px;padding:10px 12px;min-width:150px;max-width:240px;
+  }
+  .cn-pop-file i  { font-size:20px;color:var(--green-dark); }
+  .cn-pop-file .n { font-size:12px;color:var(--black);font-weight:600;overflow:hidden;
+                    text-overflow:ellipsis;white-space:nowrap; }
+
+  /* ── Shared vs individual ─────────────────────────────────────────────── */
+  .cn-mode { display:grid;gap:8px;margin-bottom:14px; }
+  .cn-mode-opt {
+    display:flex;align-items:flex-start;gap:10px;padding:11px 13px;cursor:pointer;
+    border:1px solid var(--line-2);background:var(--bg-card);transition:border-color .15s,background .15s;
+  }
+  .cn-mode-opt:hover { background:var(--bg); }
+  .cn-mode-opt input { accent-color:var(--green);width:14px;height:14px;margin-top:2px;cursor:pointer;flex-shrink:0; }
+  .cn-mode-opt:has(input:checked) { border-color:var(--green);background:var(--green-tint); }
+  .cn-mode-t { display:block;font-size:12.5px;font-weight:600;color:var(--black); }
+  .cn-mode-s { display:block;font-size:11.5px;color:var(--ink-2);margin-top:2px;line-height:1.5; }
+
+  .cn-perrow {
+    display:flex;align-items:flex-start;gap:11px;padding:12px 14px;
+    border:1px solid var(--line-2);background:var(--bg);
+  }
+  .cn-perrow i   { font-size:15px;color:var(--green-dark);flex-shrink:0;margin-top:1px; }
+  .cn-perrow-t   { font-size:12.5px;font-weight:600;color:var(--black); }
+  .cn-perrow-s   { font-size:11.5px;color:var(--ink-2);margin-top:3px;line-height:1.55; }
+
+  /* Media at the top of the preview bubble, where WhatsApp puts it. */
+  .tpl-preview-media img { display:block;width:100%;max-height:180px;object-fit:cover; }
+  .tpl-preview-media .ph {
+    display:flex;align-items:center;justify-content:center;gap:8px;height:96px;
+    background:var(--bg);border:1px dashed var(--line-2);
+    color:var(--subtle);font-size:11.5px;
+  }
+
   .cn-list-row {
     display:flex;align-items:center;gap:10px;padding:10px 12px;
     border:1px solid var(--line-2);margin-bottom:6px;cursor:pointer;transition:background .15s;
@@ -122,6 +252,130 @@
       </div>
     </div>
 
+    {# Rendered in both modes, hidden unless the template's approved header carries
+       media. One component either way: personalised adds the shared/per-row choice
+       on top of it rather than growing a second attach control. #}
+    <div class="dv-section" id="cMediaCard" style="display:none">
+      <div class="dv-section-header">
+        <span class="cn-step todo" data-step></span>
+        <span class="dv-section-label" id="cMediaCardLabel">Image</span>
+      </div>
+      <div class="dv-section-body" style="display:block">
+
+        {% if personalized %}
+        {# The whole point of a personalised broadcast is per-row values, so which
+           of the two the image is cannot be assumed — it is asked. #}
+        <div class="cn-mode" id="cMediaModes">
+          <label class="cn-mode-opt">
+            <input type="radio" name="cMediaMode" value="shared" checked>
+            <span>
+              <span class="cn-mode-t">Shared image</span>
+              <span class="cn-mode-s">One image for every recipient. Attach it here —
+                any image column in the CSV is ignored.</span>
+            </span>
+          </label>
+          <label class="cn-mode-opt">
+            <input type="radio" name="cMediaMode" value="per_row">
+            <span>
+              <span class="cn-mode-t">Individual images</span>
+              <span class="cn-mode-s">A different image per recipient, taken from a
+                URL column in the CSV.</span>
+            </span>
+          </label>
+        </div>
+        {% endif %}
+
+      {# Only rendered for templates whose approved header carries media. The
+         format is fixed by the template — the user supplies the file, never the
+         kind of file. #}
+      <div class="cn-media" id="cMediaBlock" style="display:none">
+        <div class="cn-media-hd">
+          <span class="cn-media-kind">
+            <i class="fas fa-image" id="cMediaIcon"></i>
+            <span id="cMediaLabel">Image header</span>
+            <span class="cn-media-req">*</span>
+          </span>
+          <div class="cn-seg">
+            <button type="button" class="cn-seg-btn active" data-src="upload">Upload</button>
+            <button type="button" class="cn-seg-btn" data-src="link">Use a link</button>
+          </div>
+        </div>
+
+        <div class="cn-media-body">
+          <div class="cn-media-input">
+            {# Upload ─────────────────────────────────────────────────── #}
+            <div id="cMediaUpload">
+              <div class="cn-drop" id="cDrop">
+                <i class="fas fa-cloud-arrow-up"></i>
+                <div>
+                  <div class="cn-drop-t">Choose a file, or drag it here</div>
+                  <div class="cn-drop-s" id="cDropHint">JPG or PNG, up to 5 MB</div>
+                </div>
+              </div>
+              <input type="file" id="cFile" style="display:none">
+
+              <div class="cn-file" id="cFileChip" style="display:none">
+                <i class="fas fa-circle-check"></i>
+                <div style="min-width:0">
+                  <div class="cn-file-n" id="cFileName"></div>
+                  <div class="cn-file-s" id="cFileSize"></div>
+                </div>
+                <span class="cn-file-acts">
+                  <button type="button" class="cn-file-swap" id="cFileSwap">Replace</button>
+                  <button type="button" class="cn-file-swap rm" id="cFileRemove">Remove</button>
+                </span>
+              </div>
+            </div>
+
+            {# Link ─────────────────────────────────────────────────────
+               Fetched once, here, and stored on Meta like an upload — see
+               POST /api/campaigns/media. The address only has to be readable at
+               this moment, not for the whole campaign. #}
+            <div id="cMediaLink" style="display:none">
+              <div style="display:flex;gap:8px">
+                <input type="url" class="dv-input" id="cLinkInput" style="flex:1;min-width:0"
+                       placeholder="https://example.com/diwali-offer.jpg" autocomplete="off">
+                <button type="button" class="dv-btn dv-btn-ghost" id="cLinkFetch">
+                  <span class="btn-label">Fetch</span><div class="btn-spinner"></div>
+                </button>
+              </div>
+              <span class="dv-hint" style="margin-top:6px;display:block">
+                The address must be publicly readable — a link needing a login cannot
+                be downloaded. We copy the file once now, so the campaign no longer
+                depends on that address staying up.
+              </span>
+            </div>
+          </div>
+
+          {# Hover to enlarge, click to open in a new tab. #}
+          <a class="cn-thumb empty" id="cThumb" target="_blank" rel="noopener">
+            <i class="fas fa-image" id="cThumbIcon"></i>
+            <span class="cn-thumb-badge"><i class="fas fa-check"></i></span>
+            <span class="cn-pop" id="cThumbPop"></span>
+          </a>
+        </div>
+
+        <div class="cn-media-status" id="cMediaStatus"></div>
+      </div>
+
+
+        {# Per-row: nothing to attach here, so say what happens instead rather than
+           leaving an empty card the user has to interpret. #}
+        <div class="cn-perrow" id="cPerRowNote" style="display:none">
+          <i class="fas fa-table-columns"></i>
+          <div>
+            <div class="cn-perrow-t">Each recipient's image comes from the CSV</div>
+            <div class="cn-perrow-s">
+              The sample CSV includes a <strong id="cPerRowCol">Image URL</strong>
+              column. Every address is checked when you import, and any row whose
+              image cannot be downloaded is skipped and listed in the report — so a
+              broken link never becomes a failed message mid-campaign.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     {% if not personalized %}
     <div class="dv-section" id="cParamsCard" style="display:none">
       <div class="dv-section-header">
@@ -129,8 +383,9 @@
         <span class="dv-section-label">Message content</span>
       </div>
       <div class="dv-section-body" style="display:block">
+
         <div id="cParams"></div>
-        <span class="dv-hint">Everyone on the selected lists receives these same values.</span>
+        <span class="dv-hint" id="cParamsHint">Everyone on the selected lists receives these same values.</span>
       </div>
     </div>
 
@@ -180,6 +435,7 @@
       <div class="tpl-preview-phone">
         <div id="cPreviewEmpty" class="tpl-preview-empty">Choose a template to see the message.</div>
         <div id="cPreviewBubble" class="tpl-preview-bubble" style="display:none">
+          <div id="cPrevMedia" class="tpl-preview-media" style="display:none"></div>
           <div id="cPrevHeader" class="tpl-preview-header" style="display:none"></div>
           <div id="cPrevBody"   class="tpl-preview-body"></div>
           <div id="cPrevFooter" class="tpl-preview-footer" style="display:none"></div>
@@ -346,6 +602,9 @@
   if (COMPANIES.length === 1) companySel.value = COMPANIES[0].id;
 
   companySel.addEventListener('change', function () {
+    // A media id belongs to one company's phone number, so it cannot survive a
+    // company switch — drop it rather than sending an id Meta will not recognise.
+    resetMedia();
     renderTemplates(); renderLists(); renderPreview(); refresh();
   });
 
@@ -368,12 +627,344 @@
       ? 'Pick a company first.'
       : (list.length ? 'Only templates Meta has approved can be sent.'
                      : 'This company has no approved templates yet.');
+    renderMedia();
     renderParams();
   }
 
   templateSel.addEventListener('change', function () {
-    renderParams(); renderPreview(); refresh();
+    resetMedia();               // a different template may need a different file
+    renderMedia(); renderParams(); renderPreview(); refresh();
   });
+
+  /* ── Header media ─────────────────────────────────────────────────────
+     A template's approved header decides whether a file is needed and which
+     kind; the user only supplies the file. Two sources, one result: an uploaded
+     file becomes a Meta media id, a pasted link is stored as-is and fetched by
+     Meta at send time. */
+  // Must match the labels column_mapper._MEDIA_FIELD produces, since this is what
+  // the sample CSV header and the mapping dialog both show.
+  var MEDIA_COLUMN = { IMAGE: 'Image URL', DOCUMENT: 'Document URL', VIDEO: 'Video URL' };
+
+  var MEDIA_FORMATS = {
+    IMAGE:    { icon:'fa-image',    label:'Image header',    accept:'image/jpeg,image/png',
+                hint:'JPG or PNG, up to 5 MB' },
+    DOCUMENT: { icon:'fa-file-pdf', label:'Document header', accept:'application/pdf',
+                hint:'PDF, up to 100 MB' },
+    VIDEO:    { icon:'fa-video',    label:'Video header',    accept:'video/mp4',
+                hint:'MP4, up to 16 MB' }
+  };
+
+  // Set once a file is attached; null until then. `format` mirrors the template's
+  // header, so it is re-derived rather than remembered. Always carries a media_id:
+  // a pasted link is downloaded and uploaded server-side, so both sources end up
+  // as the same kind of thing.
+  var media = null;          // { media_id, source, source_url, filename, mime, size }
+  var mediaSource = 'upload';
+  // 'shared' — one file on the campaign; 'per_row' — a URL column in the CSV.
+  // Standard campaigns are shared by definition: one message, one file.
+  var mediaMode = 'shared';
+
+  function headerFormat(t) {
+    var h = componentOf(t, 'HEADER');
+    return h ? String(h.format || 'TEXT').toUpperCase() : null;
+  }
+  function mediaFormat() {
+    var fmt = headerFormat(currentTemplate());
+    return MEDIA_FORMATS[fmt] ? fmt : null;
+  }
+  // Whether THIS FORM must collect a file. Per-row mode needs media too, but it
+  // arrives with the CSV, so the form has nothing to hold up.
+  function needsMedia() { return mediaFormat() !== null && mediaMode === 'shared'; }
+  function isPerRowMedia() { return mediaFormat() !== null && mediaMode === 'per_row'; }
+  function hasMedia()   { return !!(media && media.media_id); }
+
+  // The one URL both the thumbnail and the new tab use, for either source. The file
+  // lives on Meta and has to come back through our own proxy — Meta's own media URL
+  // needs the access token. Previewing a pasted link directly would also be wrong:
+  // it shows the remote file, not the copy that will actually be sent.
+  function mediaUrl() {
+    if (!hasMedia()) return null;
+    return '/broadcast/media/' + companySel.value + '/' + encodeURIComponent(media.media_id);
+  }
+
+  // Personalized replaces this whole step with a CSV, so the block is not in the
+  // DOM at all there. Every function below no-ops rather than being conditionally
+  // defined, which keeps the call sites free of mode checks.
+  function mediaUI() { return el('cMediaBlock'); }
+
+  function resetMedia() {
+    media = null;
+    if (!mediaUI()) return;
+    el('cFile').value = '';
+    el('cLinkInput').value = '';
+    setMediaStatus('', '');
+  }
+
+  function setMediaStatus(msg, kind) {
+    var s = el('cMediaStatus');
+    if (!s) return;
+    s.textContent = msg || '';
+    s.className = 'cn-media-status' + (msg ? ' show' : '') + (kind ? ' ' + kind : '');
+  }
+
+  function humanSize(bytes) {
+    if (!bytes && bytes !== 0) return '';
+    return bytes < 1048576
+      ? (bytes / 1024).toFixed(0) + ' KB'
+      : (bytes / 1048576).toFixed(1) + ' MB';
+  }
+
+  function renderMedia() {
+    if (!mediaUI()) return;
+    var fmt = mediaFormat();
+
+    // The card exists only for media-header templates; within it, the attach block
+    // and the per-row note are the two mutually exclusive halves.
+    var card = el('cMediaCard');
+    if (card) {
+      card.style.display = fmt ? '' : 'none';
+      if (fmt) {
+        el('cMediaCardLabel').textContent =
+          MEDIA_FORMATS[fmt].label.replace(' header', '');
+        var perRowNote = el('cPerRowNote');
+        if (perRowNote) {
+          perRowNote.style.display = mediaMode === 'per_row' ? '' : 'none';
+          el('cPerRowCol').textContent = MEDIA_COLUMN[fmt];
+        }
+      }
+    }
+    el('cMediaBlock').style.display =
+      (fmt && mediaMode === 'shared') ? '' : 'none';
+    if (!fmt || mediaMode === 'per_row') { renderThumb(); return; }
+
+    var spec = MEDIA_FORMATS[fmt];
+    el('cMediaIcon').className  = 'fas ' + spec.icon;
+    el('cMediaLabel').textContent = spec.label;
+    el('cDropHint').textContent = spec.hint;
+    el('cThumbIcon').className  = 'fas ' + spec.icon;
+    el('cFile').setAttribute('accept', spec.accept);
+
+    var uploading = mediaSource === 'upload';
+    el('cMediaUpload').style.display = uploading ? '' : 'none';
+    el('cMediaLink').style.display   = uploading ? 'none' : '';
+
+    // The drop zone and the confirmed-file chip are the same slot in two states.
+    var attached = hasMedia();
+    el('cDrop').style.display     = (uploading && !attached) ? '' : 'none';
+    el('cFileChip').style.display = attached ? '' : 'none';
+    if (attached) {
+      el('cFileName').textContent = media.filename || 'Attached file';
+      el('cFileSize').textContent =
+        (media.size ? humanSize(media.size) + ' · ' : '') +
+        (media.source === 'link' ? 'copied from the link, on Meta' : 'on Meta') +
+        ', ready to send';
+      // The chip belongs to whichever side is showing, so it moves rather than
+      // being duplicated — the link field keeps its input visible above it.
+      var chip = el('cFileChip');
+      var host = uploading ? el('cMediaUpload') : el('cMediaLink');
+      if (chip.parentNode !== host) host.appendChild(chip);
+    }
+
+    renderThumb();
+  }
+
+  function renderThumb() {
+    if (!mediaUI()) return;
+    var thumb = el('cThumb'), pop = el('cThumbPop');
+    var url = mediaUrl();
+    var fmt = mediaFormat();
+
+    // Any previous <img> goes before the class flip, or a stale picture survives
+    // a template change for as long as the new one takes to load.
+    var old = thumb.querySelector('img');
+    if (old) thumb.removeChild(old);
+
+    if (!url) {
+      thumb.className = 'cn-thumb empty';
+      thumb.removeAttribute('href');
+      pop.innerHTML = '';
+      el('cThumbIcon').style.display = '';
+      return;
+    }
+
+    thumb.className = 'cn-thumb filled';
+    thumb.setAttribute('href', url);
+    thumb.setAttribute('title', 'Open in a new tab');
+
+    var name = esc(media.filename || url.split('/').pop() || 'file');
+
+    if (fmt === 'IMAGE') {
+      var img = document.createElement('img');
+      img.alt = '';
+      // The bytes come back from Meta through our proxy, so a failure here is our
+      // side, not the customer's. Fall back to the icon rather than a broken image.
+      img.onerror = function () {
+        thumb.className = 'cn-thumb filled';
+        if (img.parentNode) thumb.removeChild(img);
+        el('cThumbIcon').style.display = '';
+      };
+      img.src = url;
+      el('cThumbIcon').style.display = 'none';
+      thumb.insertBefore(img, thumb.firstChild);
+      pop.innerHTML = '<img src="' + esc(url) + '" alt="">' +
+                      '<span class="cn-pop-meta">' + name + '</span>';
+    } else {
+      el('cThumbIcon').style.display = '';
+      pop.innerHTML = '<span class="cn-pop-file">' +
+                        '<i class="fas ' + MEDIA_FORMATS[fmt].icon + '"></i>' +
+                        '<span class="n">' + name + '</span>' +
+                      '</span>';
+    }
+  }
+
+  if (mediaUI()) {
+  /* Shared vs individual (personalised only — the radios are absent otherwise) */
+  Array.prototype.forEach.call(
+    document.querySelectorAll('input[name="cMediaMode"]'), function (r) {
+      r.addEventListener('change', function () {
+        if (!r.checked || mediaMode === r.value) return;
+        mediaMode = r.value;
+        // Switching to per-row discards a file attached for shared mode: it would
+        // otherwise be stored on the campaign and silently override every row.
+        resetMedia();
+        renderMedia(); renderPreview(); refresh();
+      });
+    });
+
+  /* Source switch */
+  Array.prototype.forEach.call(document.querySelectorAll('.cn-seg-btn'), function (b) {
+    b.addEventListener('click', function () {
+      if (mediaSource === b.dataset.src) return;
+      mediaSource = b.dataset.src;
+      Array.prototype.forEach.call(document.querySelectorAll('.cn-seg-btn'), function (x) {
+        x.classList.toggle('active', x === b);
+      });
+      // Switching source discards the other side's file — keeping both would leave
+      // the form showing one attachment while sending the other.
+      resetMedia();
+      renderMedia(); renderPreview(); refresh();
+    });
+  });
+
+  /* Upload */
+  var dropZone = el('cDrop'), fileInput = el('cFile');
+
+  dropZone.addEventListener('click', function () { fileInput.click(); });
+  // Replace goes straight back to the picker; Remove drops the attachment and
+  // returns the step to its unfilled state, so Continue disables again rather than
+  // letting a media template through with nothing on it.
+  el('cFileSwap').addEventListener('click', function () {
+    if (mediaSource === 'link') { el('cLinkInput').focus(); el('cLinkInput').select(); }
+    else                        { fileInput.click(); }
+  });
+
+  el('cFileRemove').addEventListener('click', function () {
+    resetMedia();
+    renderMedia(); renderPreview(); refresh();
+  });
+
+  ['dragenter', 'dragover'].forEach(function (evt) {
+    dropZone.addEventListener(evt, function (e) {
+      e.preventDefault(); dropZone.classList.add('over');
+    });
+  });
+  ['dragleave', 'drop'].forEach(function (evt) {
+    dropZone.addEventListener(evt, function (e) {
+      e.preventDefault(); dropZone.classList.remove('over');
+    });
+  });
+  dropZone.addEventListener('drop', function (e) {
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) uploadFile(f);
+  });
+  fileInput.addEventListener('change', function () {
+    var f = fileInput.files && fileInput.files[0];
+    if (f) uploadFile(f);
+  });
+
+  /* One attach path for both sources. The file — chosen or downloaded — goes to
+     Meta immediately, so anything Meta will not accept is rejected while the user is
+     still looking at the field, not after the lists are chosen. Same reasoning as
+     the template builder's media-handle call. */
+  async function attachMedia(opts) {
+    if (!companySel.value) return setMediaStatus('Pick a company first.', 'error');
+
+    media = null;
+    renderMedia(); renderPreview(); refresh();
+    setMediaStatus(opts.busy, '');
+
+    var fd = new FormData();
+    fd.append('company_id', companySel.value);
+    if (opts.file) fd.append('file', opts.file);
+    else           fd.append('link', opts.link);
+
+    try {
+      var res = await fetchWithAuth('/api/campaigns/media', { method: 'POST', body: fd });
+      if (!res.ok) {
+        if (opts.file) fileInput.value = '';
+        return setMediaStatus(await describeFailure(res), 'error');
+      }
+      var d = await res.json();
+      media = {
+        media_id:   d.media_id,
+        source:     d.source,
+        source_url: d.source_url,
+        filename:   d.filename,
+        mime:       d.mime,
+        size:       opts.file ? opts.file.size : null,
+      };
+      setMediaStatus(opts.done, 'ok');
+    } catch (_) {
+      if (opts.file) fileInput.value = '';
+      setMediaStatus('Could not reach the server. Check your connection and try again.', 'error');
+    } finally {
+      renderMedia(); renderPreview(); refresh();
+    }
+  }
+
+  function uploadFile(file) {
+    return attachMedia({
+      file: file,
+      busy: 'Uploading ' + file.name + '…',
+      done: '',
+    });
+  }
+
+  /* Link — an explicit Fetch rather than fetching as they type: this downloads a
+     file from someone else's server, which is not something to do on every
+     keystroke. Enter in the field does the same thing. */
+  var fetchBtn = el('cLinkFetch');
+
+  async function fetchLink() {
+    var raw = el('cLinkInput').value.trim();
+    if (!raw) return setMediaStatus('Paste a link first.', 'error');
+    fetchBtn.classList.add('loading');
+    fetchBtn.disabled = true;
+    try {
+      await attachMedia({
+        link: raw,
+        busy: 'Downloading the file…',
+        done: 'Copied to Meta — the campaign no longer depends on that address.',
+      });
+    } finally {
+      fetchBtn.classList.remove('loading');
+      fetchBtn.disabled = false;
+    }
+  }
+
+  fetchBtn.addEventListener('click', fetchLink);
+  el('cLinkInput').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); fetchLink(); }
+  });
+  el('cLinkInput').addEventListener('input', function () {
+    // Editing the address invalidates what was fetched from the old one.
+    if (hasMedia()) {
+      media = null;
+      setMediaStatus('', '');
+      renderMedia(); renderPreview(); refresh();
+    }
+  });
+  }   /* end mediaUI() wiring */
 
   /* ── Parameters ──────────────────────────────────────────────────────── */
   function bodyText(t) {
@@ -404,7 +995,10 @@
     var t = currentTemplate();
     var indices = t ? paramIndices(t) : [];
     if (!el('cParamsCard')) return;          // personalized: no typed params
-    el('cParamsCard').style.display = indices.length ? '' : 'none';
+    // A template can have a media header and no body placeholders — the step still
+    // has something to collect, so it is the two together that decide visibility.
+    el('cParamsCard').style.display = (indices.length || needsMedia()) ? '' : 'none';
+    el('cParamsHint').style.display = indices.length ? '' : 'none';
     el('cParams').innerHTML = indices.map(function (n) {
       return '<div class="cn-param-row">' +
                '<div class="cn-param-tag">' + placeholder(n) + '</div>' +
@@ -425,7 +1019,12 @@
   /* ── Preview ──────────────────────────────────────────────────────────
      Same WhatsApp bubble the company page uses for template previews, so a
      template looks identical wherever it is inspected. */
+  // Null-safe on t: callers reach this before a template is chosen — renderMedia()
+  // runs on every template-list rebuild, including the first one, when the select
+  // is still empty. Guarding here rather than at each call site, because a throw
+  // this early takes the rest of the page's setup down with it.
   function componentOf(t, type) {
+    if (!t) return null;
     return (t.components || []).filter(function (c) { return c.type === type; })[0] || null;
   }
 
@@ -455,6 +1054,25 @@
 
     var header = componentOf(t, 'HEADER');
     var footer = componentOf(t, 'FOOTER');
+
+    // Media sits above the text, where WhatsApp renders it. Shown as a placeholder
+    // before a file is attached so the bubble matches the shape of the real message
+    // rather than looking like a template that has no header at all.
+    var prevMedia = el('cPrevMedia'), fmt = mediaFormat();
+    if (prevMedia) {
+      prevMedia.style.display = fmt ? '' : 'none';
+      if (fmt) {
+        var url = mediaUrl();
+        var placeholder = isPerRowMedia()
+          ? "Each recipient's own " + fmt.toLowerCase()
+          : MEDIA_FORMATS[fmt].label.replace(' header', '') + ' goes here';
+        prevMedia.innerHTML = (fmt === 'IMAGE' && url)
+          ? '<img src="' + esc(url) + '" alt="">'
+          : '<div class="ph"><i class="fas ' + MEDIA_FORMATS[fmt].icon + '"></i>' +
+            (url ? esc(media.filename || 'Attached file') : placeholder) +
+            '</div>';
+      }
+    }
 
     el('cPrevHeader').style.display = (header && header.text) ? '' : 'none';
     el('cPrevHeader').innerHTML = header ? fill(t, header.text) : '';
@@ -517,29 +1135,53 @@
   /* ── Step state + save ───────────────────────────────────────────────── */
   var saveBtn = el('cSave');
 
+  // The media card only exists for some templates, so the numbers cannot be fixed
+  // in the markup — a hidden "2" would leave the user reading 1, 3, 4.
+  function renumberSteps() {
+    var i = 0;
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.dv-section .cn-step'), function (badge) {
+        var section = badge.closest('.dv-section');
+        if (!section || section.style.display === 'none') return;
+        badge.textContent = ++i;
+      });
+  }
+
   function refresh() {
     var t = currentTemplate();
 
     if (PERSONALIZED) {
       // Nothing to save from this form — the campaign is created by the import.
       // Reveal the upload step once a template is chosen and hide Continue.
+      // Shared mode must have its file before the CSV step opens: the campaign is
+      // created by that upload, and a shared image attached afterwards would not be
+      // on it. Per-row has nothing to wait for — the images are in the file.
+      var mediaReady = !needsMedia() || hasMedia();
       el('cnStep1').className = 'cn-step' + (t ? '' : ' todo');
-      el('cCsvCard').style.display = t ? '' : 'none';
-      el('cnStep2').className = 'cn-step todo';
+      el('cCsvCard').style.display = (t && mediaReady) ? '' : 'none';
       saveBtn.style.display = 'none';
-      el('cnStatus').textContent = t
-        ? 'Download the sample, fill it in, then upload'
-        : '';
+      renumberSteps();
+      el('cnStatus').textContent = !t ? ''
+        : (mediaReady ? 'Download the sample, fill it in, then upload'
+                      : 'Attach the shared image first');
       return;
     }
 
-    var filled = paramValues().length > 0 &&
-                 paramValues().every(function (v) { return v.trim().length > 0; });
+    // Step 2 is "the message content", which is the parameters and the header file
+    // together. A template with only a media header has no parameters to fill, so
+    // an all-empty parameter list is complete in that case and not in the other.
+    var vals   = paramValues();
+    var filled = vals.every(function (v) { return v.trim().length > 0; }) &&
+                 (vals.length > 0 || needsMedia()) &&
+                 (!needsMedia() || hasMedia());
     var picked = chosenLists().length > 0 && rawTotal() > 0;
 
     el('cnStep1').className = 'cn-step' + (t ? '' : ' todo');
     el('cnStep2').className = 'cn-step' + (filled ? '' : ' todo');
     el('cnStep3').className = 'cn-step' + (picked ? '' : ' todo');
+    var mediaStep = el('cMediaCard') && el('cMediaCard').querySelector('[data-step]');
+    if (mediaStep) mediaStep.className = 'cn-step' + (hasMedia() ? '' : ' todo');
+    renumberSteps();
 
     var ready = companySel.value && t && filled && picked &&
                 rawTotal() <= MAX_RECIPIENTS;
@@ -571,6 +1213,14 @@
         body: JSON.stringify({
           phonebook_ids: chosenLists().map(function (c) { return c.value; }),
           params: paramValues().map(function (v) { return v.trim(); }),
+          header_media: needsMedia() && hasMedia() ? {
+            format:     mediaFormat(),
+            media_id:   media.media_id,
+            source:     media.source || 'upload',
+            source_url: media.source_url || null,
+            filename:   media.filename || null,
+            mime:       media.mime || null,
+          } : null,
         }),
       });
       if (!built.ok) return showError(await describeFailure(built));
@@ -636,6 +1286,9 @@
     if (!t) return;
     var cols = ['WhatsApp Number', 'Customer Name'];
     paramIndices(t).forEach(function (n) { cols.push('Param ' + n); });
+    // Only in per-row mode. Offering the column in shared mode would invite people
+    // to fill it in and then wonder why their artwork was ignored.
+    if (isPerRowMedia()) cols.push(MEDIA_COLUMN[mediaFormat()]);
     // Headers only. A sample row invites people to edit around it and leave the
     // example in, which then imports as a real recipient.
     var blob = new Blob([cols.join(',') + '\n'], { type: 'text/csv' });
@@ -710,6 +1363,18 @@
           company_id: companySel.value,
           template_id: templateSel.value,
           param_mode: 'per_row',
+          // Settled here rather than later: the field catalogue for the mapping
+          // dialog is built from it, so it has to be on the campaign before the
+          // dialog asks what columns exist.
+          header_media_mode: mediaFormat() ? mediaMode : null,
+          header_media: (needsMedia() && hasMedia()) ? {
+            format:     mediaFormat(),
+            media_id:   media.media_id,
+            source:     media.source || 'upload',
+            source_url: media.source_url || null,
+            filename:   media.filename || null,
+            mime:       media.mime || null,
+          } : null,
         }),
       });
       if (!res.ok) return showErr('imError', await describeFailure(res));
@@ -801,6 +1466,8 @@
         customer_name: chosen.customer_name === undefined
           ? null : (r[chosen.customer_name] || '').trim(),
         params: params,
+        header_media_url: chosen.header_media_url === undefined
+          ? null : (r[chosen.header_media_url] || '').trim(),
       };
     });
 
@@ -995,6 +1662,7 @@
 
   renderTemplates();
   renderLists();
+  renderPreview();
   refresh();
 })();
 

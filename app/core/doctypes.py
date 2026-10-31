@@ -48,7 +48,7 @@ ERROR_LOGS_DOCTYPE = {
         {"label": "Type",   "field": "error_type", "type": "mono"},
         {"label": "User",   "field": "user",       "type": "text"},
         {"label": "Seen",   "field": "seen",       "type": "status"},
-        {"label": "Time",   "field": "created_at", "type": "text"},
+        {"label": "Time",   "field": "created_at", "type": "datetime"},
     ],
 
     "form_sections": [],  # no create/edit — detail page is custom
@@ -110,7 +110,7 @@ ERPNEXT_CONFIG_DOCTYPE = {
         {"label": "Company",     "field": "company_name", "type": "text"},
         {"label": "PDF Method",  "field": "pdf_method",   "type": "mono"},
         {"label": "Status",      "field": "is_active",    "type": "status"},
-        {"label": "Created",     "field": "created_at",   "type": "text"},
+        {"label": "Created",     "field": "created_at",   "type": "datetime"},
     ],
 
     "form_sections": [
@@ -168,8 +168,8 @@ SERVICES_DOCTYPE = {
         {"label": "Company",     "field": "company_name", "type": "text"},
         {"label": "Status",      "field": "status",       "type": "service_status"},
         {"label": "Progress",    "field": "progress",     "type": "text"},
-        {"label": "Created",     "field": "created_at",   "type": "text"},
-        {"label": "Completed",   "field": "completed_at", "type": "text"},
+        {"label": "Created",     "field": "created_at",   "type": "datetime"},
+        {"label": "Completed",   "field": "completed_at", "type": "datetime"},
     ],
 
     "form_sections": [],  # read-only — created via client API only
@@ -188,7 +188,7 @@ CONVERSATIONS_DOCTYPE = {
         {"label": "Mobile No",      "field": "mobile_no",       "type": "mono",           "bold": True},
         {"label": "Company",        "field": "company_name",    "type": "text"},
         {"label": "Messages",       "field": "total_messages",  "type": "text"},
-        {"label": "Last Activity",  "field": "last_activity_at","type": "text"},
+        {"label": "Last Activity",  "field": "last_activity_at","type": "datetime"},
         {"label": "Active Service", "field": "active_service",  "type": "service_status"},
     ],
 
@@ -204,6 +204,16 @@ USERS_DOCTYPE = {
     "api_prefix":     "/api/users",
     "base_route":     "/users",
     "title_field":    "username",
+
+    # Optional tabs. Only rendered on an existing record — the extra tab configures
+    # things that need the user to exist first. Sections without a "tab" key fall into
+    # the first one. A tab may name its own template instead of using doctype fields,
+    # for anything with its own widgets and endpoints.
+    "form_tabs": [
+        {"key": "general",      "label": "General",      "icon": "fas fa-user"},
+        {"key": "agent_config", "label": "Agent Config", "icon": "fas fa-mobile-screen",
+         "template": "users/_agent_config.html"},
+    ],
 
     "list_columns": [
         {"label": "Username",   "field": "username",      "type": "mono",        "bold": True},
@@ -290,7 +300,7 @@ PHONEBOOKS_DOCTYPE = {
         {"label": "Name",     "field": "name",          "type": "text", "bold": True},
         {"label": "Company",  "field": "company_name",  "type": "text"},
         {"label": "Contacts", "field": "contact_count", "type": "text"},
-        {"label": "Created",  "field": "created_at",    "type": "text"},
+        {"label": "Created",  "field": "created_at",    "type": "date"},
     ],
 
     # Only used for /new — editing the name happens inline on the detail page,
@@ -307,6 +317,115 @@ PHONEBOOKS_DOCTYPE = {
                     "name": "company_id", "label": "Company",
                     "type": "select_company", "required": True, "cols": 2,
                     "hint": "Contacts and campaigns are scoped to this company.",
+                },
+            ],
+        },
+    ],
+}
+
+
+BROADCAST_SETTINGS_DOCTYPE = {
+    "resource":     "broadcast_settings",
+    "title":        "Broadcast Settings",
+    "title_plural": "Broadcast Settings",
+    "perm_page":    "broadcast_settings",
+    "icon":         "ti ti-adjustments",
+    "api_prefix":   "/api/broadcast-settings",
+    "base_route":   "/broadcast-settings",
+    "title_field":  "company_name",
+
+    "list_columns": [
+        {"label": "Company",     "field": "company_name",  "type": "text", "bold": True},
+        {"label": "Agent limit", "field": "agent_limit",   "type": "text"},
+        {"label": "Concurrency", "field": "send_concurrency", "type": "text"},
+        {"label": "Retries",     "field": "max_retries",   "type": "text"},
+        {"label": "Receipt timeout", "field": "receipt_timeout", "type": "text"},
+        {"label": "Updated",     "field": "updated_at",    "type": "datetime"},
+    ],
+
+    "form_sections": [
+        {
+            "label": "Company",
+            "fields": [
+                {
+                    "name": "company_id", "label": "Company",
+                    "type": "select_company", "required": True,
+                    "create_only": True,
+                    "hint": "One settings row per company. Cannot be changed after creation.",
+                },
+            ],
+        },
+        {
+            "label": "Agent limits",
+            "fields": [
+                {
+                    "name": "agent_max_recipients_per_send",
+                    "label": "Max recipients per agent broadcast",
+                    "type": "number", "min": 0, "max": 100000,
+                    "hint": "Ceiling on one broadcast started from the agent app. "
+                            "0 removes the limit. Campaigns created here in the web "
+                            "panel are not affected.",
+                },
+                {
+                    "name": "agent_daily_message_limit",
+                    "label": "Agent daily message limit",
+                    "type": "number", "min": 0, "max": 100000,
+                    "hint": "Rolling 24-hour ceiling across everything one agent sends. "
+                            "0 means unlimited.",
+                },
+            ],
+        },
+        {
+            "label": "Throughput",
+            "fields": [
+                {
+                    "name": "send_concurrency", "label": "Parallel sends",
+                    "type": "number", "min": 1, "max": 50,
+                    "hint": "How many messages go to WhatsApp at once. Higher finishes "
+                            "a campaign sooner; 1 sends them strictly one after another.",
+                },
+                {
+                    "name": "batch_size", "label": "Batch size",
+                    "type": "number", "min": 1, "max": 500,
+                    "hint": "Recipients claimed per cycle. Rarely worth changing.",
+                },
+            ],
+        },
+        {
+            "label": "Retries",
+            "fields": [
+                {
+                    "name": "max_retries", "label": "Max retries",
+                    "type": "number", "min": 0, "max": 10,
+                    "hint": "Retries apply only to timeouts and server errors. A message "
+                            "WhatsApp rejected — an invalid number, a template mismatch — "
+                            "is never retried, because it would fail identically. "
+                            "0 means one attempt.",
+                },
+                {
+                    "name": "retry_backoff_seconds", "label": "Retry backoff (seconds)",
+                    "type": "number", "min": 1, "max": 3600,
+                    "hint": "Wait before the first retry. Doubles each attempt.",
+                },
+            ],
+        },
+        {
+            "label": "Delivery confirmation",
+            "fields": [
+                {
+                    "name": "receipt_timeout_minutes", "label": "Receipt timeout (minutes)",
+                    "type": "number", "min": 1, "max": 1440,
+                    "hint": "WhatsApp accepting a message is not proof it arrived. After "
+                            "this long with no delivery receipt a recipient is marked "
+                            "“unconfirmed” rather than left looking as though "
+                            "confirmation is still coming. A late receipt still counts.",
+                },
+                {
+                    "name": "stale_claim_minutes", "label": "Stale claim (minutes)",
+                    "type": "number", "min": 1, "max": 120,
+                    "hint": "How long a send may be in flight before a restart treats it "
+                            "as abandoned and requeues it. Must stay above 1 minute — "
+                            "lower risks sending a message twice.",
                 },
             ],
         },

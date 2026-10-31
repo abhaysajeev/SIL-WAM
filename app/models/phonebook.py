@@ -62,8 +62,12 @@ class PhonebookContact(Base):
     mobile_no     = Column(String(30), nullable=False, index=True)
     customer_name = Column(String(200), nullable=False)
     email         = Column(String(255), nullable=True)
-    # Free-text identifier from the external agent app — deliberately not a FK.
-    # There is no agents table yet, and the id originates in another system.
+    # Free-text identifier from the external agent app — deliberately not a FK, even
+    # now that an `agents` table exists (see app/models/agent.py). The id is minted in
+    # another system, so a contact may name an agent who was never provisioned here, or
+    # who has since left; a FK would refuse the import rather than record what the CSV
+    # actually said. It is returned verbatim to the agent app, which may see an id other
+    # than its own.
     agent_id      = Column(String(100), nullable=True)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
     updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

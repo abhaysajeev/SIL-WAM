@@ -27,7 +27,13 @@ INVALID_NUMBER_CODES = {"131026", 131026}
 
 # Receipts arrive out of order — a "read" can land before its "delivered". Ranking
 # prevents a late lower-grade receipt from walking a recipient backwards.
-_RANK = {"sent": 1, "delivered": 2, "read": 3}
+#
+# "unconfirmed" ranks level with "sent" on purpose. It is not a worse outcome, only a
+# franker description of the same one: Meta accepted the send and no receipt followed
+# within the timeout. A receipt arriving afterwards is still good news and must still
+# promote the row, so delivered (2) and read (3) both beat it, while a duplicate "sent"
+# receipt cannot quietly undo the admission.
+_RANK = {"sent": 1, "unconfirmed": 1, "delivered": 2, "read": 3}
 
 
 def handle(db: Session, wamid: str, state: str, status: dict) -> bool:
@@ -107,7 +113,11 @@ def _apply_failure(db: Session, recipient, campaign, status: dict) -> None:
     code   = first.get("code")
     title  = first.get("title") or first.get("message") or ""
 
-    was_counted_sent = recipient.status in ("sent", "delivered", "read")
+    # "unconfirmed" was counted at dispatch exactly as "sent" was — the sweep only
+    # relabels it. Omitting it here would leave campaign.sent overstated whenever a
+    # failure receipt arrives after the receipt timeout, which is precisely when a
+    # late failure is most likely.
+    was_counted_sent = recipient.status in ("sent", "unconfirmed", "delivered", "read")
 
     recipient.status        = "failed"
     recipient.error_code    = str(code) if code is not None else None

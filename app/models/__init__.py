@@ -1,1 +1,1 @@
-from app.models import api_key, broadcast_campaign, phonebook, company, conversation, erpnext_config, error_log, failed_webhook, messaging, outbound_notification, role, user, whatsapp  # noqa: F401 — registers all models with Base.metadata
+from app.models import agent, api_key, agent_timeline, broadcast_campaign, broadcast_settings, phonebook, company, conversation, erpnext_config, error_log, failed_webhook, messaging, outbound_notification, role, user, whatsapp  # noqa: F401 — registers all models with Base.metadata

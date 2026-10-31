@@ -9,10 +9,10 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.core.config import settings
+from app.core.templating import build_templates
 from app.core.database import Base
 from app.core.deps import _LoginRedirect
 from app.models import api_key, company, conversation, erpnext_config, error_log, role, user, whatsapp  # noqa: F401
@@ -26,10 +26,13 @@ from app.api.roles_api import router as roles_api_router
 from app.api.error_logs_api import router as error_logs_api_router
 from app.api.whatsapp_api import router as whatsapp_api_router
 from app.api.company_api_keys_api import router as company_api_keys_api_router
+from app.api.broadcast_settings_api import router as broadcast_settings_api_router
 from app.api.erpnext_config_api import router as erpnext_config_api_router
 from app.api.meta_webhook import router as meta_webhook_router
 from app.api.analytics_api import router as analytics_router
 from app.api.client_services_api import router as client_services_router
+from app.agent.router import router as agent_router
+from app.api.agents_api import router as agents_api_router
 from app.lizo.api import router as lizo_router
 from app.api.sse_api import router as sse_router
 from app.api.erpnext_webhook import router as erpnext_webhook_router
@@ -43,6 +46,7 @@ from app.routes.companies import router as companies_router
 from app.routes.users_pages import router as users_pages_router
 from app.routes.roles_pages import router as roles_pages_router
 from app.routes.error_logs_pages import router as error_logs_pages_router
+from app.routes.broadcast_settings_pages import router as broadcast_settings_pages_router
 from app.routes.erpnext_config_pages import router as erpnext_config_pages_router
 from app.api.phonebooks_api import router as phonebooks_api_router
 from app.api.campaigns_api import router as campaigns_api_router
@@ -59,10 +63,17 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
+# APScheduler logs a start and a finish line for every tick of every scheduler at INFO.
+# Four schedulers on 3s–10min intervals emit ~50 lines/minute of "executed successfully"
+# even when every tick is a no-op, which buries the send and campaign logs that matter
+# — `docker logs --tail 100` shows about ninety seconds of idle chatter and nothing else.
+# Missed and crashed jobs are logged at WARNING/ERROR and still come through.
+logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+templates = build_templates()
 
 
 @asynccontextmanager
@@ -142,6 +153,7 @@ app.include_router(roles_api_router)
 app.include_router(error_logs_api_router)
 app.include_router(whatsapp_api_router)
 app.include_router(company_api_keys_api_router)
+app.include_router(broadcast_settings_api_router)
 app.include_router(erpnext_config_api_router)
 app.include_router(meta_webhook_router)
 app.include_router(analytics_router)
@@ -151,6 +163,9 @@ app.include_router(lizo_router)
 app.include_router(erpnext_webhook_router)
 app.include_router(webhook_config_api_router)
 app.include_router(demo_api_router)
+app.include_router(agents_api_router)
+# The agent app's own contract layer — opaque session tokens, not JWT. See app/agent/.
+app.include_router(agent_router)
 
 # ── SSR page routes ───────────────────────────────────────────────────────────
 app.include_router(auth_pages_router)
@@ -159,6 +174,7 @@ app.include_router(companies_router)
 app.include_router(users_pages_router)
 app.include_router(roles_pages_router)
 app.include_router(error_logs_pages_router)
+app.include_router(broadcast_settings_pages_router)
 app.include_router(erpnext_config_pages_router)
 app.include_router(phonebooks_api_router)
 app.include_router(campaigns_api_router)

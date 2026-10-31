@@ -11,29 +11,25 @@ import os
 import uuid as _uuid
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core import template_body
 from app.core.database import get_db
+from app.core.templating import build_templates
 from app.core.deps import get_page_user
 from app.core.doctypes import PHONEBOOKS_DOCTYPE
 from app.core.pagination import page_url, paginate
 from app.models.company import Company
 from app.models.broadcast_campaign import BroadcastCampaign, BroadcastRecipient
 from app.models.phonebook import Phonebook, PhonebookContact
-from app.models.whatsapp import WhatsAppTemplate
+from app.models.whatsapp import WhatsAppAccount, WhatsAppTemplate
+from app.services import meta_media
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+templates = build_templates()
 
-# Required by layouts/list_view.html — see CLAUDE.md, "dv_search_text filter".
-templates.env.filters["dv_search_text"] = lambda row: " ".join(
-    str(v) for v in row.values() if v is not None
-)
-templates.env.globals["page_url"] = page_url
 
 router = APIRouter(tags=["Pages"])
 
@@ -80,6 +76,56 @@ def broadcast_home(request: Request, ctx=Depends(get_page_user)):
     })
 
 
+# ── Header media proxy ────────────────────────────────────────────────────────
+# A page route, not an /api/* one, and deliberately: this URL goes into an <img>
+# tag and into a new browser tab, neither of which can attach the Bearer token the
+# API routes expect. The session cookie travels with both.
+
+@router.get("/broadcast/media/{company_id}/{media_id}")
+def header_media_file(
+    company_id: _uuid.UUID,
+    media_id: str,
+    ctx=Depends(get_page_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Stream a campaign's uploaded header file back from Meta.
+
+    Meta's own media URL is short-lived and only works with the access token attached,
+    so it can never be handed to the browser — the bytes come through us instead.
+    """
+    if not ctx["perms"].get("campaigns", {}).get("read"):
+        return _DENIED
+
+    cid = _scoped_company_id(ctx)
+    if cid and str(company_id) != cid:
+        return _DENIED
+
+    account = db.query(WhatsAppAccount).filter(
+        WhatsAppAccount.company_id == company_id
+    ).first()
+    if not account or not account.access_token_encrypted:
+        return HTMLResponse("<h2>WhatsApp account not connected</h2>", status_code=404)
+
+    try:
+        content, mime = meta_media.fetch_media(account, media_id)
+    except meta_media.MediaUploadError as exc:
+        return HTMLResponse(f"<h2>{exc}</h2>", status_code=502)
+
+    return Response(
+        content=content,
+        media_type=mime,
+        headers={
+            # inline so a click opens the file in the tab rather than downloading it.
+            "Content-Disposition": "inline",
+            # Private: the bytes are one company's campaign artwork, not public assets.
+            # Five minutes is enough for a preview and a click-through without pinning
+            # a replaced file in the browser cache.
+            "Cache-Control": "private, max-age=300",
+        },
+    )
+
+
 # ── Phonebook list ────────────────────────────────────────────────────────────
 
 @router.get("/broadcast/phonebooks", response_class=HTMLResponse)
@@ -114,7 +160,7 @@ def phonebooks_page(
             "name":          pb.name,
             "company_name":  comp.name if comp else "—",
             "contact_count": counts.get(pb.id, 0),
-            "created_at":    pb.created_at.strftime("%d %b %Y") if pb.created_at else "—",
+            "created_at":    pb.created_at,
         }
         for pb, comp in pairs
     ]
@@ -341,10 +387,20 @@ def campaign_detail(
     )
     page = paginate(q, request, per_page=50)
 
+    # Always the proxy, never the original link: what the campaign sends is the copy
+    # on Meta, and the remote file may have changed since. Previewing the source URL
+    # would show something other than what recipients get.
+    hm = campaign.header_media or {}
+    header_media_url = (
+        f"/broadcast/media/{campaign.company_id}/{hm['media_id']}"
+        if hm.get("media_id") else None
+    )
+
     return templates.TemplateResponse("broadcast/campaign_detail.html", {
         "request": request, "user": ctx["user"], "perms": perms,
         "active": "broadcast",
         "campaign": campaign, "company": company, "template": template,
+        "header_media_url": header_media_url,
         "preview": template_body.render(
             template.components if template else [], campaign.shared_params
         ),

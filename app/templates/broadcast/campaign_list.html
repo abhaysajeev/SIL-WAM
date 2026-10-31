@@ -190,7 +190,7 @@
             {% if r.skipped %}<span class="sep">·</span>{{ r.skipped }} skipped{% endif %}
           {% endif %}
         </td>
-        <td>{{ r.created_at.strftime('%d %b %Y') if r.created_at else '—' }}</td>
+        <td>{{ ts(r.created_at, 'date') }}</td>
         <td onclick="event.stopPropagation();">
           <a href="/broadcast/campaigns/{{ r.id }}" class="dv-row-open" title="Open">
             <i class="ti ti-chevron-right"></i>

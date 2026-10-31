@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import company_filter, require
+from app.models.broadcast_settings import BroadcastSettings
 from app.models.company import Company
 from app.schemas.company import CompanyCreate, CompanyOut, CompanyUpdate
 
@@ -52,6 +53,14 @@ def create_company(
         raise HTTPException(status_code=409, detail="Company code already exists")
     company = Company(**payload.model_dump())
     db.add(company)
+    db.flush()          # need company.id before the settings row references it
+
+    # Seed broadcast settings so every company has a row from the moment it exists.
+    # Settings are per-company with no inheritance, so without this a new company
+    # would show nothing on the settings page until somebody created a row by hand.
+    # All values come from the column defaults, which are the system defaults.
+    db.add(BroadcastSettings(company_id=company.id))
+
     db.commit()
     db.refresh(company)
     return company

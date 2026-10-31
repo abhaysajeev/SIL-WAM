@@ -84,11 +84,21 @@
       {% endif %}
       {% endif %}
 
-      {% if perms.phonebooks.read %}
+      {# The section heading is gated on the union, not on phonebooks alone: an admin
+         who can tune broadcast settings but not edit phonebooks would otherwise get an
+         orphaned link under no heading. #}
+      {% if perms.phonebooks.read or perms.broadcast_settings.read %}
       <span class="nav-label">Broadcast</span>
+      {% if perms.phonebooks.read %}
       <a href="/broadcast" class="nav-item {% if active == 'broadcast' %}active{% endif %}">
         <i class="nav-icon ti ti-speakerphone"></i> Broadcast Messages
       </a>
+      {% endif %}
+      {% if perms.broadcast_settings.read %}
+      <a href="/broadcast-settings" class="nav-item {% if active == 'broadcast_settings' %}active{% endif %}">
+        <i class="nav-icon ti ti-adjustments"></i> Broadcast Settings
+      </a>
+      {% endif %}
       {% endif %}
 
       {% if perms.reports.read %}
@@ -330,6 +340,40 @@
     });
   })();
 </script>
+<script>
+/* ── Timestamps ──────────────────────────────────────────────────────────────
+   Every <time> on the page carries a UTC instant; the browser knows the viewer's
+   timezone, so it does the conversion. Nothing server-side has to decide, which is
+   what lets staff in India and a client in Dubai read the same page correctly at the
+   same moment.
+
+   The server renders a fallback inside the tag, so the page is readable before this
+   runs and with JavaScript off. */
+(function () {
+  var FORMATS = {
+    datetime: { day:'2-digit', month:'short', year:'numeric',
+                hour:'2-digit', minute:'2-digit', hour12:false },
+    date:     { day:'2-digit', month:'short', year:'numeric' },
+    time:     { hour:'2-digit', minute:'2-digit', hour12:false }
+  };
+
+  function renderTimestamps(root) {
+    var scope = root || document;
+    scope.querySelectorAll('time[datetime]:not([data-tz])').forEach(function (el) {
+      var d = new Date(el.getAttribute('datetime'));
+      if (isNaN(d.getTime())) return;          // leave the server fallback in place
+      el.textContent = d.toLocaleString([], FORMATS[el.dataset.fmt] || FORMATS.datetime);
+      el.title = d.toLocaleString();           // full precision on hover
+      el.setAttribute('data-tz', '');          // render once
+    });
+  }
+
+  renderTimestamps();
+  // Pages that inject rows after load (campaign progress, agent sessions) call this.
+  window.renderTimestamps = renderTimestamps;
+})();
+</script>
+
 {% block extra_js %}{% endblock %}
 </body>
 </html>

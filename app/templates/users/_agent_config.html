@@ -1,0 +1,583 @@
+{#
+  Agent Config — the tab on the user form that sets a user up for the agent app.
+
+  Deliberately NOT part of the users form payload. Two reasons, both from the code:
+
+    * form_view.html's collectPayload() sweeps every .dv-input carrying a `name`,
+      hidden tab or not — `display:none` sits on the panel, not the input. So these
+      inputs have ids and no `name`, and are read by the JS below instead.
+    * PUT /api/users/{id} applies exclude_none=True, so it can never set a field back
+      to NULL — which is exactly what releasing a device is. Hence its own endpoint.
+
+  Everything here talks to /api/agents.
+#}
+<style>
+  .ac-status {
+    display:flex;align-items:center;gap:10px;padding:11px 14px;margin-bottom:16px;
+    border:1px solid var(--line-2);background:var(--bg);font-size:12.5px;
+  }
+  .ac-status i { font-size:14px;flex-shrink:0; }
+  .ac-status.bound   { border-color:var(--green);background:var(--green-tint); }
+  .ac-status.bound i { color:var(--green-dark); }
+  .ac-status.unbound i { color:var(--subtle); }
+  .ac-status-t { font-weight:600;color:var(--black); }
+  .ac-status-s { color:var(--ink-2);margin-top:2px;font-size:11.5px; }
+  .ac-status .dv-btn { margin-left:auto;flex-shrink:0; }
+  .ac-mono { font-family:var(--f-mono);font-size:11.5px; }
+
+  .ac-sessions { width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px; }
+  .ac-sessions th {
+    text-align:left;padding:7px 10px;font-family:var(--f-mono);font-size:9px;
+    font-weight:500;text-transform:uppercase;letter-spacing:.13em;color:var(--muted);
+    background:var(--bg);border-bottom:1px solid var(--line);
+  }
+  .ac-sessions td { padding:8px 10px;border-bottom:1px solid var(--line-2);color:var(--ink-2); }
+  .ac-sessions tr:last-child td { border-bottom:none; }
+  .ac-empty { padding:14px;text-align:center;color:var(--subtle);font-size:12px; }
+  /* Template chips — one per mapped template, each removable. */
+  .ac-chips { display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;min-height:30px; }
+  .ac-chip {
+    display:inline-flex;align-items:center;gap:8px;padding:5px 8px 5px 11px;
+    border:1px solid var(--line-2);background:var(--bg-card);font-size:12.5px;
+  }
+  .ac-chip-name { font-weight:600;color:var(--black); }
+  .ac-chip-meta { font-family:var(--f-mono);font-size:10.5px;color:var(--muted); }
+  /* A template no longer approved at Meta. The agent app hides it; the admin must
+     still see it, or there is no way to explain why an agent lost a template. */
+  .ac-chip.stale { border-color:var(--orange, #b45309);background:#fffbeb; }
+  .ac-chip-warn  { font-size:10px;font-weight:600;color:var(--orange, #b45309);
+                   text-transform:uppercase;letter-spacing:.08em; }
+  .ac-chip-x {
+    display:flex;align-items:center;justify-content:center;width:18px;height:18px;
+    border:none;background:none;color:var(--subtle);cursor:pointer;font-size:13px;padding:0;
+  }
+  .ac-chip-x:hover { color:var(--red-dark);background:var(--red-tint); }
+  .ac-chips-empty { font-size:12px;color:var(--subtle);padding:6px 0; }
+
+  .ac-msg { font-size:12px;margin-top:10px;display:none; }
+  .ac-msg.show  { display:block; }
+  .ac-msg.ok    { color:var(--green-dark); }
+  .ac-msg.error { color:var(--red-dark); }
+</style>
+
+<div class="dv-section">
+  <div class="dv-section-header">
+    <span class="dv-section-label">Agent app access</span>
+  </div>
+  <div class="dv-section-body" style="display:block">
+
+    <p class="dv-hint" style="margin-bottom:16px">
+      Set these to let this user sign in from the agent app. They will still be refused
+      at the web panel — an agent login belongs to the app.
+    </p>
+
+    {# No `name` attributes: see the note at the top of this file. #}
+    <div class="im-pb-fields" style="display:grid;grid-template-columns:1fr 1fr;gap:14px 24px">
+      <div class="dv-field">
+        <label class="dv-label" for="acAgentId">Agent ID <span class="req">*</span></label>
+        <input type="text" class="dv-input" id="acAgentId" autocomplete="off"
+               placeholder="AG01" maxlength="100">
+        <div class="dv-hint">Their identifier in your agent system. Unique within this company.</div>
+      </div>
+      <div class="dv-field">
+        <label class="dv-label" for="acCustomerId">Customer ID <span class="req">*</span></label>
+        <input type="text" class="dv-input" id="acCustomerId" autocomplete="off"
+               placeholder="FM-2291" maxlength="100">
+        <div class="dv-hint">The licence key the app sends. It must match this exactly.</div>
+      </div>
+    </div>
+
+    <div class="dv-field" style="margin-top:14px">
+      {# .dv-toggle is the 36x20 track box itself — the label is its SIBLING, not a
+         child, or the text overflows that box and lands on top of the hint below. #}
+      <div class="dv-toggle-wrap">
+        <label class="dv-toggle" for="acIsActive">
+          <input type="checkbox" id="acIsActive" checked>
+          <span class="dv-toggle-track"></span>
+        </label>
+        <label class="dv-toggle-label" for="acIsActive" id="acIsActiveLabel">Enabled</label>
+      </div>
+      <div class="dv-hint">
+        Switching this off signs them out of the app immediately, without disabling the
+        user account itself.
+      </div>
+    </div>
+
+    {# No Save button here on purpose. This tab is saved by the form's own Save in the
+       toolbar, via the dvSaveHooks registry — two Save buttons on one screen is how a
+       user ends up pressing the wrong one and being told "Saved". #}
+    <div style="margin-top:14px"><span class="ac-msg" id="acMsg"></span></div>
+  </div>
+</div>
+
+<div class="dv-section" id="acTemplatesCard">
+  <div class="dv-section-header">
+    <span class="dv-section-label">Templates this agent can send</span>
+  </div>
+  <div class="dv-section-body" style="display:block">
+
+    <p class="dv-hint" style="margin-bottom:12px">
+      Only these appear in the app. Templates are needed when a customer has not messaged
+      in the last 24 hours — outside that window WhatsApp accepts approved templates only.
+      With none selected the agent sees an empty picker.
+    </p>
+
+    <div class="dv-field">
+      <label class="dv-label" for="acTplPicker">Add a template</label>
+      <select class="dv-input" id="acTplPicker">
+        <option value="">Select a template…</option>
+      </select>
+      <div class="dv-hint">Approved templates belonging to this user's company.</div>
+    </div>
+
+    <div class="ac-chips" id="acTplChips">
+      <div class="ac-chips-empty">No templates selected.</div>
+    </div>
+  </div>
+</div>
+
+<div class="dv-section" id="acPhonebooksCard">
+  <div class="dv-section-header">
+    <span class="dv-section-label">Phonebooks this agent can use</span>
+  </div>
+  <div class="dv-section-body" style="display:block">
+
+    <p class="dv-hint" style="margin-bottom:12px">
+      The contacts the agent can reach from the app. Each contact keeps its own agent id
+      from the import, and anyone who has unsubscribed is shown but cannot be messaged.
+    </p>
+
+    <div class="dv-field">
+      <label class="dv-label" for="acPbPicker">Add a phonebook</label>
+      <select class="dv-input" id="acPbPicker">
+        <option value="">Select a phonebook…</option>
+      </select>
+      <div class="dv-hint">Phonebooks belonging to this user's company.</div>
+    </div>
+
+    <div class="ac-chips" id="acPbChips">
+      <div class="ac-chips-empty">No phonebooks selected.</div>
+    </div>
+  </div>
+</div>
+
+<div class="dv-section" id="acDeviceCard" style="display:none">
+  <div class="dv-section-header">
+    <span class="dv-section-label">Registered device</span>
+  </div>
+  <div class="dv-section-body" style="display:block">
+
+    <div class="ac-status unbound" id="acDeviceStatus">
+      <i class="fas fa-mobile-screen"></i>
+      <div style="min-width:0">
+        <div class="ac-status-t" id="acDeviceTitle">Not yet registered</div>
+        <div class="ac-status-s" id="acDeviceSub">
+          The first device they sign in from will be registered to this account.
+        </div>
+      </div>
+      <button type="button" class="dv-btn dv-btn-danger dv-btn-xs" id="acRelease"
+              style="display:none">Release device</button>
+    </div>
+
+    {# Inline confirmation, reusing .ak-delete-confirm from docview.css — the same
+       treatment the API keys panel gives its destructive action. A native confirm()
+       cannot be styled, blocks the page, and reads as a browser warning rather than
+       part of this screen. #}
+    <div class="ak-delete-confirm" id="acReleaseConfirm" style="display:none">
+      <i class="fas fa-triangle-exclamation"></i>
+      <span style="flex:1;min-width:180px">
+        Release this device? The agent is signed out immediately, and the next device
+        they sign in from is registered instead.
+      </span>
+      <button type="button" class="dv-btn dv-btn-danger dv-btn-xs" id="acReleaseYes">
+        <span class="btn-label">Yes, release</span>
+        <div class="btn-spinner"></div>
+      </button>
+      <button type="button" class="dv-btn dv-btn-ghost dv-btn-xs" id="acReleaseNo">Cancel</button>
+    </div>
+
+    <p class="dv-hint">
+      One agent, one device. Release it when they change phone — or after a factory
+      reset, which changes the device's identifier and would otherwise lock them out.
+    </p>
+
+    <div style="margin-top:18px">
+      <div class="dv-label" style="margin-bottom:6px">Active sessions</div>
+      <div id="acSessions"><div class="ac-empty">No active sessions.</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var USER_ID = {{ (('"' + record_id + '"') if record_id else 'null') | safe }};
+  // Distinguishes "this company has no approved templates" from "this user has no
+  // company at all" — an empty dropdown otherwise gives no clue which it is.
+  var COMPANY_ID = {{ (('"' + (record.company_id | string) + '"')
+                       if record and record.company_id else 'null') | safe }};
+  if (!USER_ID) return;                     // create form — nothing to configure yet
+
+  var el = function (id) { return document.getElementById(id); };
+  var agentRowId = null;
+  var loaded = false;
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function msg(text, kind) {
+    var m = el('acMsg');
+    m.textContent = text || '';
+    m.className = 'ac-msg' + (text ? ' show ' + kind : '');
+  }
+
+  function when(iso) {
+    if (!iso) return '—';
+    var d = new Date(iso);
+    return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) +
+           ', ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+
+  /* ── Load ────────────────────────────────────────────────────────────── */
+  async function load() {
+    try {
+      var res = await fetchWithAuth('/api/agents/by-user/' + USER_ID);
+      if (!res.ok) {
+        return msg(res.status === 403
+          ? 'You do not have permission to view agent configuration.'
+          : 'Could not load the agent configuration (' + res.status + ').', 'error');
+      }
+      var cfg = await res.json();
+
+      // null means this user has no agent configuration — the form stays blank and
+      // the device card stays hidden until one is saved.
+      if (!cfg) { el('acDeviceCard').style.display = 'none'; return; }
+
+      agentRowId = cfg.id;
+      el('acAgentId').value    = cfg.agent_id || '';
+      el('acCustomerId').value = cfg.customer_id || '';
+      el('acIsActive').checked = !!cfg.is_active;
+      syncToggleLabel();
+      el('acDeviceCard').style.display = '';
+
+      renderDevice(cfg);
+      loadSessions();
+    } catch (_) { /* transient — reopening the tab retries */ }
+  }
+
+  function renderDevice(cfg) {
+    var bound = !!cfg.device_id;
+    el('acDeviceStatus').className = 'ac-status ' + (bound ? 'bound' : 'unbound');
+    // Leave the button hidden while its confirmation is open, or a reload of the
+    // card would put the button back on top of the row asking about it.
+    var confirming = el('acReleaseConfirm').style.display === 'flex';
+    el('acRelease').style.display = (bound && !confirming) ? '' : 'none';
+    if (!bound) showReleaseConfirm(false);
+
+    if (!bound) {
+      el('acDeviceTitle').textContent = 'Not yet registered';
+      el('acDeviceSub').textContent =
+        'The first device they sign in from will be registered to this account.';
+      return;
+    }
+    el('acDeviceTitle').innerHTML =
+      'Registered · <span class="ac-mono">' + esc(cfg.device_id) + '</span>';
+    el('acDeviceSub').textContent =
+      'Bound ' + when(cfg.device_bound_at) +
+      (cfg.device_last_seen ? ' · last seen ' + when(cfg.device_last_seen) : '');
+  }
+
+  async function loadSessions() {
+    if (!agentRowId) return;
+    try {
+      var res = await fetchWithAuth('/api/agents/' + agentRowId + '/sessions');
+      if (!res.ok) return;
+      var rows = await res.json();
+
+      el('acSessions').innerHTML = rows.length
+        ? '<table class="ac-sessions"><thead><tr>' +
+            '<th>Device</th><th>Signed in</th><th>Last used</th><th>App</th><th></th>' +
+          '</tr></thead><tbody>' +
+          rows.map(function (s) {
+            return '<tr>' +
+              '<td class="ac-mono">' + esc(s.device_id) + '</td>' +
+              '<td>' + when(s.issued_at) + '</td>' +
+              '<td>' + when(s.last_used_at) + '</td>' +
+              '<td>' + esc(s.app_version || '—') + '</td>' +
+              '<td style="text-align:right"><button type="button" ' +
+                'class="dv-btn dv-btn-ghost dv-btn-xs ac-revoke" data-id="' + s.id + '">' +
+                'Sign out</button></td>' +
+            '</tr>';
+          }).join('') + '</tbody></table>'
+        : '<div class="ac-empty">No active sessions.</div>';
+
+      document.querySelectorAll('.ac-revoke').forEach(function (b) {
+        b.addEventListener('click', function () { revoke(b.dataset.id); });
+      });
+    } catch (_) { /* non-critical */ }
+  }
+
+  /* ── Multi-select ──────────────────────────────────────────────────────
+     One implementation, two instances (templates and phonebooks). The picker
+     offers only what is not already chosen, so nothing can be added twice and
+     the list shortens as it is used.
+
+     Each instance owns its own `loaded` flag. A picker whose load failed omits
+     its ids from the save payload entirely, so a failed read can never turn into
+     a destructive write — an empty `selected` is indistinguishable from "this
+     agent has none", and saving it would make that true. */
+  function multiSelect(opts) {
+    var self = {
+      available: [],
+      selected:  [],
+      loaded:    false,
+      ids: function () { return self.selected.map(function (x) { return x.id; }); },
+    };
+
+    function renderPicker() {
+      var chosen = self.ids();
+      var free = self.available.filter(function (x) { return chosen.indexOf(x.id) === -1; });
+      el(opts.pickerId).innerHTML =
+        '<option value="">' +
+        (free.length ? opts.placeholder : 'All available ' + opts.plural + ' are selected') +
+        '</option>' +
+        free.map(function (x) {
+          return '<option value="' + x.id + '">' + esc(x.name) +
+                 '  ·  ' + esc(opts.describe(x)) + '</option>';
+        }).join('');
+      el(opts.pickerId).disabled = !free.length;
+    }
+
+    function renderChips() {
+      if (!self.selected.length) {
+        el(opts.chipsId).innerHTML =
+          '<div class="ac-chips-empty">No ' + opts.plural + ' selected.</div>';
+        return;
+      }
+      el(opts.chipsId).innerHTML = self.selected.map(function (x) {
+        // Anything the agent app will not show is flagged rather than hidden — this
+        // is the only place an admin can find out why an agent lost something.
+        var warn = opts.warn ? opts.warn(x) : null;
+        return '<span class="ac-chip' + (warn ? ' stale' : '') + '">' +
+                 '<span class="ac-chip-name">' + esc(x.name) + '</span>' +
+                 '<span class="ac-chip-meta">' + esc(opts.describe(x)) + '</span>' +
+                 (warn ? '<span class="ac-chip-warn">' + esc(warn) + '</span>' : '') +
+                 '<button type="button" class="ac-chip-x" data-id="' + x.id + '" ' +
+                   'title="Remove">&times;</button>' +
+               '</span>';
+      }).join('');
+
+      el(opts.chipsId).querySelectorAll('.ac-chip-x').forEach(function (b) {
+        b.addEventListener('click', function () {
+          self.selected = self.selected.filter(function (x) { return x.id !== b.dataset.id; });
+          renderChips(); renderPicker();
+          msg(opts.label + ' changed — press Save to apply.', 'ok');
+        });
+      });
+    }
+
+    el(opts.pickerId).addEventListener('change', function () {
+      var id = el(opts.pickerId).value;
+      if (!id) return;
+      var picked = self.available.filter(function (x) { return x.id === id; })[0];
+      if (picked) {
+        self.selected.push(picked);
+        renderChips(); renderPicker();
+        msg(opts.label + ' changed — press Save to apply.', 'ok');
+      }
+      el(opts.pickerId).value = '';
+    });
+
+    self.load = async function () {
+      try {
+        var base = '/api/agents/by-user/' + USER_ID;
+        var [avail, mapped] = await Promise.all([
+          fetchWithAuth(base + opts.availablePath),
+          fetchWithAuth(base + opts.mappedPath),
+        ]);
+        // Both must succeed — see the note on `loaded` above.
+        if (!avail.ok || !mapped.ok) {
+          var code = !avail.ok ? avail.status : mapped.status;
+          return msg(code === 403
+            ? 'You do not have permission to manage agent ' + opts.plural + '. Ask a ' +
+              'super admin to grant the Agents permission to your role.'
+            : 'Could not load ' + opts.plural + ' (' + code + '). Reopen the tab to retry.',
+            'error');
+        }
+        self.available = await avail.json();
+        self.selected  = await mapped.json();
+        self.loaded    = true;
+        renderChips(); renderPicker();
+
+        if (!self.available.length) {
+          // An empty dropdown has two very different causes and the user cannot tell
+          // them apart without being told which one this is.
+          msg(COMPANY_ID ? opts.emptyForCompany
+                         : 'This user belongs to no company, so there are no ' +
+                           opts.plural + ' to assign.', 'error');
+        }
+      } catch (_) {
+        msg('Could not reach the server while loading ' + opts.plural + '.', 'error');
+      }
+    };
+
+    return self;
+  }
+
+  var templates = multiSelect({
+    pickerId: 'acTplPicker', chipsId: 'acTplChips',
+    availablePath: '/available-templates', mappedPath: '/templates',
+    label: 'Templates', plural: 'templates',
+    placeholder: 'Select a template…',
+    emptyForCompany: 'This company has no approved WhatsApp templates yet.',
+    describe: function (t) {
+      var bits = [t.language];
+      if (t.param_count)   bits.push(t.param_count + ' param' + (t.param_count === 1 ? '' : 's'));
+      if (t.header_format) bits.push(t.header_format.toLowerCase() + ' header');
+      return bits.join(' · ');
+    },
+    // The agent app returns APPROVED templates only, so anything else is invisible
+    // to the agent and must be visible to the admin.
+    warn: function (t) { return (t.status && t.status !== 'APPROVED') ? t.status : null; },
+  });
+
+  var phonebooks = multiSelect({
+    pickerId: 'acPbPicker', chipsId: 'acPbChips',
+    availablePath: '/available-phonebooks', mappedPath: '/phonebooks',
+    label: 'Phonebooks', plural: 'phonebooks',
+    placeholder: 'Select a phonebook…',
+    emptyForCompany: 'This company has no phonebooks yet.',
+    describe: function (p) {
+      return p.contact_count + ' contact' + (p.contact_count === 1 ? '' : 's');
+    },
+  });
+
+  async function loadTemplates() {
+    await Promise.all([templates.load(), phonebooks.load()]);
+  }
+
+  /* The label reads the state, the way every other toggle in the app does. */
+  function syncToggleLabel() {
+    el('acIsActiveLabel').textContent = el('acIsActive').checked ? 'Enabled' : 'Disabled';
+  }
+  el('acIsActive').addEventListener('change', syncToggleLabel);
+
+  /* ── Save ────────────────────────────────────────────────────────────── */
+  /* Run by the form's toolbar Save — see the note in the markup above. Throwing
+     fails the whole save and surfaces the message in the form's error banner, so a
+     bad agent config cannot be silently dropped while the user is told "Saved". */
+  async function saveAgentConfig() {
+    var agentId = el('acAgentId').value.trim();
+    var customerId = el('acCustomerId').value.trim();
+
+    // Nothing typed and nothing configured — this user simply is not an agent. Saving
+    // the user form must not fail, and must not create an empty agent row.
+    if (!agentId && !customerId && !agentRowId) return;
+
+    if (!agentId || !customerId) {
+      throw new Error('Agent Config: Agent ID and Customer ID are both required.');
+    }
+
+    msg('', '');
+    try {
+      var res = await fetchWithAuth('/api/agents/by-user/' + USER_ID, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: agentId,
+          customer_id: customerId,
+          is_active: el('acIsActive').checked,
+          // The whole set, every time — the server applies it as a replacement, which
+          // is what a multi-select means. Omitted entirely when the mapping never
+          // loaded: the server leaves it untouched, rather than us wiping it with an
+          // empty array we only have because a request failed.
+          template_ids:  templates.loaded  ? templates.ids()  : undefined,
+          phonebook_ids: phonebooks.loaded ? phonebooks.ids() : undefined,
+        }),
+      });
+      if (!res.ok) {
+        var d = await res.json().catch(function () { return {}; });
+        var detail = d.detail;
+        if (Array.isArray(detail)) {
+          detail = detail.map(function (e) { return e.msg || ''; }).join('; ');
+        }
+        throw new Error('Agent Config: ' +
+                        (detail || 'could not save (' + res.status + ').'));
+      }
+      var cfg = await res.json();
+      agentRowId = cfg.id;
+      el('acDeviceCard').style.display = '';
+      renderDevice(cfg);
+      loadSessions();
+      loadTemplates();          // re-read, so a stale status is refreshed after saving
+    } catch (err) {
+      // A thrown Error is ours and already carries a usable message; anything else is
+      // the network, and must still fail the save rather than passing silently.
+      throw (err instanceof Error && err.message)
+        ? err
+        : new Error('Agent Config: could not reach the server.');
+    }
+  }
+
+  (window.dvSaveHooks = window.dvSaveHooks || []).push(saveAgentConfig);
+
+  /* ── Release device ──────────────────────────────────────────────────────
+     A real interruption for the agent — they are signed out and must sign in
+     again — so it asks first, inline. */
+  function showReleaseConfirm(show) {
+    el('acReleaseConfirm').style.display = show ? 'flex' : 'none';
+    el('acRelease').style.display = show ? 'none' : '';
+  }
+
+  el('acRelease').addEventListener('click', function () {
+    if (!agentRowId) return;
+    msg('', '');
+    showReleaseConfirm(true);
+  });
+
+  el('acReleaseNo').addEventListener('click', function () { showReleaseConfirm(false); });
+
+  el('acReleaseYes').addEventListener('click', async function () {
+    if (!agentRowId) return;
+    var btn = el('acReleaseYes');
+    btn.classList.add('loading');
+    btn.disabled = true;
+    try {
+      var res = await fetchWithAuth('/api/agents/' + agentRowId + '/release-device',
+                                    { method: 'POST' });
+      if (!res.ok) return msg('Could not release the device.', 'error');
+      msg('Device released. The agent can register a new one at their next sign-in.', 'ok');
+      showReleaseConfirm(false);
+      load();
+    } catch (_) {
+      msg('Could not reach the server. Check your connection and try again.', 'error');
+    } finally {
+      btn.classList.remove('loading');
+      btn.disabled = false;
+    }
+  });
+
+  async function revoke(sessionId) {
+    try {
+      var res = await fetchWithAuth('/api/agents/sessions/' + sessionId + '/revoke',
+                                    { method: 'POST' });
+      if (!res.ok) return msg('Could not sign that session out.', 'error');
+      msg('Signed out. The device stays registered.', 'ok');
+      loadSessions();
+    } catch (_) {
+      msg('Could not reach the server. Check your connection and try again.', 'error');
+    }
+  }
+
+  /* Loaded when the tab is first opened, not on page load — a user form that never
+     opens this tab should not pay for its requests. */
+  document.addEventListener('dv:tab', function (e) {
+    if (e.detail.panel === 'agent_config' && !loaded) {
+      loaded = true;
+      load();
+      loadTemplates();
+    }
+  });
+})();
+</script>

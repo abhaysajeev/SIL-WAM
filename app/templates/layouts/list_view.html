@@ -129,6 +129,11 @@
             {% else %}
             <span class="dv-badge dv-badge-gray">No Role</span>
             {% endif %}
+          {%- elif col.type in ('datetime', 'date', 'time') -%}
+            {# The route passes the raw instant; ts() emits a <time> the browser
+               localises. A column must never be pre-formatted server-side — the
+               server does not know the viewer's timezone. #}
+            {{ ts(val, 'date' if col.type == 'date' else ('time' if col.type == 'time' else 'datetime')) }}
           {%- elif col.type == 'mono' -%}
             <span class="cell-mono {% if col.bold %}cell-bold{% endif %}">{{ val or '—' }}</span>
           {%- else -%}
