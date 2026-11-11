@@ -371,13 +371,14 @@
 
       <div class="wa-manual-form">
 
+        <form autocomplete="off" onsubmit="return false">
         <div class="wa-mf-field">
           <label class="wa-mf-label" for="msAccessToken">
             Access Token <span class="req">*</span>
           </label>
           <div class="wa-mf-token-wrap">
             <input type="password" id="msAccessToken" class="wa-mf-input wa-mf-mono"
-                   placeholder="EAAxxxxxxx…" autocomplete="off">
+                   placeholder="EAAxxxxxxx…" autocomplete="new-password">
             <button type="button" class="wa-mf-eye" id="msTokenEye" title="Show / hide token">
               <i class="fas fa-eye" id="msEyeIcon"></i>
             </button>
@@ -388,6 +389,7 @@
             Must have <code>whatsapp_business_management</code> permission.
           </div>
         </div>
+        </form>
 
         <div class="wa-mf-row">
           <div class="wa-mf-field">
@@ -473,7 +475,7 @@
     <div class="tpl-toolbar">
       <div class="tpl-search">
         <i class="fas fa-search tpl-search-icon"></i>
-        <input type="text" id="tplSearch" class="tpl-search-input" placeholder="Search templates…">
+        <input type="text" id="tplSearch" class="tpl-search-input" placeholder="Search templates…" autocomplete="off">
       </div>
       <select id="tplStatusFilter" class="tpl-filter">
         <option value="">All statuses</option>

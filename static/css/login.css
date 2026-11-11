@@ -27,12 +27,13 @@ button, input { font: inherit; color: inherit; }
 
 .auth-brand {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: var(--s-2_5);
+  gap: var(--s-3);
   margin-bottom: var(--s-6);
 }
-.auth-logo { width: 32px; height: 32px; object-fit: contain; }
-.auth-brand-name { font-size: var(--fs-md); font-weight: var(--fw-semibold); letter-spacing: -.01em; }
+.auth-logo { width: 64px; height: 64px; object-fit: contain; }
+.auth-brand-name { font-size: var(--fs-xl); font-weight: var(--fw-semibold); letter-spacing: -.02em; }
 
 .auth-card {
   width: 100%;

@@ -95,13 +95,13 @@ h1, h2, h3, h4 { font-weight: var(--fw-semibold); line-height: var(--lh-tight); 
   color: var(--text);
 }
 .sidebar-brand-icon { display: flex; flex-shrink: 0; }
-.sidebar-brand-icon img { width: 26px; height: 26px; object-fit: contain; }
+.sidebar-brand-icon img { width: 40px; height: 40px; object-fit: contain; }
 .sidebar-brand-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
 .sidebar-brand-name {
-  font-size: 15px;
+  font-size: var(--fs-lg);
   font-weight: var(--fw-semibold);
   color: var(--text);
-  letter-spacing: -.01em;
+  letter-spacing: -.02em;
   white-space: nowrap;
 }
 .sidebar-brand-sub {

@@ -152,10 +152,11 @@
     </div>
     <div class="modal-body">
       <div id="userModalError" style="display:none;padding:8px 12px;background:var(--red-tint);border:1px solid rgba(220,38,38,.2);color:var(--red-dark);font-size:13px;margin-bottom:12px;"></div>
+      <form id="userModalForm" autocomplete="off" onsubmit="return false">
       <div class="field-row">
         <div class="field">
           <label class="label">Username</label>
-          <input type="text" id="uUsername" class="input" placeholder="login_name" maxlength="100">
+          <input type="text" id="uUsername" class="input" placeholder="login_name" maxlength="100" autocomplete="off">
         </div>
         <div class="field">
           <label class="label">Full Name</label>
@@ -188,8 +189,9 @@
       </div>
       <div class="field" id="passwordField">
         <label class="label">Password</label>
-        <input type="password" id="uPassword" class="input" placeholder="Min 8 characters" maxlength="200">
+        <input type="password" id="uPassword" class="input" placeholder="Min 8 characters" maxlength="200" autocomplete="new-password">
       </div>
+      </form>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" id="userModalCancel">Cancel</button>

@@ -168,13 +168,13 @@
               </button>
             </div>
             <input type="password" id="f_{{ field.name }}" name="{{ field.name }}"
-                   class="dv-input" style="display:none"
+                   class="dv-input" style="display:none" autocomplete="new-password"
                    {% if field.get('placeholder') %}placeholder="{{ field.placeholder }}"{% endif %}>
           </div>
           {% else %}
           {# No secret saved yet — show blank input #}
           <input type="password" id="f_{{ field.name }}" name="{{ field.name }}"
-                 class="dv-input"
+                 class="dv-input" autocomplete="new-password"
                  {% if field.get('placeholder') %}placeholder="{{ field.placeholder }}"{% endif %}
                  {% if field.get('minlength') %}data-minlength="{{ field.minlength }}"{% endif %}>
           {% endif %}
@@ -182,7 +182,7 @@
         {% elif field.type in ['password'] %}
           <input type="password"
                  id="f_{{ field.name }}" name="{{ field.name }}"
-                 class="dv-input"
+                 class="dv-input" autocomplete="new-password"
                  {% if field.get('placeholder') %}placeholder="{{ field.placeholder }}"{% endif %}
                  {% if field.get('maxlength') %}maxlength="{{ field.maxlength }}"{% endif %}
                  {% if field.get('minlength') %}data-minlength="{{ field.minlength }}"{% endif %}>

@@ -45,7 +45,7 @@
 
     <a href="/dashboard" class="sidebar-logo">
       <span class="sidebar-brand-icon">
-        <img src="/static/img/sil_logo_new.png" alt="" width="26" height="26">
+        <img src="/static/img/sil_logo_mark.png" alt="" width="40" height="40">
       </span>
       <span class="sidebar-brand-text">
         <span class="sidebar-brand-name">SIL WhatsApp</span>
@@ -179,6 +179,10 @@
     <div class="modal-body">
       <div id="changePwError" class="dv-inline-error" role="alert" style="display:none"></div>
       <div id="changePwSuccess" class="dv-inline-success" style="display:none">Password updated.</div>
+      {# Its own form so browsers pair these password fields with the hidden username
+         below, not with whatever text box precedes them on the page (search boxes). #}
+      <form id="changePasswordForm" onsubmit="return false">
+      <input type="text" name="username" value="{{ user.username }}" autocomplete="username" hidden>
       <div class="modal-field">
         <label class="dv-label" for="currentPw">Current password</label>
         <input type="password" id="currentPw" class="dv-input" autocomplete="current-password">
@@ -188,6 +192,7 @@
         <input type="password" id="newPw" class="dv-input" autocomplete="new-password" aria-describedby="newPwHint">
         <div class="dv-hint" id="newPwHint">At least 8 characters.</div>
       </div>
+      </form>
     </div>
     <div class="modal-footer">
       <button type="button" class="dv-btn dv-btn-secondary" id="changePasswordCancel">Cancel</button>
