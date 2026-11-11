@@ -399,3 +399,169 @@ class TestAccessControl:
         r = client.get(f"/api/agents/by-user/{target.id}/phonebooks",
                        headers={"Authorization": f"Bearer {tok}"})
         assert r.status_code == 403
+
+
+# ── Phonebooks an agent builds from the app ──────────────────────────────────
+
+class TestAgentBuiltPhonebooks:
+    """POST/PATCH/DELETE under /agent-api/v1/phonebooks: an agent creates books in
+    their own company and may change only the ones they created."""
+
+    def _agent(self, client, db, code="PBW1", username="ravi.k", books=()):
+        hdr = _admin(client, db)
+        comp = make_company(db, code=code)
+        user = _agent_user(db, comp, username=username)
+        made = [_book(db, comp.id, n, cs) for n, cs in books]
+        _configure(client, hdr, user.id, [b.id for b in made])
+        return comp, user, made, _agent_headers(client, username=username)
+
+    def _create(self, client, h, name="My shop", contacts=()):
+        return client.post(AGENT_PB, headers=h, json={
+            "name": name,
+            "contacts": [{"mobile_no": m, "customer_name": n} for m, n in contacts],
+        })
+
+    def test_create_puts_the_book_in_the_agents_company_and_maps_it(self, client, db):
+        comp, user, _, h = self._agent(client, db)
+        r = self._create(client, h, contacts=[("919999000001", "Ravi"), ("+919999000002", "Anil")])
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["editable"] is True and body["contact_count"] == 2 and body["skipped"] == []
+
+        pb = db.query(Phonebook).filter(Phonebook.name == "My shop").one()
+        assert pb.company_id == comp.id and pb.created_by_id == user.id
+        assert db.query(AgentPhonebook).filter(AgentPhonebook.phonebook_id == pb.id).count() == 1
+        # Stored the way every other number is: '+' stripped, contact tagged with the agent.
+        stored = {c.mobile_no: c.agent_id for c in
+                  db.query(PhonebookContact).filter(PhonebookContact.phonebook_id == pb.id)}
+        assert stored == {"919999000001": "AG01", "919999000002": "AG01"}
+
+        listed = client.get(AGENT_PB, headers=h).json()
+        assert [b["name"] for b in listed] == ["My shop"]
+
+    def test_company_id_in_the_body_is_ignored(self, client, db):
+        comp, _, _, h = self._agent(client, db, "PBW2")
+        other = make_company(db, name="Other Co", code="PBW2X")
+        r = client.post(AGENT_PB, headers=h, json={"name": "Sneaky", "company_id": str(other.id)})
+        assert r.status_code == 201
+        assert db.query(Phonebook).filter(Phonebook.name == "Sneaky").one().company_id == comp.id
+
+    def test_duplicate_name_in_the_company_is_refused(self, client, db):
+        comp, _, _, h = self._agent(client, db, "PBW3", books=[("Taken", [])])
+        r = self._create(client, h, name="Taken")
+        assert r.status_code == 409
+        assert r.json()["detail"]["code"] == "phonebook_name_taken"
+
+    def test_bad_and_duplicate_rows_are_skipped_and_reported(self, client, db):
+        _, _, _, h = self._agent(client, db, "PBW4")
+        r = self._create(client, h, contacts=[
+            ("919999000001", "Ravi"), ("12", "Too short"), ("919999000001", "Again"), ("919999000003", ""),
+        ])
+        assert r.status_code == 201
+        body = r.json()
+        assert body["contact_count"] == 1
+        assert [(s["row"], s["reason"] != "") for s in body["skipped"]] == [(2, True), (3, True), (4, True)]
+        assert body["skipped"][1]["reason"] == "Already in this phonebook"
+
+    def test_add_edit_and_remove_contacts_on_own_book(self, client, db):
+        _, _, _, h = self._agent(client, db, "PBW5")
+        pid = self._create(client, h).json()["id"]
+
+        r = client.post(f"{AGENT_PB}/{pid}/contacts", headers=h,
+                        json={"contacts": [{"mobile_no": "919999000001", "customer_name": "Ravi"},
+                                           {"mobile_no": "919999000002", "customer_name": "Anil"}]})
+        assert r.status_code == 201 and r.json() == {"added": 2, "skipped": []}
+
+        cid = next(c["id"] for c in client.get(AGENT_PB, headers=h).json()[0]["contacts"]
+                   if c["customer_name"] == "Ravi")
+        r = client.patch(f"{AGENT_PB}/{pid}/contacts/{cid}", headers=h,
+                         json={"customer_name": "Ravi Kumar", "email": "ravi@example.com"})
+        assert r.status_code == 200
+        assert r.json()["customer_name"] == "Ravi Kumar" and r.json()["email"] == "ravi@example.com"
+
+        clash = client.patch(f"{AGENT_PB}/{pid}/contacts/{cid}", headers=h, json={"mobile_no": "919999000002"})
+        assert clash.status_code == 409 and clash.json()["detail"]["code"] == "contact_exists"
+
+        bad = client.patch(f"{AGENT_PB}/{pid}/contacts/{cid}", headers=h, json={"mobile_no": "12"})
+        assert bad.status_code == 422 and bad.json()["detail"]["code"] == "invalid_contact"
+
+        assert client.delete(f"{AGENT_PB}/{pid}/contacts/{cid}", headers=h).status_code == 204
+        names = [c["customer_name"] for c in client.get(AGENT_PB, headers=h).json()[0]["contacts"]]
+        assert names == ["Anil"]
+
+    def test_rename_own_book(self, client, db):
+        _, _, _, h = self._agent(client, db, "PBW6")
+        pid = self._create(client, h).json()["id"]
+        r = client.patch(f"{AGENT_PB}/{pid}", headers=h, json={"name": "  Renamed  "})
+        assert r.status_code == 200 and r.json()["name"] == "Renamed"
+
+    def test_books_cannot_be_deleted_from_the_app(self, client, db):
+        _, _, _, h = self._agent(client, db, "PBW7")
+        pid = self._create(client, h).json()["id"]
+        assert client.delete(f"{AGENT_PB}/{pid}", headers=h).status_code == 405
+        assert db.query(Phonebook).count() == 1
+
+    def test_admin_made_book_is_read_only(self, client, db):
+        _, _, made, h = self._agent(client, db, "PBW8",
+                                    books=[("Admin list", [("919999000001", "Ravi", "AG01")])])
+        pid = made[0].id
+        listed = client.get(AGENT_PB, headers=h).json()[0]
+        assert listed["editable"] is False
+        cid = listed["contacts"][0]["id"]
+        for r in (
+            client.patch(f"{AGENT_PB}/{pid}", headers=h, json={"name": "Mine now"}),
+            client.post(f"{AGENT_PB}/{pid}/contacts", headers=h,
+                        json={"contacts": [{"mobile_no": "919999000002", "customer_name": "X"}]}),
+            client.patch(f"{AGENT_PB}/{pid}/contacts/{cid}", headers=h, json={"customer_name": "X"}),
+            client.delete(f"{AGENT_PB}/{pid}/contacts/{cid}", headers=h),
+        ):
+            assert r.status_code == 403 and r.json()["detail"]["code"] == "phonebook_read_only"
+
+    def test_another_agents_book_is_not_found(self, client, db):
+        _, _, _, h1 = self._agent(client, db, "PBW9")
+        pid = self._create(client, h1).json()["id"]
+        # A second agent in another company, on another device.
+        comp2 = make_company(db, name="Second Co", code="PBW9B")
+        u2 = _agent_user(db, comp2, username="anil.s")
+        admin = {"Authorization": f"Bearer {login(client, 'pb_admin')['access_token']}"}
+        _configure(client, admin, u2.id, [], agent_id="AG02")
+        h2 = _agent_headers(client, username="anil.s", device_id="second-device-01")
+
+        r = client.patch(f"{AGENT_PB}/{pid}", headers=h2, json={"name": "Stolen"})
+        assert r.status_code == 404 and r.json()["detail"]["code"] == "not_found"
+        unknown = "00000000-0000-0000-0000-000000000999"
+        assert client.post(f"{AGENT_PB}/{unknown}/contacts", headers=h1,
+                           json={"contacts": [{"mobile_no": "919999000001", "customer_name": "R"}]}
+                           ).status_code == 404
+
+    def test_more_than_500_rows_in_one_call_is_refused(self, client, db):
+        _, _, _, h = self._agent(client, db, "PBW10")
+        rows = [{"mobile_no": f"9199990{i:05d}", "customer_name": "C"} for i in range(501)]
+        assert client.post(AGENT_PB, headers=h, json={"name": "Big", "contacts": rows}).status_code == 422
+
+    def test_a_book_is_capped(self, client, db, monkeypatch):
+        from app.agent import phonebooks as agent_pb
+        monkeypatch.setattr(agent_pb, "MAX_CONTACTS_PER_BOOK", 3)
+        _, _, _, h = self._agent(client, db, "PBW11")
+        pid = self._create(client, h, contacts=[("919999000001", "A"), ("919999000002", "B")]).json()["id"]
+        r = client.post(f"{AGENT_PB}/{pid}/contacts", headers=h,
+                        json={"contacts": [{"mobile_no": "919999000003", "customer_name": "C"},
+                                           {"mobile_no": "919999000004", "customer_name": "D"}]})
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "phonebook_full"
+        assert db.query(PhonebookContact).count() == 2
+
+    def test_opted_out_number_added_by_an_agent_is_still_flagged(self, client, db):
+        comp, _, _, h = self._agent(client, db, "PBW12")
+        db.add(MessagingOptOut(company_id=comp.id, mobile_no="919999000002", source="stop_keyword"))
+        db.commit()
+        self._create(client, h, contacts=[("919999000001", "Ravi"), ("919999000002", "Anil")])
+        flags = {c["customer_name"]: c["opted_out"] for c in client.get(AGENT_PB, headers=h).json()[0]["contacts"]}
+        assert flags == {"Anil": True, "Ravi": False}
+
+    def test_agent_without_a_company_cannot_create(self, client, db):
+        hdr = _admin(client, db)
+        user = make_user(db, username="nocomp", role_name="agent")
+        _configure(client, hdr, user.id, [])
+        h = _agent_headers(client, username="nocomp", device_id="nocomp-device")
+        r = self._create(client, h)
+        assert r.status_code == 403 and r.json()["detail"]["code"] == "no_company"

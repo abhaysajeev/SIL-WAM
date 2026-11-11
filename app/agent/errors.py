@@ -274,3 +274,61 @@ def unknown_contacts(missing: list[str]) -> HTTPException:
         contact_ids=missing[:50],
         count=len(missing),
     )
+
+
+# ── Phonebooks an agent builds ─────────────────────────────────────────────
+
+def no_company() -> HTTPException:
+    """A phonebook always belongs to a company, and this agent has none."""
+    return _err(
+        status.HTTP_403_FORBIDDEN,
+        "no_company",
+        "Your account is not linked to a company, so it cannot create phonebooks. "
+        "Contact your administrator.",
+    )
+
+
+def phonebook_read_only() -> HTTPException:
+    """Mapped to this agent, but made by an administrator — readable, not editable."""
+    return _err(
+        status.HTTP_403_FORBIDDEN,
+        "phonebook_read_only",
+        "This phonebook was set up by your administrator. You can use it, but only "
+        "phonebooks you created can be changed from the app.",
+    )
+
+
+def phonebook_name_taken(name: str) -> HTTPException:
+    return _err(
+        status.HTTP_409_CONFLICT,
+        "phonebook_name_taken",
+        f"Your company already has a phonebook called '{name}'. Choose another name.",
+    )
+
+
+def phonebook_full(current: int, adding: int, limit: int) -> HTTPException:
+    return _err(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "phonebook_full",
+        f"A phonebook holds at most {limit} contacts. This one has {current}, and "
+        f"adding {adding} would go over. Start a new phonebook instead.",
+        contact_count=current,
+        adding=adding,
+        limit=limit,
+    )
+
+
+def contact_exists(mobile_no: str) -> HTTPException:
+    return _err(
+        status.HTTP_409_CONFLICT,
+        "contact_exists",
+        f"{mobile_no} is already in this phonebook.",
+    )
+
+
+def invalid_contact(reason: str) -> HTTPException:
+    return _err(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "invalid_contact",
+        reason,
+    )

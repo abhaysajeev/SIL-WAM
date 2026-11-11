@@ -96,6 +96,7 @@ dedicated `whatsapp` resource.
 | `/webhook/erpnext`         | `api/erpnext_webhook.py`        | none (ERPNext-signed callback)      |
 | `/api/webhook-config`      | `api/webhook_config_api.py`     | `require_super_admin`               |
 | `/api/demo`                | `api/demo_api.py`               | `require_super_admin`               |
+| `/agent-api/v1`            | `agent/router.py` (+ `agent/*`) | `get_agent_session` (opaque token + `X-Device-Id`). Phonebooks: agents read mapped books, and create/rename/edit contacts in books they created (`created_by_id` = their user); no book delete |
 
 ### Page (SSR) routers (session cookie via `get_page_user`)
 
