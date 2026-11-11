@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     LIZO_CONFIRM_TEMPLATE: str = "order_confirm_liso"
     # Set True in production (HTTPS) so the session cookie gets the Secure flag
     HTTPS_ONLY: bool = False
+    # Central log server (the log-ingestion project). /client-api, /agent-api and
+    # /webhook calls are copied there from a background thread -- see app/monitoring/.
+    # Off unless both URL and key are set; the key is the project's ingest key there.
+    LOG_INGEST_URL: str = ""              # e.g. https://logs.softlandindia.net/ingest/batch
+    LOG_INGEST_KEY: str = ""
+    LOG_ENVIRONMENT: str = ""             # shown on the dashboard, e.g. "live" or "local"
+    LOG_INGEST_QUEUE_SIZE: int = 5000     # logs waiting to be sent before new ones are dropped
+    LOG_INGEST_TIMEOUT: int = 5           # seconds per POST
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

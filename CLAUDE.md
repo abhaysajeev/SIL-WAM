@@ -64,6 +64,10 @@ venv/bin/python run.py create-superadmin <username> <password>
   give the column `"type": "datetime"` (or `"date"`/`"time"`) and pass the raw value from the
   route, not a pre-formatted string.
 
+- **API traffic is copied to the log server** by `app/monitoring/` (see PROJECT_MAP §6a).
+  A new external-facing auth dependency should call `capture.tag(company=...)`, and any new
+  secret-bearing field name must be covered by `redact.is_secret`, or it ships in clear.
+
 ## Permission Guards — Never Omit These
 
 Every API route that touches data MUST have a `require()` guard. Forgetting it silently

@@ -174,6 +174,16 @@ Status changes flow back out via `outbound_notifications` → `notify_scheduler`
 `notify_url` recorded on the `CompanyApiKey` that ingested the service (dashboard
 status progression is enforced monotonic — see recent commits `e74691c`, `91eda32`).
 
+## 6a. Log shipping (`app/monitoring/`)
+
+`/client-api/*`, `/agent-api/*` and `/webhook/*` calls are copied to the central log server
+(the log-ingestion project, `logs.softlandindia.net`, project `sil-wam`). `LogCaptureMiddleware`
+copies bodies as they pass (the Meta signature check still sees the raw bytes), `redact.py`
+masks secrets, `shipper.py` posts batches from its own thread and drops on failure. Meta
+webhooks are logged as a summary only (ids, types, statuses, error codes; never message text).
+Auth deps call `capture.tag(company=..., agent=...)`. Off unless `LOG_INGEST_URL` and
+`LOG_INGEST_KEY` are set; `LOG_ENVIRONMENT` labels the copy (`live`, `local`).
+
 ## 7. Where to look for X
 
 | You want to...                                   | Look at                                          |

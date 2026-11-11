@@ -11,6 +11,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from app.monitoring.middleware import LogCaptureMiddleware
+
 from app.core.config import settings
 from app.core.templating import build_templates
 from app.core.database import Base
@@ -103,6 +105,9 @@ app.add_middleware(
     https_only=settings.HTTPS_ONLY,
     same_site="lax",
 )
+
+# Copies API traffic to the central log server; a no-op unless LOG_INGEST_* is set.
+app.add_middleware(LogCaptureMiddleware)
 
 app.mount("/static", StaticFiles(directory=os.path.join(ROOT_DIR, "static")), name="static")
 

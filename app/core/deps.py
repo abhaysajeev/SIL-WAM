@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.resources import ALL_PAGE_NAMES
 from app.core.security import decode_access_token
+from app.monitoring import middleware as capture
 
 bearer = HTTPBearer()
 
@@ -239,6 +240,7 @@ def get_api_company(
     )
     if not company:
         raise HTTPException(status_code=401, detail="Invalid or inactive API key")
+    capture.tag(company=company.name)
     return company
 
 
@@ -265,4 +267,5 @@ def get_api_key_and_company(
     )
     if not row:
         raise HTTPException(status_code=401, detail="Invalid or inactive API key")
+    capture.tag(company=row[1].name)
     return row  # (CompanyApiKey, Company)

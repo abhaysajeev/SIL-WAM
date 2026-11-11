@@ -23,6 +23,7 @@ from app.agent.errors import invalid_session
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import hash_refresh_token
+from app.monitoring import middleware as capture
 
 # auto_error=False so a missing header reaches us as None and becomes our own
 # invalid_session, rather than FastAPI's bare 403 with a different body shape.
@@ -120,6 +121,7 @@ def get_agent_session(
         raise invalid_session()
 
     _touch(db, row.session_id, last_used, now)
+    capture.tag(company=row.company_name, agent=row.agent_id)
 
     return AgentContext(
         session_id=str(row.session_id),
