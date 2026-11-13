@@ -17,7 +17,7 @@ from app.models.broadcast_campaign import BroadcastCampaign, BroadcastRecipient
 from app.models.media_asset import MediaAsset
 from app.models.phonebook import Phonebook, PhonebookContact
 from app.services import agent_timeline, media_assets, media_store
-from tests.test_agent_send import BROADCAST, _agent_headers, _settings, _setup
+from tests.test_agent_send import BROADCAST, _agent_headers, _participate, _settings, _setup
 
 MEDIA = "/agent-api/v1/media"
 LIMITS = "/agent-api/v1/limits"
@@ -308,6 +308,11 @@ class TestMediaDownload:
         assert client.get(f"{MEDIA}/{mid}", headers=h).status_code == 404
         agent_timeline.record_outbound(db, comp.id, "918075571893", kind="broadcast",
                                        media={"format": "image", "asset_id": mid})
+        db.commit()
+        # Shown in a chat, but not one this agent is part of: still not visible.
+        assert client.get(f"{MEDIA}/{mid}", headers=h).status_code == 404
+        _participate(db, comp.id,
+                     agent_timeline.get_or_create_thread(db, comp.id, "918075571893").id)
         db.commit()
         assert client.get(f"{MEDIA}/{mid}", headers=h).status_code == 200
 

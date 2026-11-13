@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy import text
 
 from app.models.agent import Agent, AgentPhonebook, AgentTemplate
 from app.models.agent_timeline import AgentMessage, AgentThread
@@ -78,11 +79,24 @@ def _agent_headers(client, username="ravi.k", device_id=DEVICE):
     return {"Authorization": f"Bearer {r.json()['token']}", "X-Device-Id": device_id}
 
 
+def _participate(db, company_id, thread_id):
+    """
+    Make the company's agents participants of a thread — as if they had contacted the
+    customer. Agents only see chats with customers they contacted (Phase 3); these
+    tests build threads directly, so they record that contact explicitly.
+    """
+    for agent_id in db.execute(text(
+            "SELECT a.id FROM agents a JOIN users u ON u.id = a.user_id "
+            "WHERE u.company_id = :c"), {"c": str(company_id)}).scalars():
+        agent_timeline.add_participant(db, thread_id, agent_id, "broadcast")
+
+
 def _open_window(db, company_id, mobile, hours_ago=1, name="Cust 0"):
     """A customer who wrote to us `hours_ago` — the only thing that opens the window."""
     t = agent_timeline.get_or_create_thread(db, company_id, mobile, name)
     t.last_inbound_at = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
     t.last_message_at = t.last_inbound_at
+    _participate(db, company_id, t.id)
     db.commit()
     return t
 
@@ -138,6 +152,8 @@ class TestSendMessage:
         comp, *_ = _setup(client, db, "SND3")
         agent_timeline.record_outbound(db, comp.id, "916666000000", kind="broadcast",
                                        body_rendered="hi", wamid="w1")
+        _participate(db, comp.id,
+                     agent_timeline.get_or_create_thread(db, comp.id, "916666000000").id)
         db.commit()
         h = _agent_headers(client)
 
@@ -593,6 +609,7 @@ class TestThreads:
         t = agent_timeline.get_or_create_thread(db, comp.id, mobile)
         if inbound_at:
             t.last_inbound_at = inbound_at
+        _participate(db, comp.id, t.id)
         db.commit()
         return t
 

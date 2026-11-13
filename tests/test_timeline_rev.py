@@ -103,7 +103,7 @@ def test_concurrent_status_updates_never_share_a_rev(db):
 # ── The endpoint ─────────────────────────────────────────────────────────────
 
 def test_changed_after_rev_returns_status_changes(client, db):
-    from tests.test_agent_send import THREADS, _agent_headers, _setup
+    from tests.test_agent_send import THREADS, _agent_headers, _participate, _setup
 
     comp, *_ = _setup(client, db, code="REVAPI")
     h = _agent_headers(client)
@@ -113,6 +113,8 @@ def test_changed_after_rev_returns_status_changes(client, db):
                                   wamid="wapi2")
     db.commit()
     tid = db.query(AgentThread).filter_by(company_id=comp.id).one().id
+    _participate(db, comp.id, tid)
+    db.commit()
 
     r = client.get(f"{THREADS}/{tid}/messages", headers=h, params={"changed_after_rev": 0})
     assert r.status_code == 200, r.text
@@ -133,7 +135,7 @@ def test_changed_after_rev_returns_status_changes(client, db):
 
 
 def test_changed_after_rev_pages_with_has_more(client, db):
-    from tests.test_agent_send import THREADS, _agent_headers, _setup
+    from tests.test_agent_send import THREADS, _agent_headers, _participate, _setup
 
     comp, *_ = _setup(client, db, code="REVPG")
     h = _agent_headers(client)
@@ -141,6 +143,8 @@ def test_changed_after_rev_pages_with_has_more(client, db):
         agent_timeline.record_inbound(db, comp.id, "918075571893", wamid=f"wpg{i}")
     db.commit()
     tid = db.query(AgentThread).filter_by(company_id=comp.id).one().id
+    _participate(db, comp.id, tid)
+    db.commit()
 
     r = client.get(f"{THREADS}/{tid}/messages", headers=h,
                    params={"changed_after_rev": 0, "limit": 3}).json()
