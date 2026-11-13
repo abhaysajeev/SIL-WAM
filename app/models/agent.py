@@ -215,6 +215,14 @@ class AgentSession(Base):
     app_version = Column(String(50), nullable=True)
     os_version  = Column(String(50), nullable=True)
 
+    # Firebase Cloud Messaging registration token for this session's device, set by
+    # PUT /agent-api/v1/devices/push-token. Cleared when FCM reports it UNREGISTERED.
+    # On the session (not the agent) because a session IS one device, and a revoked
+    # session must stop receiving pushes along with everything else.
+    push_token            = Column(String(512), nullable=True)
+    push_platform         = Column(String(20), nullable=True)      # android
+    push_token_updated_at = Column(DateTime(timezone=True), nullable=True)
+
     __table_args__ = (
         # The hot path: find a live session by token. Partial so revoked rows, which
         # accumulate and are never looked up, stay out of the index.

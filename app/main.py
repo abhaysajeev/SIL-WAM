@@ -83,16 +83,21 @@ async def lifespan(app: FastAPI):
     # Tables are managed by Alembic migrations — never auto-create here
     from app.services import (
         broadcast_scheduler, expiry_scheduler, notify_scheduler, send_scheduler,
+        housekeeping_scheduler, webhook_inbox_scheduler,
     )
     expiry_scheduler.start()
     send_scheduler.start()
     notify_scheduler.start()
     broadcast_scheduler.start()
+    webhook_inbox_scheduler.start()
+    housekeeping_scheduler.start()
     yield
     expiry_scheduler.stop()
     send_scheduler.stop()
     notify_scheduler.stop()
     broadcast_scheduler.stop()
+    webhook_inbox_scheduler.stop()
+    housekeeping_scheduler.stop()
 
 
 app = FastAPI(title=settings.APP_TITLE, lifespan=lifespan)

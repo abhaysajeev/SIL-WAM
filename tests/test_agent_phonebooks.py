@@ -539,10 +539,12 @@ class TestAgentBuiltPhonebooks:
         rows = [{"mobile_no": f"9199990{i:05d}", "customer_name": "C"} for i in range(501)]
         assert client.post(AGENT_PB, headers=h, json={"name": "Big", "contacts": rows}).status_code == 422
 
-    def test_a_book_is_capped(self, client, db, monkeypatch):
-        from app.agent import phonebooks as agent_pb
-        monkeypatch.setattr(agent_pb, "MAX_CONTACTS_PER_BOOK", 3)
-        _, _, _, h = self._agent(client, db, "PBW11")
+    def test_a_book_is_capped(self, client, db):
+        """The ceiling is the company's Broadcast settings value, not a constant."""
+        from app.models.broadcast_settings import BroadcastSettings
+        comp, _, _, h = self._agent(client, db, "PBW11")
+        db.add(BroadcastSettings(company_id=comp.id, agent_max_contacts_per_phonebook=3))
+        db.commit()
         pid = self._create(client, h, contacts=[("919999000001", "A"), ("919999000002", "B")]).json()["id"]
         r = client.post(f"{AGENT_PB}/{pid}/contacts", headers=h,
                         json={"contacts": [{"mobile_no": "919999000003", "customer_name": "C"},

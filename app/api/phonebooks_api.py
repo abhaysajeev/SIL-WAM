@@ -7,7 +7,7 @@ company_id must never see or touch another company's contact lists.
 """
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -15,8 +15,10 @@ from sqlalchemy.orm import Session
 
 from app.core.column_mapper import field_catalogue, suggest_mapping
 from app.core.database import get_db
+from app.core import phone
 from app.core.deps import company_filter, get_current_user, require
 from app.models.phonebook import Phonebook, PhonebookContact
+from app.services import contact_import
 from app.schemas.phonebook import (
     ContactCreate,
     ContactOut,
@@ -198,10 +200,15 @@ def add_contact(
     db: Session = Depends(get_db),
 ):
     pb = _get_owned_phonebook(db, phonebook_id, user)
+    # Canonical form (918075571893) so a broadcast and the reply share one chat thread.
+    try:
+        mobile = phone.normalize_for_company(db, pb.company_id, payload.mobile_no)
+    except phone.InvalidPhone as exc:
+        raise HTTPException(422, str(exc))
 
     contact = PhonebookContact(
         phonebook_id=pb.id,
-        mobile_no=payload.mobile_no,
+        mobile_no=mobile,
         customer_name=payload.customer_name,
         email=payload.email,
         agent_id=payload.agent_id,
@@ -211,7 +218,7 @@ def add_contact(
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(409, f"{payload.mobile_no} is already in this phonebook")
+        raise HTTPException(409, f"{mobile} is already in this phonebook")
 
     db.refresh(contact)
     return contact
@@ -237,6 +244,13 @@ def update_contact(
         value = getattr(payload, field)
         if value is None and field in ("mobile_no", "customer_name"):
             continue          # schema already rejects blanks; null = "unchanged"
+        if field == "mobile_no":
+            pb_company = db.query(Phonebook.company_id).filter(
+                Phonebook.id == contact.phonebook_id).scalar()
+            try:
+                value = phone.normalize_for_company(db, pb_company, value)
+            except phone.InvalidPhone as exc:
+                raise HTTPException(422, str(exc))
         setattr(contact, field, value)
 
     try:
@@ -313,6 +327,51 @@ def import_suggest_mapping(
     return {"mapping": suggest_mapping(payload.headers)}
 
 
+# The web panel's file reading. The browser used to parse CSV itself; an .xlsx cannot
+# sensibly be read in the browser, so both formats now come here and the existing
+# map → batch-import steps carry on unchanged with the grid this returns.
+# get_current_user only (plus the router's phonebooks/read): parsing touches no data, and
+# the personalised-campaign import uses it too.
+
+_WEB_SAMPLE_HEADERS = ["Customer Name", "WhatsApp Number", "Email", "Agent ID"]
+
+
+@router.post("/import/parse")
+async def import_parse(
+    file: UploadFile = File(...),
+    _user=Depends(get_current_user),
+):
+    """An uploaded .xlsx or .csv as a grid: row 0 is the headings."""
+    data = await file.read(contact_import.MAX_FILE_BYTES + 1)
+    try:
+        parsed = contact_import.parse(data, file.filename)
+    except contact_import.ImportError_ as exc:
+        raise HTTPException(400, exc.message)
+    return {
+        "headers":     parsed.headers,
+        "rows":        [values for _n, values in parsed.rows],
+        "row_numbers": [n for n, _values in parsed.rows],
+        "truncated":   parsed.truncated,
+    }
+
+
+@router.get("/import/sample")
+def import_sample(
+    format: str = Query("xlsx", pattern="^(xlsx|csv)$"),
+    columns: str | None = Query(None, max_length=2000,
+                                description="Comma-separated headings; default = phonebook"),
+    name: str = Query("phonebook_sample", max_length=80, pattern=r"^[A-Za-z0-9_\-]+$"),
+    _user=Depends(get_current_user),
+):
+    """A headings-only sample in either format. The personalised-campaign screen passes
+    its own template-specific `columns`."""
+    headers = [c for c in (columns.split(",") if columns else _WEB_SAMPLE_HEADERS) if c.strip()]
+    content, mime, filename = contact_import.sample_for(headers, format, name)
+    return Response(content=content, media_type=mime,
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                             "Cache-Control": "no-store"})
+
+
 @router.post("/{phonebook_id}/import", response_model=ImportBatchResult)
 def import_contacts(
     phonebook_id: uuid.UUID,
@@ -337,13 +396,15 @@ def import_contacts(
 
     imported = 0
     errors: list[ImportError_] = []
+    region = phone.company_region(db, pb.company_id)
 
     for raw in payload.rows:
         # Validate through the same schema the manual add form uses, so the CSV
-        # path cannot accept anything the UI would reject.
+        # path cannot accept anything the UI would reject. The number is put in
+        # canonical form first (see app/core/phone.py).
         try:
             contact_in = ContactCreate(
-                mobile_no=(raw.mobile_no or "").strip(),
+                mobile_no=phone.normalize(raw.mobile_no, region),
                 customer_name=(raw.customer_name or "").strip(),
                 email=raw.email,
                 agent_id=raw.agent_id,

@@ -373,6 +373,27 @@ BROADCAST_SETTINGS_DOCTYPE = {
                     "hint": "Rolling 24-hour ceiling across everything one agent sends. "
                             "0 means unlimited.",
                 },
+                {
+                    "name": "agent_max_contacts_per_phonebook",
+                    "label": "Max contacts in an agent phonebook",
+                    "type": "number", "min": 1, "max": 10000,
+                    "hint": "Largest phonebook an agent can build in the app, including "
+                            "an Excel/CSV import. Phonebooks created here in the web "
+                            "panel are not affected.",
+                },
+            ],
+        },
+        {
+            "label": "Phone numbers",
+            "fields": [
+                {
+                    "name": "default_country", "label": "Default country",
+                    "type": "code",
+                    "hint": "Two-letter code (IN, AE, …). A number typed without a "
+                            "country code is read as a number in this country, so "
+                            "8075571893 is stored as 918075571893 — the form WhatsApp "
+                            "uses, which keeps a customer's replies in the same chat.",
+                },
             ],
         },
         {

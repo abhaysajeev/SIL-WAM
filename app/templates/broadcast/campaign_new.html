@@ -415,10 +415,13 @@
         </p>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="dv-btn dv-btn-ghost" id="cSample">
-            <i class="ti ti-download"></i> Download sample CSV
+            <i class="ti ti-download"></i> Sample (Excel)
+          </button>
+          <button class="dv-btn dv-btn-ghost" id="cSampleCsv">
+            <i class="ti ti-download"></i> Sample (CSV)
           </button>
           <button class="dv-btn dv-btn-primary" id="cUpload">
-            <i class="ti ti-upload"></i> Upload CSV
+            <i class="ti ti-upload"></i> Upload Excel or CSV
           </button>
         </div>
       </div>
@@ -452,7 +455,7 @@
 <div class="cn-modal-backdrop" id="imBackdrop">
   <div class="cn-modal im-modal">
     <div class="cn-modal-hd">
-      <span class="cn-modal-title" id="imTitle">Import contacts from CSV</span>
+      <span class="cn-modal-title" id="imTitle">Import contacts from a file</span>
       <button class="cn-modal-close" id="imClose">&times;</button>
     </div>
 
@@ -460,10 +463,10 @@
       <div class="im-step active" id="imStep1">
         <div class="im-drop" id="imDrop">
           <i class="ti ti-file-spreadsheet"></i>
-          <div class="im-drop-main">Drop your CSV here, or click to choose</div>
+          <div class="im-drop-main">Drop your Excel or CSV file here, or click to choose</div>
           <div class="im-drop-sub">One row per contact, with that contact's own values</div>
         </div>
-        <input type="file" id="imFile" accept=".csv,text/csv" style="display:none">
+        <input type="file" id="imFile" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none">
         <div class="bl-error" id="imError" style="margin-top:14px"></div>
       </div>
 
@@ -1273,30 +1276,34 @@
     if (n === 4) el('imPbSave').style.display = '';
     el('imTitle').textContent = n === 4
       ? 'Save these contacts as a PhoneBook'
-      : 'Import contacts from CSV';
+      : 'Import contacts from a file';
   }
 
   function showErr(id, msg) { var e = el(id); e.textContent = msg; e.classList.add('visible'); }
   function clearErr(id)     { el(id).classList.remove('visible'); }
 
 
-  /* ── Sample CSV ──────────────────────────────────────────────────────── */
-  el('cSample').addEventListener('click', function () {
+  /* ── Sample file ─────────────────────────────────────────────────────── */
+  function sampleColumns() {
     var t = currentTemplate();
-    if (!t) return;
+    if (!t) return null;
     var cols = ['WhatsApp Number', 'Customer Name'];
     paramIndices(t).forEach(function (n) { cols.push('Param ' + n); });
     // Only in per-row mode. Offering the column in shared mode would invite people
     // to fill it in and then wonder why their artwork was ignored.
     if (isPerRowMedia()) cols.push(MEDIA_COLUMN[mediaFormat()]);
-    // Headers only. A sample row invites people to edit around it and leave the
-    // example in, which then imports as a real recipient.
-    var blob = new Blob([cols.join(',') + '\n'], { type: 'text/csv' });
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = (t.name || 'broadcast') + '_sample.csv';
-    a.click();
-    URL.revokeObjectURL(a.href);
+    return { cols: cols, name: (t.name || 'broadcast').replace(/[^A-Za-z0-9_-]/g, '_') + '_sample' };
+  }
+  // Headers only, built by the server. A sample row invites people to edit around it
+  // and leave the example in, which then imports as a real recipient. The Excel file
+  // formats the number column as Text so long numbers keep every digit.
+  el('cSample').addEventListener('click', function () {
+    var s = sampleColumns();
+    if (s) window.downloadSample('xlsx', s.cols, s.name);
+  });
+  el('cSampleCsv').addEventListener('click', function () {
+    var s = sampleColumns();
+    if (s) window.downloadSample('csv', s.cols, s.name);
   });
 
   /* ── Open / close ────────────────────────────────────────────────────── */
@@ -1335,9 +1342,7 @@
 
   function readFile(file) {
     clearErr('imError');
-    var reader = new FileReader();
-    reader.onload = async function () {
-      var parsed = window.parseCSV(reader.result);
+    window.readSheetFile(file).then(async function (parsed) {
       if (parsed.length < 2) {
         return showErr('imError', 'That file has no data rows — only a header.');
       }
@@ -1348,8 +1353,9 @@
       el('imRowCount').textContent = rows.length + ' row' + (rows.length === 1 ? '' : 's');
       await ensureCampaign();
       if (campaignId) await buildMapping();
-    };
-    reader.readAsText(file);
+    }).catch(function (err) {
+      showErr('imError', (err && err.message) || 'Could not read that file.');
+    });
   }
 
   /* ── Campaign + mapping ──────────────────────────────────────────────── */

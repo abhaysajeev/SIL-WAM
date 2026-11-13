@@ -80,12 +80,14 @@ def broadcast_settings_new(
     record = {
         "agent_max_recipients_per_send": DEFAULTS.agent_max_recipients_per_send,
         "agent_daily_message_limit":     DEFAULTS.agent_daily_message_limit,
+        "agent_max_contacts_per_phonebook": DEFAULTS.agent_max_contacts_per_phonebook,
         "send_concurrency":              DEFAULTS.send_concurrency,
         "batch_size":                    DEFAULTS.batch_size,
         "max_retries":                   DEFAULTS.max_retries,
         "retry_backoff_seconds":         DEFAULTS.retry_backoff_seconds,
         "receipt_timeout_minutes":       DEFAULTS.receipt_timeout_minutes,
         "stale_claim_minutes":           DEFAULTS.stale_claim_minutes,
+        "default_country":               DEFAULTS.default_country,
     }
 
     return templates.TemplateResponse("layouts/form_view.html", {
@@ -134,12 +136,14 @@ def broadcast_settings_edit(
         "company_id": company.name if company else str(row.company_id),
         "agent_max_recipients_per_send": row.agent_max_recipients_per_send,
         "agent_daily_message_limit":     row.agent_daily_message_limit,
+        "agent_max_contacts_per_phonebook": row.agent_max_contacts_per_phonebook,
         "send_concurrency":              row.send_concurrency,
         "batch_size":                    row.batch_size,
         "max_retries":                   row.max_retries,
         "retry_backoff_seconds":         row.retry_backoff_seconds,
         "receipt_timeout_minutes":       row.receipt_timeout_minutes,
         "stale_claim_minutes":           row.stale_claim_minutes,
+        "default_country":               row.default_country,
     }
 
     return templates.TemplateResponse("layouts/form_view.html", {

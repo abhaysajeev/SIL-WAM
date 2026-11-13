@@ -18,7 +18,7 @@ doctype list/form pattern works without a bespoke template.
 """
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, UniqueConstraint, text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -43,6 +43,11 @@ class BroadcastSettings(Base):
     # Rolling 24h ceiling across everything one agent sends. 0 = unlimited.
     agent_daily_message_limit = Column(
         Integer, nullable=False, server_default=text("0"))
+    # Ceiling on the contacts in one phonebook an agent builds in the app (create, add,
+    # Excel/CSV import). Capped at 10,000 by validation: GET /agent-api/v1/phonebooks
+    # returns every contact of every book in one response.
+    agent_max_contacts_per_phonebook = Column(
+        Integer, nullable=False, server_default=text("2000"))
 
     # ── Throughput ──────────────────────────────────────────────────────────
     # Parallel sends per batch. Workers hold no database session, so this costs
@@ -65,6 +70,11 @@ class BroadcastSettings(Base):
     # How long a row may sit in "sending" before recovery treats it as stranded.
     # Must comfortably exceed wa_sender's 20s HTTP timeout. Was _CLAIM_STALE_AFTER.
     stale_claim_minutes = Column(Integer, nullable=False, server_default=text("5"))
+
+    # ISO 3166 alpha-2. A phone number typed without a country code (8075571893) is read
+    # in this country, so it is stored the way Meta reports it (918075571893) and the
+    # customer's reply lands in the same chat thread as the broadcast. See app/core/phone.py.
+    default_country = Column(String(2), nullable=False, server_default=text("'IN'"))
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

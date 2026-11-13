@@ -67,11 +67,25 @@ def _inbound_text(msg: dict) -> str | None:
         inter = msg.get("interactive") or {}
         reply = inter.get("button_reply") or inter.get("list_reply") or {}
         return reply.get("title")
-    # Media types carry an optional caption.
-    media = msg.get(t) or {}
-    if isinstance(media, dict):
-        return media.get("caption")
-    return None
+    if t == "location":
+        loc = msg.get("location") or {}
+        label = loc.get("name") or loc.get("address")
+        return f"📍 Location{': ' + label if label else ''}"
+    if t == "contacts":
+        names = [((c.get("name") or {}).get("formatted_name") or "")
+                 for c in (msg.get("contacts") or [])]
+        return "👤 Contact card: " + (", ".join(n for n in names if n) or "shared contact")
+    if t in ("image", "video", "document", "audio", "sticker"):
+        # Media types carry an optional caption.
+        media = msg.get(t) or {}
+        return media.get("caption") if isinstance(media, dict) else None
+    # Anything we do not render (unsupported, order, poll, a type Meta adds later):
+    # a readable placeholder instead of an empty bubble.
+    kind = t or "message"
+    if t == "unsupported":
+        kind = ((msg.get("unsupported") or {}).get("type")
+                or ((msg.get("errors") or [{}])[0] or {}).get("title") or "message")
+    return f"Unsupported message ({kind}) — view it on WhatsApp"
 
 
 def _inbound_media(msg: dict) -> dict | None:
@@ -92,22 +106,67 @@ def _inbound_media(msg: dict) -> dict | None:
 
 # ── Public entry points ───────────────────────────────────────────────────────
 
+def _relink_from_system(db: Session, company_id, msg: dict, meta_from: str,
+                        bsuid: str | None) -> None:
+    """
+    Meta `system` messages announcing a changed number (`user_changed_number`, carrying
+    `new_wa_id`) or a regenerated user id (`user_changed_user_id`). Field names are read
+    defensively — Meta has used several over the BSUID rollout.
+    """
+    system = msg.get("system") or {}
+    stype = system.get("type")
+    if stype not in ("user_changed_number", "user_changed_user_id"):
+        return
+    agent_timeline.relink_identity(
+        db, company_id,
+        old_mobile=meta_from or None,
+        new_mobile=system.get("new_wa_id") or system.get("wa_id"),
+        old_bsuid=system.get("previous_user_id") or bsuid,
+        new_bsuid=system.get("user_id") or system.get("new_user_id"),
+    )
+
+
+def remember_wamid(wamid: str | None) -> None:
+    """Record a processed inbound wamid in the Redis fast path. Call only after
+    handle_inbound has returned without raising. Never raises."""
+    if not wamid:
+        return
+    redis = get_redis()
+    if redis is None:
+        return
+    try:
+        redis.setex(f"wamid:{wamid}", _WAMID_TTL, "1")
+    except Exception as redis_exc:
+        logger.warning("Redis dedup write failed (DB check still applies): %s", redis_exc)
+
+
 def handle_inbound(db: Session, account: WhatsAppAccount, msg: dict) -> None:
     """Route an inbound customer message through the conversation/service flow."""
     wamid    = msg.get("id")
-    from_no  = msg.get("from", "")
+    # Meta's `from` is already canonical (E.164 digits, no '+'), and that is the form the
+    # agent timeline is keyed on. The Conversation store below may hold an older
+    # spelling, so it gets its own resolved copy; the timeline keeps Meta's.
+    meta_from = msg.get("from") or ""
+    # Business-scoped user id. For a customer using a WhatsApp username Meta may send
+    # this INSTEAD of `from`; the Conversation store is keyed on a number, so it falls
+    # back to the id rather than an empty string (which would merge every such
+    # customer into one conversation).
+    bsuid    = msg.get("from_user_id") or None
+    from_no  = meta_from or bsuid or ""
     msg_type = msg.get("type", "")
 
-    # 1. DEDUP — Redis fast path, then DB unique index as authoritative fallback
+    # 1. DEDUP — Redis fast path, then DB unique index as authoritative fallback.
+    # Redis is only READ here. The key is written by remember_wamid() after this
+    # function returns — i.e. after the message is committed. Writing it up front
+    # meant a crash mid-processing left the key set, so Meta's retry of the same
+    # message was taken for a duplicate and the message was lost for good.
     if wamid:
         redis = get_redis()
         if redis is not None:
             try:
-                key = f"wamid:{wamid}"
-                if redis.get(key):
+                if redis.get(f"wamid:{wamid}"):
                     logger.debug("Duplicate wamid=%s (Redis) — skipping", wamid)
                     return
-                redis.setex(key, _WAMID_TTL, "1")
             except Exception as redis_exc:
                 logger.warning("Redis dedup error — falling through to DB: %s", redis_exc)
         if db.query(Message).filter(Message.wamid == wamid).first():
@@ -167,16 +226,29 @@ def handle_inbound(db: Session, account: WhatsAppAccount, msg: dict) -> None:
     #
     # This is also the only thing that opens the 24-hour service window. Sending never
     # does, however much a template looks like the start of a conversation.
-    agent_timeline.record_inbound(
-        db, account.company_id, from_no,
-        body_rendered=_inbound_text(msg),
-        media=_inbound_media(msg),
-        wamid=wamid,
-        replies_to_wamid=context_wamid,
-        # No name from here: Conversation stores only the number. The thread's name
-        # comes from whichever broadcast or phonebook row knew one, and
-        # get_or_create_thread never overwrites a known name with nothing.
-    )
+    if msg_type == "reaction":
+        # A reaction changes the message it reacts to; it is not a bubble of its own,
+        # and (conservatively) it does not open the 24-hour window.
+        reaction = msg.get("reaction") or {}
+        agent_timeline.apply_reaction(db, account.company_id, reaction.get("message_id"),
+                                      reaction.get("emoji"), who="customer")
+    elif msg_type == "system":
+        # Not the customer writing: Meta telling us they changed number or user id.
+        # Relink their thread to the new identity; never record it as a message,
+        # because recording it would open the 24-hour window nobody opened.
+        _relink_from_system(db, account.company_id, msg, meta_from, bsuid)
+    else:
+        agent_timeline.record_inbound(
+            db, account.company_id, meta_from or None,
+            bsuid=bsuid,
+            body_rendered=_inbound_text(msg),
+            media=_inbound_media(msg),
+            wamid=wamid,
+            replies_to_wamid=context_wamid,
+            # No name from here: Conversation stores only the number. The thread's name
+            # comes from whichever broadcast or phonebook row knew one, and
+            # get_or_create_thread never overwrites a known name with nothing.
+        )
 
     # 6. NO ACTIVE SERVICE — could be a PDF button tap or a random out-of-flow message
     if not service:
@@ -324,7 +396,8 @@ def handle_status(db: Session, status: dict, account: WhatsAppAccount) -> None:
     # Applied before the branch below, because a timeline row can belong to either
     # store — a broadcast send or an agent's own reply — and this caller should not
     # have to know which. Committed by whichever branch follows; both commit.
-    timeline_hit = agent_timeline.apply_status(db, wamid, state, ts_for_timeline)
+    timeline_hit = agent_timeline.apply_status(db, wamid, state, ts_for_timeline,
+                                               errors=status.get("errors"))
 
     msg = db.query(Message).filter(Message.wamid == wamid).first()
     if not msg:

@@ -22,7 +22,7 @@ book is returned and every row keeps its own value.
 import uuid as _uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
@@ -30,10 +30,12 @@ from sqlalchemy.orm import Session
 
 from app.agent import errors
 from app.agent.deps import AgentContext, get_agent_session
+from app.core import broadcast_config, phone
 from app.api.phonebooks_api import _MAX_IMPORT_BATCH, _first_message
 from app.core.database import get_db
 from app.models.agent import AgentPhonebook
 from app.models.phonebook import Phonebook, PhonebookContact
+from app.services import contact_import
 from app.schemas.phonebook import ContactCreate, ContactUpdate
 
 router = APIRouter(prefix="/phonebooks", tags=["Agent App"])
@@ -165,7 +167,12 @@ def _load_books(db: Session, ctx: AgentContext, only_id: str | None = None) -> l
 
 # The GET endpoint returns every contact of every book in one response and was sized for
 # books of about this many; an agent-built book is held to the same.
-MAX_CONTACTS_PER_BOOK = 2000
+MAX_CONTACTS_PER_BOOK = 2000      # default; the live value is the company's setting
+
+
+def book_limit(db: Session, company_id) -> int:
+    """Max contacts in one agent-built phonebook — Broadcast settings, per company."""
+    return broadcast_config.get(db, company_id).agent_max_contacts_per_phonebook
 
 
 class ContactIn(BaseModel):
@@ -260,15 +267,23 @@ def _owned_book(db: Session, ctx: AgentContext, phonebook_id: _uuid.UUID) -> Pho
     return book
 
 
-def _add_contacts(db: Session, ctx: AgentContext, book: Phonebook, rows: list[ContactIn]):
+def _add_contacts(db: Session, ctx: AgentContext, book: Phonebook, rows: list[ContactIn],
+                  row_numbers: list[int] | None = None):
     """Validate and insert rows; returns (added, skipped). Caller commits."""
     current = db.query(PhonebookContact).filter(PhonebookContact.phonebook_id == book.id).count()
+    region = phone.company_region(db, book.company_id)
     valid: list[tuple[int, ContactCreate]] = []
     skipped: list[SkippedRow] = []
-    for n, raw in enumerate(rows, start=1):
+    for i, raw in enumerate(rows):
+        # Position in the request, or the spreadsheet row for a file import — whichever
+        # the person can find the bad line by.
+        n = row_numbers[i] if row_numbers else i + 1
         try:
+            # Canonical form first (918075571893), so the number a broadcast is sent to
+            # is the number the customer's reply arrives from. See app/core/phone.py.
+            canonical = phone.normalize(raw.mobile_no, region)
             valid.append((n, ContactCreate(
-                mobile_no=(raw.mobile_no or "").strip(),
+                mobile_no=canonical,
                 customer_name=(raw.customer_name or "").strip(),
                 email=raw.email,
                 agent_id=ctx.agent_id,
@@ -277,8 +292,9 @@ def _add_contacts(db: Session, ctx: AgentContext, book: Phonebook, rows: list[Co
             skipped.append(SkippedRow(row=n, value=(raw.mobile_no or raw.customer_name or "").strip(),
                                       reason=_first_message(exc)))
 
-    if current + len(valid) > MAX_CONTACTS_PER_BOOK:
-        raise errors.phonebook_full(current, len(valid), MAX_CONTACTS_PER_BOOK)
+    limit = book_limit(db, book.company_id)
+    if current + len(valid) > limit:
+        raise errors.phonebook_full(current, len(valid), limit)
 
     added = 0
     for n, contact in valid:
@@ -364,6 +380,64 @@ def add_contacts(
     return ContactsAdded(added=added, skipped=skipped)
 
 
+class ImportResult(BaseModel):
+    added:         int
+    # Row numbers are the spreadsheet's own (row 1 = the headings).
+    skipped:       list[SkippedRow]
+    total_in_book: int
+    # Which column in the file was read as which field.
+    columns:       dict[str, str | None]
+
+
+@router.get("/sample")
+def phonebook_sample(
+    format: str = Query("xlsx", pattern="^(xlsx|csv)$"),
+    ctx: AgentContext = Depends(get_agent_session),
+):
+    """A blank contact file to fill in: headings only, number column formatted as Text."""
+    content, mime, filename = contact_import.sample(format)
+    return Response(content=content, media_type=mime,
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                             "Cache-Control": "no-store"})
+
+
+@router.post("/{phonebook_id}/import", response_model=ImportResult, status_code=201)
+async def import_contacts(
+    phonebook_id: _uuid.UUID,
+    file: UploadFile = File(...),
+    ctx: AgentContext = Depends(get_agent_session),
+    db: Session = Depends(get_db),
+):
+    """
+    Add every contact in an Excel (.xlsx) or CSV file to a phonebook this agent created.
+
+    Same per-row rules as POST /{id}/contacts: a bad number or a duplicate is skipped
+    and reported with its spreadsheet row, the rest are added. The file as a whole is
+    refused only if it cannot be read, has no number column, or would take the book
+    past the company's limit — in which case nothing is added.
+    """
+    data = await file.read(contact_import.MAX_FILE_BYTES + 1)
+    try:
+        rows, mapping = contact_import.read_contacts(data, file.filename)
+    except contact_import.ImportError_ as exc:
+        raise errors.media(exc.code, exc.message)
+
+    book = _owned_book(db, ctx, phonebook_id)
+    limit = book_limit(db, book.company_id)
+    if len(rows) > limit:
+        raise errors.phonebook_full(0, len(rows), limit)
+
+    contacts = [ContactIn(mobile_no=r.mobile_no, customer_name=r.customer_name,
+                          email=r.email) for r in rows]
+    added, skipped = _add_contacts(db, ctx, book, contacts,
+                                   row_numbers=[r.row for r in rows])
+    book.updated_at = func.now()
+    db.commit()
+    total = db.query(PhonebookContact).filter(
+        PhonebookContact.phonebook_id == book.id).count()
+    return ImportResult(added=added, skipped=skipped, total_in_book=total, columns=mapping)
+
+
 def _owned_contact(db: Session, ctx: AgentContext, phonebook_id, contact_id) -> PhonebookContact:
     _owned_book(db, ctx, phonebook_id)
     contact = db.query(PhonebookContact).filter(
@@ -383,8 +457,12 @@ def edit_contact(
     db: Session = Depends(get_db),
 ):
     contact = _owned_contact(db, ctx, phonebook_id, contact_id)
+    data = payload.model_dump(exclude_unset=True)
     try:
-        changes = ContactUpdate(**payload.model_dump(exclude_unset=True))
+        if data.get("mobile_no") is not None:
+            data["mobile_no"] = phone.normalize_for_company(
+                db, ctx.company_id, data["mobile_no"])
+        changes = ContactUpdate(**data)
     except Exception as exc:                     # noqa: BLE001
         raise errors.invalid_contact(_first_message(exc))
 

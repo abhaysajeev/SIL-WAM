@@ -1,4 +1,10 @@
+import os
 import uuid as _uuid
+
+# The webhook inbox writes through the application's own SessionLocal, which points at
+# the dev database, not the test one. Off by default in tests; the inbox tests switch it
+# on and point the inbox at the test session factory explicitly.
+os.environ.setdefault("WEBHOOK_INBOX_MODE", "off")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,7 +40,7 @@ def clean_tables():
     with test_engine.connect() as conn:
         conn.execute(text(
             "TRUNCATE TABLE refresh_tokens, users, role_page_permission, roles, companies, "
-            "failed_webhooks "
+            "failed_webhooks, webhook_inbox "
             "RESTART IDENTITY CASCADE"
         ))
         conn.commit()

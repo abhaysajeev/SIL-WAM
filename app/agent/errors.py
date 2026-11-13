@@ -332,3 +332,47 @@ def invalid_contact(reason: str) -> HTTPException:
         "invalid_contact",
         reason,
     )
+
+
+# ── Media and file import ─────────────────────────────────────────────────────
+
+# HTTP status per media/import error code. The code is what the app branches on.
+_MEDIA_STATUS = {
+    "file_unreadable":          status.HTTP_400_BAD_REQUEST,
+    "unsupported_media_type":   status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+    "media_too_large":          status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+    "media_upload_failed":      status.HTTP_502_BAD_GATEWAY,
+    "media_not_found":          status.HTTP_404_NOT_FOUND,
+    "media_expired":            status.HTTP_410_GONE,
+    "header_media_required":    status.HTTP_400_BAD_REQUEST,
+    "header_media_not_allowed": status.HTTP_400_BAD_REQUEST,
+    "header_media_mismatch":    status.HTTP_400_BAD_REQUEST,
+    "file_too_large":           status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+    "unsupported_file_type":    status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+    "missing_number_column":    status.HTTP_400_BAD_REQUEST,
+    "empty_file":               status.HTTP_400_BAD_REQUEST,
+}
+
+
+def media(code: str, message: str, **extra) -> HTTPException:
+    """A media or file-import failure, shaped like every other agent error."""
+    return _err(_MEDIA_STATUS.get(code, status.HTTP_400_BAD_REQUEST), code, message, **extra)
+
+
+def too_many_phonebooks(limit: int) -> HTTPException:
+    return _err(
+        status.HTTP_400_BAD_REQUEST,
+        "too_many_phonebooks",
+        f"Choose at most {limit} phonebooks for one broadcast.",
+        limit=limit,
+    )
+
+
+def account_unavailable(reason: str | None) -> HTTPException:
+    return _err(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        "account_unavailable",
+        "Your company's WhatsApp account has a problem, so messages cannot be sent right "
+        "now. Contact your administrator.",
+        reason=reason,
+    )

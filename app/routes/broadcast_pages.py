@@ -287,10 +287,23 @@ def campaigns_list(
                        .order_by(Company.name).all()
         ]
 
+    # Accounts whose sends are failing with an account-level error (billing, locked,
+    # policy) — app/services/account_health.py. Shown above the list so nobody sends
+    # the next campaign into the same wall.
+    from app.models.whatsapp import WhatsAppAccount
+    aq = db.query(WhatsAppAccount, Company).join(
+        Company, WhatsAppAccount.company_id == Company.id).filter(
+        WhatsAppAccount.blocked_at.isnot(None))
+    if cid:
+        aq = aq.filter(WhatsAppAccount.company_id == _uuid.UUID(cid))
+    account_alerts = [{"company_name": comp.name, "reason": acc.blocked_reason,
+                       "since": acc.blocked_at} for acc, comp in aq.all()]
+
     return templates.TemplateResponse("broadcast/campaign_list.html", {
         "request": request, "user": ctx["user"], "perms": perms,
         "active": "broadcast",
         "rows": rows, "companies": companies, "selected_company": selected,
+        "account_alerts": account_alerts,
     })
 
 

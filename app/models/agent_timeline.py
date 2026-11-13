@@ -56,9 +56,15 @@ class AgentThread(Base):
         ForeignKey("companies.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
-    # Canonical stored form, as resolved by conversation_engine._resolve_stored_mobile.
-    # Threads keyed on the raw Meta number would split one customer in two.
-    mobile_no  = Column(String(30), nullable=False)
+    # Canonical form: E.164 digits without '+', exactly as Meta reports `from`
+    # (918075571893). Every writer normalises through app/core/phone.py first, so the
+    # broadcast and the customer's reply key the same thread.
+    # NULL only for a customer known to us solely by their WhatsApp username (BSUID):
+    # Meta omits the phone number for username users it has no recent exchange with.
+    mobile_no  = Column(String(30), nullable=True)
+    # Meta's business-scoped user id ("IN.1349…"). Sent in webhooks since 2026 alongside
+    # or instead of the phone number. Matched first on inbound, filled in when learned.
+    bsuid      = Column(String(160), nullable=True)
 
     # Best known name, refreshed opportunistically from whatever wrote last. Display
     # only — never a key.
@@ -81,11 +87,30 @@ class AgentThread(Base):
     # missed by an "everything since X" sync forever.
     message_seq = Column(Integer, nullable=False, server_default=text("0"))
 
+    # **Change counter.** Bumped (under the same row lock) by every change to this
+    # thread's messages: a new message, a delivery status, a reaction, media arriving.
+    # The changed message stores the value it was given in its own `rev`, so the app
+    # syncs with "everything whose rev > N" and receives status ticks as well as new
+    # messages. `seq` alone cannot do this: a status update rewrites an existing row
+    # and allocates no new seq, so an `after_seq` sync never sees the tick change.
+    rev = Column(Integer, nullable=False, server_default=text("0"))
+    # The rev the participants' devices were last told about (push + live stream).
+    # rev > notified_rev means there is news to send — sync_notifier picks it up.
+    notified_rev = Column(Integer, nullable=False, server_default=text("0"))
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
-        UniqueConstraint("company_id", "mobile_no", name="uq_agent_thread_company_mobile"),
+        Index("ix_agent_threads_unnotified", "id",
+              postgresql_where=text("rev > notified_rev")),
+        # Partial unique indexes: a customer is one thread per company whether we know
+        # them by number, by BSUID, or both. NULLs are excluded so username-only threads
+        # (no number) do not collide with each other.
+        Index("uq_agent_thread_company_mobile", "company_id", "mobile_no", unique=True,
+              postgresql_where=text("mobile_no IS NOT NULL")),
+        Index("uq_agent_thread_company_bsuid", "company_id", "bsuid", unique=True,
+              postgresql_where=text("bsuid IS NOT NULL")),
         # The inbox: this company's threads, most recent first.
         Index("ix_agent_threads_company_activity", "company_id", "last_message_at"),
     )
@@ -108,6 +133,10 @@ class AgentMessage(Base):
     )
     # Position within the thread, from 1. See AgentThread.message_seq.
     seq = Column(Integer, nullable=False)
+    # The thread's `rev` at this row's last change. See AgentThread.rev. Every UPDATE
+    # of a message row must set this from agent_timeline._bump_rev, or the app's
+    # changed_after_rev sync never learns of the change.
+    rev = Column(Integer, nullable=False, server_default=text("0"))
 
     direction = Column(String(10), nullable=False)   # inbound | outbound
     # broadcast | agent_reply | template | transactional — what produced this row,
@@ -154,6 +183,24 @@ class AgentMessage(Base):
     # NULL and must never be the only way a reply is attached to a thread.
     replies_to_wamid = Column(String(200), nullable=True)
 
+    # ── Agent sends (POST /threads/{id}/messages) ───────────────────────────
+    # The app's retry key. Unique per sending agent: a retried request with the same
+    # key returns this row instead of messaging the customer twice.
+    client_msg_id = Column(String(64), nullable=True)
+    # sha256 of the request body, so the same key reused for a DIFFERENT message is
+    # refused rather than silently answered with the first one.
+    request_hash  = Column(String(64), nullable=True)
+    # When the send to Meta was attempted. A row still `queued` with this NULL was
+    # never attempted (safe to send); `sending` with it set long ago may have reached
+    # Meta, so it is never re-sent automatically.
+    attempted_at  = Column(DateTime(timezone=True), nullable=True)
+    # For a failed message, what kind of failure, for the app to show:
+    # blocked | outside_window | billing | rate_limited | template | other
+    failure_category = Column(String(20), nullable=True)
+    # {"<emoji>": ["inbound"|"<agent id>", …]} — reactions to this message. A reaction
+    # updates the message it reacts to (and its rev); it is never a bubble of its own.
+    reactions = Column(JSONB, nullable=True)
+
     created_at   = Column(DateTime(timezone=True), server_default=func.now())
     sent_at      = Column(DateTime(timezone=True), nullable=True)
     delivered_at = Column(DateTime(timezone=True), nullable=True)
@@ -168,4 +215,42 @@ class AgentMessage(Base):
         Index("ix_agent_messages_thread_seq", "thread_id", "seq"),
         # Delivery receipts arrive knowing only the wamid.
         Index("ix_agent_messages_wamid", "wamid"),
+        # The sync path: everything in a thread changed since rev N.
+        Index("ix_agent_messages_thread_rev", "thread_id", "rev"),
+        Index("uq_agent_messages_client_msg", "sent_by_agent_id", "client_msg_id",
+              unique=True, postgresql_where=text("client_msg_id IS NOT NULL")),
+        # The crash-recovery sweep: agent sends stuck in queued/sending.
+        Index("ix_agent_messages_pending_send", "status", "created_at",
+              postgresql_where=text("status IN ('queued', 'sending')")),
+    )
+
+
+class AgentThreadParticipant(Base):
+    """
+    Which agents see a customer's chat thread.
+
+    An agent becomes a participant by contacting the customer — sending them a broadcast
+    or a reply from the app. The customer's replies then reach every participant's
+    device, and a reply sent by one appears in the others' chat too (labelled with who
+    sent it). Agents who never contacted the customer do not see the thread at all.
+
+    **The routing window.** A participation counts only while `last_contact_at` is
+    within PARTICIPANT_WINDOW_DAYS (30): a customer answering a broadcast from months
+    ago reaches nobody's device and is seen in the web panel instead. The next contact
+    renews it. `removed_at` is set when the agent is deactivated or loses their device.
+    """
+    __tablename__ = "agent_thread_participants"
+
+    thread_id = Column(UUID(as_uuid=True),
+                       ForeignKey("agent_threads.id", ondelete="CASCADE"), primary_key=True)
+    agent_id  = Column(UUID(as_uuid=True),
+                       ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True)
+    reason    = Column(String(20), nullable=False)        # broadcast | reply | admin
+    first_contact_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_contact_at  = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    removed_at       = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        # "My threads": every lookup is by agent first.
+        Index("ix_agent_thread_participants_agent", "agent_id", "last_contact_at"),
     )

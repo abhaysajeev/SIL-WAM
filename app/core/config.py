@@ -32,7 +32,44 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     FB_APP_ID: str = ""
     META_APP_SECRET: str = ""
+    # Extra Meta app secrets accepted on the webhook signature, comma-separated. Meta
+    # signs each delivery with the secret of whichever app the WABA is subscribed to, so
+    # a second app (or a rotation in progress) needs its secret here or every one of its
+    # events is rejected with 403. META_APP_SECRET is always accepted as well.
+    META_APP_SECRETS: str = ""
+    # off    — old path only: process in a BackgroundTask, nothing stored first.
+    # shadow — store every webhook in webhook_inbox AND run the old path; the inbox rows
+    #          are not processed. For comparing counts in production before switching.
+    # on     — store first, process from webhook_inbox (immediately + scheduler sweep).
+    WEBHOOK_INBOX_MODE: str = "shadow"
     META_CONFIG_ID: str = ""
+
+    # ── Media files (broadcast images, chat attachments) ──────────────────────
+    # "s3" in production (MinIO in docker-compose.prod.yml, any S3-compatible store
+    # works); "local" writes under MEDIA_LOCAL_DIR for development and tests.
+    MEDIA_STORE: str = "local"
+    MEDIA_LOCAL_DIR: str = "var/media"
+    MEDIA_S3_ENDPOINT: str = ""          # e.g. http://minio:9000
+    MEDIA_S3_BUCKET: str = "wam-media"
+    MEDIA_S3_ACCESS_KEY: str = ""
+    MEDIA_S3_SECRET_KEY: str = ""
+    MEDIA_S3_REGION: str = "us-east-1"
+    # Every stored file is deleted this many days after it was stored. Meta's own
+    # copy of an uploaded file lasts 30 days, so keeping ours longer would show a
+    # bubble whose file can no longer be re-sent anyway.
+    MEDIA_RETENTION_DAYS: int = 30
+
+    # ── Push notifications to the agent app (Firebase Cloud Messaging, Android) ──
+    # Path to the Firebase service-account JSON (role: Firebase Cloud Messaging API
+    # Admin). Empty = pushes are off; the app still syncs on open / via /events.
+    FCM_SERVICE_ACCOUNT_FILE: str = ""
+
+    # What happens when a company's sends start failing with an account-level error
+    # (billing, account locked, policy block):
+    #   alert   — record it on the account and in the error log, keep sending
+    #   enforce — also pause the campaign and refuse new agent sends (503) until a
+    #             message is delivered again
+    ACCOUNT_BREAKER_MODE: str = "alert"
     # Meta inbound webhook — ISV-level, not per-company
     META_WEBHOOK_VERIFY_TOKEN: str = ""
     # Phase 4 — lazy conversation expiry threshold (NEW_PLAN §6.7)

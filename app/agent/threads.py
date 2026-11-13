@@ -27,6 +27,7 @@ from app.agent import errors
 from app.agent.deps import AgentContext, get_agent_session
 from app.core.database import get_db
 from app.models.agent_timeline import AgentThread
+from app.core import phone
 from app.services import agent_timeline
 
 router = APIRouter(prefix="/threads", tags=["Agent App"])
@@ -39,6 +40,9 @@ MAX_LIMIT = 100
 class MessageOut(BaseModel):
     id:            str
     seq:           int
+    # The thread's change number at this message's last change (new, status, …).
+    # Sync with changed_after_rev = the highest rev you hold.
+    rev:           int
     direction:     str
     kind:          str
     body:          str | None
@@ -46,8 +50,16 @@ class MessageOut(BaseModel):
     media:         dict | None
     status:        str
     error_message: str | None
+    # For a failed message: blocked | outside_window | billing | rate_limited |
+    # template | other — show this, not a bare "failed".
+    failure_category: str | None = None
     wamid:         str | None
     replies_to:    str | None
+    # agents.id of the agent who sent it (null for the customer and for web-panel
+    # sends). Lets a teammate's reply be labelled with who wrote it.
+    sent_by_agent_id: str | None = None
+    # {"👍": ["customer"]} — reactions to this message.
+    reactions:     dict | None = None
     created_at:    datetime
     delivered_at:  datetime | None
     read_at:       datetime | None
@@ -55,10 +67,13 @@ class MessageOut(BaseModel):
 
 class ThreadOut(BaseModel):
     id:              str
-    mobile_no:       str
+    # Null only for a customer known solely by WhatsApp username (see bsuid).
+    mobile_no:       str | None
     contact_name:    str | None
     last_message_at: datetime | None
     message_seq:     int
+    # Highest change number in this thread. Larger than what the app holds → sync.
+    rev:             int
     # The 24-hour window, resolved server-side. See window_state below.
     last_inbound_at:   datetime | None
     window_expires_at: datetime | None
@@ -83,6 +98,20 @@ class MessagesOut(BaseModel):
     server_time: datetime
 
 
+def message_out(r) -> MessageOut:
+    """One message for the app — from an ORM row or a raw SELECT * row alike."""
+    return MessageOut(
+        id=str(r.id), seq=r.seq, rev=r.rev, direction=r.direction, kind=r.kind,
+        body=r.body_rendered, template=r.template_meta, media=r.media,
+        status=r.status, error_message=r.error_message,
+        failure_category=getattr(r, "failure_category", None),
+        wamid=r.wamid, replies_to=r.replies_to_wamid,
+        sent_by_agent_id=str(r.sent_by_agent_id) if r.sent_by_agent_id else None,
+        reactions=getattr(r, "reactions", None),
+        created_at=r.created_at, delivered_at=r.delivered_at, read_at=r.read_at,
+    )
+
+
 def _window(thread: AgentThread) -> dict:
     return agent_timeline.window_state(thread)
 
@@ -96,6 +125,7 @@ def _thread_out(thread: AgentThread, opted_out: bool = False,
         contact_name=thread.contact_name,
         last_message_at=thread.last_message_at,
         message_seq=thread.message_seq or 0,
+        rev=thread.rev or 0,
         last_inbound_at=w["last_inbound_at"],
         window_expires_at=w["window_expires_at"],
         window_state=w["state"],
@@ -128,7 +158,7 @@ def list_threads(
     rows = db.execute(
         text("""
             SELECT t.id, t.mobile_no, t.contact_name, t.last_inbound_at,
-                   t.last_message_at, t.message_seq,
+                   t.last_message_at, t.message_seq, t.rev,
                    (mo.mobile_no IS NOT NULL) AS opted_out,
                    (SELECT m.body_rendered
                       FROM agent_messages m
@@ -142,6 +172,8 @@ def list_threads(
                      ON mo.mobile_no  = t.mobile_no
                     AND mo.company_id = t.company_id
              WHERE t.company_id = :company_id
+               -- Only customers this agent contacted in the last 30 days.
+               AND """ + agent_timeline.VISIBLE_TO_AGENT_SQL + """
                AND (CAST(:include_silent AS boolean) OR t.last_inbound_at IS NOT NULL)
                -- Cast both sides: a bare `:before IS NULL` gives Postgres no way to
                -- infer the parameter's type and fails outright on the first page,
@@ -152,7 +184,7 @@ def list_threads(
              LIMIT :limit
         """),
         {"company_id": ctx.company_id, "include_silent": include_silent,
-         "before": before, "limit": limit},
+         "before": before, "limit": limit, "agent_id": ctx.agent_row_id},
     ).fetchall()
 
     now = datetime.now(timezone.utc)
@@ -163,7 +195,7 @@ def list_threads(
         stub = AgentThread(mobile_no=r.mobile_no, contact_name=r.contact_name,
                            last_inbound_at=r.last_inbound_at,
                            last_message_at=r.last_message_at,
-                           message_seq=r.message_seq)
+                           message_seq=r.message_seq, rev=r.rev)
         stub.id = r.id
         out.append(_thread_out(stub, opted_out=bool(r.opted_out),
                                last_message=r.last_message))
@@ -192,13 +224,22 @@ def thread_by_mobile(
     different thing from a conversation, and inventing a thread here would put a row
     in the inbox the moment they did reply to something they never received.
     """
+    # The phonebook may hold an older spelling (8075571893); threads are keyed on the
+    # canonical form (918075571893). Try canonical first, then the value as given.
+    candidates = [mobile_no]
+    canonical = phone.try_normalize(mobile_no, phone.company_region(db, ctx.company_id))
+    if canonical and canonical != mobile_no:
+        candidates.insert(0, canonical)
     thread = (
         db.query(AgentThread)
         .filter(AgentThread.company_id == ctx.company_id,
-                AgentThread.mobile_no == mobile_no)
+                AgentThread.mobile_no.in_(candidates))
+        .order_by(AgentThread.mobile_no == candidates[0])
         .first()
     )
-    if thread is None:
+    # Same rule as the list: a customer another agent is talking to is not found here,
+    # however the number was obtained.
+    if thread is None or not agent_timeline.is_visible(db, thread.id, ctx.agent_row_id):
         raise errors.not_found("conversation")
     return _messages_page(db, ctx, thread, limit=limit, before_seq=None, after_seq=None)
 
@@ -213,6 +254,8 @@ def thread_messages(
         None, description="scroll up: messages older than this seq"),
     after_seq: int | None = Query(
         None, description="sync: messages newer than this seq"),
+    changed_after_rev: int | None = Query(
+        None, ge=0, description="sync: messages new OR changed since this rev"),
 ):
     """
     One conversation's messages, newest first.
@@ -235,13 +278,28 @@ def thread_messages(
                 AgentThread.company_id == ctx.company_id)
         .first()
     )
-    if thread is None:
+    if thread is None or not agent_timeline.is_visible(db, thread.id, ctx.agent_row_id):
         raise errors.not_found("conversation")
-    return _messages_page(db, ctx, thread, limit, before_seq, after_seq)
+    return _messages_page(db, ctx, thread, limit, before_seq, after_seq,
+                          changed_after_rev=changed_after_rev)
 
 
-def _messages_page(db, ctx, thread, limit, before_seq, after_seq) -> MessagesOut:
-    if after_seq is not None:
+def _messages_page(db, ctx, thread, limit, before_seq, after_seq,
+                   changed_after_rev: int | None = None) -> MessagesOut:
+    if changed_after_rev is not None:
+        # The full sync: new messages AND existing ones whose status/reaction/media
+        # changed, in the order the changes happened. rev is gap-free per thread, so
+        # "everything above N" misses nothing; has_more says to call again from the
+        # highest rev returned.
+        rows = db.execute(
+            text("""SELECT * FROM agent_messages
+                     WHERE thread_id = :tid AND rev > :rev
+                     ORDER BY rev ASC LIMIT :limit"""),
+            {"tid": str(thread.id), "rev": changed_after_rev, "limit": limit + 1},
+        ).fetchall()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+    elif after_seq is not None:
         rows = db.execute(
             text("""SELECT * FROM agent_messages
                      WHERE thread_id = :tid AND seq > :seq
@@ -275,16 +333,7 @@ def _messages_page(db, ctx, thread, limit, before_seq, after_seq) -> MessagesOut
 
     return MessagesOut(
         thread=_thread_out(thread, opted_out=opted_out, last_message=newest),
-        messages=[
-            MessageOut(
-                id=str(r.id), seq=r.seq, direction=r.direction, kind=r.kind,
-                body=r.body_rendered, template=r.template_meta, media=r.media,
-                status=r.status, error_message=r.error_message,
-                wamid=r.wamid, replies_to=r.replies_to_wamid,
-                created_at=r.created_at, delivered_at=r.delivered_at, read_at=r.read_at,
-            )
-            for r in rows
-        ],
+        messages=[message_out(r) for r in rows],
         has_more=has_more,
         server_time=datetime.now(timezone.utc),
     )

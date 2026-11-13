@@ -25,6 +25,18 @@ class WhatsAppAccount(Base):
     token_expiry = Column(DateTime(timezone=True), nullable=True)
     connection_status = Column(String(20), nullable=False, default="disconnected")
     last_sync_at = Column(DateTime(timezone=True), nullable=True)
+    # When Meta last reached us for this number (any webhook, receipt or message).
+    # Read by the silence alarm in webhook_inbox_scheduler: a number that is sending
+    # but has heard nothing back usually means the webhook is being rejected.
+    last_webhook_at = Column(DateTime(timezone=True), nullable=True)
+    # ── Account health (app/services/account_health.py) ─────────────────────
+    # From Meta's phone_number_quality_update webhook: e.g. "TIER_1K", "TIER_10K".
+    messaging_limit_tier = Column(String(40), nullable=True)
+    quality_event        = Column(String(40), nullable=True)   # FLAGGED | UNFLAGGED | UPGRADE …
+    # Set when sends fail with an account-level error (billing 131042, account locked
+    # 131031, policy block 368). Cleared automatically by the next successful delivery.
+    blocked_reason = Column(String(300), nullable=True)
+    blocked_at     = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

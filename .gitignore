@@ -26,3 +26,6 @@ FIXES2.md
 
 # Claude Code local state, including git worktrees (a full checkout of this repo)
 .claude/
+
+# Local media store (MEDIA_STORE=local)
+var/

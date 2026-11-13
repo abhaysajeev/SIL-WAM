@@ -14,7 +14,10 @@ they are built; nothing above them has to move.
 """
 from fastapi import APIRouter
 
-from app.agent import auth, broadcasts, messages, phonebooks, templates, threads
+from app.agent import (
+    auth, broadcasts, devices, events, limits, media, messages, phonebooks, replies,
+    templates, threads,
+)
 
 router = APIRouter(prefix="/agent-api/v1")
 
@@ -22,8 +25,10 @@ router.include_router(auth.router)
 router.include_router(templates.router)
 router.include_router(phonebooks.router)
 router.include_router(threads.router)
+router.include_router(replies.router)
 router.include_router(messages.router)
 router.include_router(broadcasts.router)
-
-# Attaching later, as each is built:
-#   router.include_router(media.router)
+router.include_router(media.router)
+router.include_router(limits.router)
+router.include_router(devices.router)
+router.include_router(events.router)
