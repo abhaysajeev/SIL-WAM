@@ -58,8 +58,15 @@ def sniff_mime(data: bytes) -> str | None:
     if data[:5] == b"%PDF-":
         return "application/pdf"
     if len(data) >= 12 and data[4:8] == b"ftyp":
+        # HEIC/HEIF/AVIF photos share the ISO box layout with MP4. Meta accepts
+        # none of them, so they must read as unsupported, not as a video.
+        if data[8:12] in _HEIF_BRANDS:
+            return None
         return "video/mp4"
     return None
+
+
+_HEIF_BRANDS = {b"heic", b"heix", b"hevc", b"heim", b"heis", b"mif1", b"msf1", b"avif"}
 
 
 def max_upload_bytes() -> int:

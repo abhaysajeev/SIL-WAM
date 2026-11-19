@@ -371,3 +371,10 @@ class TestBroadcastSettingsApi:
         bad = client.put(f"/api/broadcast-settings/{sid}", headers=hdr,
                          json={"default_country": "XX"})
         assert bad.status_code == 422
+
+
+def test_sniff_heic_photo_is_unsupported_not_video():
+    from app.services.media_assets import sniff_mime
+    assert sniff_mime(b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00") is None
+    assert sniff_mime(b"\x00\x00\x00\x18ftypmif1\x00\x00\x00\x00") is None
+    assert sniff_mime(b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00") == "video/mp4"
