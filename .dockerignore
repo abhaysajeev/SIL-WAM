@@ -15,3 +15,5 @@ requirements-dev.txt
 FIXES.md
 CLAUDE.md
 *.md
+
+var/

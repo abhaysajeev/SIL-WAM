@@ -89,6 +89,10 @@ class _Job:
     # send uses — a bubble cannot then disagree with what Meta was given.
     customer_name: str | None = None
     body_rendered: str | None = None
+    # The agent who created this campaign from the app (agents.id), or None for a web
+    # panel campaign. Makes them a participant of each recipient's chat thread, which is
+    # how that customer's reply reaches their device.
+    sent_by_agent_id: object = None
 
 
 # ── Public: called from main.py lifespan ────────────────────────────────────
@@ -381,6 +385,12 @@ def _dispatch_one_batch(db) -> bool:
     creds = _Creds(account.phone_number_id, account.access_token_encrypted)
     tpl   = _Tpl(template.name, template.language)
     components = template.components
+    # Resolved once per batch, on this thread: the creating user's agent row, if any.
+    from app.models.agent import Agent
+    sender_agent_id = (
+        db.query(Agent.id).filter(Agent.user_id == campaign.created_by_id).scalar()
+        if campaign.created_by_id else None
+    )
     jobs  = [
         _Job(
             recipient_id=r.id,
@@ -390,6 +400,7 @@ def _dispatch_one_batch(db) -> bool:
             attempts=r.attempts or 0,
             customer_name=r.customer_name,
             body_rendered=template_body.render(components, list(r.params or [])),
+            sent_by_agent_id=sender_agent_id,
         )
         for r in sendable
     ]
@@ -448,11 +459,17 @@ def _header_media_for(campaign, recipient, template) -> dict | None:
     hm = campaign.header_media or None
     if not hm or not hm.get("media_id"):
         return None
-    return {
+    out = {
         "format":   str(hm.get("format", "IMAGE")).lower(),
         "media_id": hm["media_id"],
         "filename": hm.get("filename"),
     }
+    # Our stored copy (agent uploads). Carried into the timeline's media JSON so the
+    # chat bubble can be opened via GET /agent-api/v1/media/{asset_id}; wa_sender
+    # ignores keys it does not use.
+    if hm.get("asset_id"):
+        out["asset_id"] = hm["asset_id"]
+    return out
 
 
 # Meta error codes that mean "this exact request will fail again". Retrying them
@@ -461,6 +478,8 @@ def _header_media_for(campaign, recipient, template) -> dict | None:
 # other campaign on the number.
 _PERMANENT_CODES = {
     "131026",   # not a WhatsApp user / cannot receive
+    "131042",   # business eligibility — payment issue on the WABA (fixed in Meta, not by retrying)
+    "131050",   # user stopped marketing messages from this business
     "131047",   # outside the 24-hour window
     "131049",   # per-user marketing frequency cap
     "132000",   # template parameter count mismatch
@@ -602,6 +621,7 @@ def _apply_result(db, campaign_id, company_id, tuning, tpl, job: _Job, result) -
             wamid=result.meta_message_id,
             status="sent",
             campaign_id=campaign_id,
+            sent_by_agent_id=job.sent_by_agent_id,
             contact_name=job.customer_name,
         )
 

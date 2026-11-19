@@ -46,6 +46,27 @@ venv/bin/python run.py create-superadmin <username> <password>
   sequence gaps and the app's "everything after seq N" sync silently loses messages.
   Timeline writes join the caller's transaction, never commit, and are wrapped in a
   SAVEPOINT so a failure there can never discard the caller's staged work.
+- **Every change to an `agent_messages` row bumps the thread's `rev`.** New rows get
+  `(seq, rev)` from `_next_position`; an UPDATE (status, reaction, media arrived) must set
+  the row's `rev` from `agent_timeline.bump_rev()`. The app syncs with
+  `changed_after_rev`, so a change without a rev bump is a change the device never sees.
+- **Customer numbers are canonical: E.164 digits without '+'** (`918075571893`, exactly as
+  Meta reports `from`). Normalise with `app/core/phone.py` (`normalize_for_company`) at
+  every entry point that stores or looks up a customer number for phonebooks, broadcasts
+  and the agent timeline. Numbers without a country code are read in the company's
+  Broadcast settings `default_country`. The Lizo/Shirin APIs and `Conversation` flows keep
+  their own normalisers — do not switch them without a migration plan.
+- **Meta webhooks go through `webhook_inbox`** when `WEBHOOK_INBOX_MODE=on`: stored and
+  committed before the 200, processed after. Handlers called from `_process_payload` must
+  stay idempotent — a crashed worker's row is reclaimed and processed again.
+- **Agents see a customer's chat only as participants** (`agent_thread_participants`:
+  contacted the customer within 30 days). Every agent read, send and media download goes
+  through `agent_timeline.VISIBLE_TO_AGENT_SQL` / `is_visible()` — never a company-wide
+  query — and answers 404 otherwise. An outbound timeline write with `sent_by_agent_id`
+  makes that agent a participant.
+- **Device notifications are driven by `rev`, not by write sites.** `sync_notifier` pushes
+  (FCM) and publishes live events for threads with `rev > notified_rev`. A new writer
+  needs nothing extra as long as it bumps `rev`.
 - **Only an inbound message opens the 24-hour window.** Sending never does. Set
   `last_inbound_at` from `record_inbound` and nowhere else — treating a template send as
   opening the window produces free-text sends Meta rejects with 131047.

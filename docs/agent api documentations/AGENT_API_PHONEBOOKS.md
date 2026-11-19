@@ -295,3 +295,46 @@ curl -s $BASE/phonebooks -H "Authorization: Bearer $TOKEN" \
 | `../BROADCAST_DESIGN.md` §9 | Why opt-out is a hard block and is never denormalised |
 | `app/agent/phonebooks.py` | The implementation |
 | `tests/test_agent_phonebooks.py` | 25 tests covering this endpoint and the mapping |
+
+
+---
+
+## Import from Excel or CSV
+
+### `GET /agent-api/v1/phonebooks/sample?format=xlsx|csv`
+
+A blank file to fill in: headings `WhatsApp Number`, `Customer Name`, `Email`. In the
+Excel file the number column is formatted as **Text** — keep it that way, or Excel
+rounds long numbers (`9.18E+11`) and the digits are lost. An "Instructions" sheet
+explains each column.
+
+### `POST /agent-api/v1/phonebooks/{phonebook_id}/import`
+
+Multipart field `file`: an `.xlsx` or `.csv` (max 5 MB). Only for a phonebook **this
+agent created** (`editable: true`). Columns are matched by heading — the sample's
+headings always match; common variants ("Mobile", "Phone", "Name") do too.
+
+```json
+{
+  "added": 148,
+  "skipped": [
+    {"row": 7,  "value": "9.18E+11", "reason": "'9.18E+11' was changed by Excel into a rounded number — format the WhatsApp Number column as Text and type the number again"},
+    {"row": 12, "value": "918075571893", "reason": "Already in this phonebook"}
+  ],
+  "total_in_book": 148,
+  "columns": {"mobile_no": "WhatsApp Number", "customer_name": "Customer Name", "email": "Email"}
+}
+```
+
+`row` is the **spreadsheet's row number** (row 1 = headings), so the agent can find it.
+Bad rows are skipped, the rest are added. Numbers are stored in WhatsApp's form
+(`8075571893` → `918075571893`, using the company's default country).
+
+| `code` | HTTP | Meaning — nothing was added |
+|---|---|---|
+| `file_unreadable` | 400 | Damaged file |
+| `unsupported_file_type` | 415 | Old `.xls` or not a spreadsheet — save as `.xlsx` or `.csv` |
+| `file_too_large` | 413 | Over 5 MB |
+| `empty_file` | 400 | No rows |
+| `missing_number_column` | 400 | No WhatsApp number column found |
+| `phonebook_full` | 422 | Would exceed `max_contacts_per_phonebook` (see `GET /limits`) |

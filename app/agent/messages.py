@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.agent import errors
 from app.agent.deps import AgentContext, get_agent_session
+from app.core import phone
 from app.core.database import get_db
 from app.models.agent_timeline import AgentMessage, AgentThread
 from app.models.whatsapp import WhatsAppAccount
@@ -51,9 +52,13 @@ def _daily_count(db: Session, agent_row_id: str) -> int:
     returns gradually rather than all at once, and a cap that resets at midnight would
     let an agent spend tomorrow's allowance at 23:59.
     """
+    # Broadcast rows also carry the sending agent (that is how a reply finds them), but
+    # they have their own ceiling (agent_max_recipients_per_send) and never counted
+    # here — so only the agent's own 1:1 messages are counted, as before.
     return db.execute(
         text("""SELECT count(*) FROM agent_messages
                  WHERE sent_by_agent_id = :aid
+                   AND kind <> 'broadcast'
                    AND created_at > now() - interval '24 hours'"""),
         {"aid": agent_row_id},
     ).scalar() or 0
@@ -80,6 +85,9 @@ def send_message(
         mobile = _validate_mobile(payload.mobile_no)
     except ValueError:
         raise errors.not_found("contact")
+    # Threads are keyed on the canonical form (918075571893); a phonebook may still hold
+    # the short spelling. Same rule as the broadcast builder (app/core/phone.py).
+    mobile = phone.try_normalize(mobile, phone.company_region(db, ctx.company_id)) or mobile
 
     account = (
         db.query(WhatsAppAccount)
@@ -115,6 +123,11 @@ def send_message(
     # No thread means this customer has never written to us and we have never messaged
     # them — so the window has certainly never opened. Same refusal, not a 404: from
     # the agent's point of view the reason is identical.
+    # Only a participant may write in a thread — the same rule as reading it. Asked
+    # before the window, so a non-participant learns nothing about the customer's
+    # recent activity.
+    if thread is not None and not agent_timeline.is_visible(db, thread.id, ctx.agent_row_id):
+        raise errors.not_found("conversation")
     if thread is None or not agent_timeline.is_open(thread):
         raise errors.window_closed(thread.last_inbound_at if thread else None)
 

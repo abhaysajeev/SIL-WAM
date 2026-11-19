@@ -101,6 +101,13 @@
 {% endblock %}
 
 {% block content %}
+{% for a in account_alerts or [] %}
+<div class="dv-alert dv-alert-danger" role="alert" style="margin-bottom:12px">
+  <i class="ti ti-alert-triangle"></i>
+  <div><strong>{{ a.company_name }}: WhatsApp sends are failing</strong> (since {{ ts(a.since) }}).
+    {{ a.reason }}</div>
+</div>
+{% endfor %}
 <div class="dv-page-header">
   <div>
     <div class="dv-title">Broadcasts</div>

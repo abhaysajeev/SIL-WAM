@@ -17,6 +17,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from app.core import broadcast_config, phone
 from app.models.broadcast_campaign import (
     MAX_RECIPIENTS_PER_CAMPAIGN,
     BroadcastRecipient,
@@ -89,12 +90,21 @@ def build_from_phonebooks(
     # Dedup across lists — the same number in two lists is one recipient. Meta bills
     # unique recipients, and being messaged twice by one campaign reads as a bug.
     # First occurrence wins, which also decides whose agent_id is snapshotted.
+    #
+    # Numbers are put in Meta's canonical form (918075571893) first, so `8075571893` and
+    # `+91 80755 71893` in two books are one recipient, and the chat thread this send
+    # writes is the same one the customer's reply will land in. A number the phone
+    # library cannot read keeps the old behaviour (7–15 digits, '+' stripped) rather
+    # than being dropped: it was sendable before this existed and must stay sendable.
+    region = broadcast_config.get(db, campaign.company_id).default_country
     seen: dict[str, PhonebookContact] = {}
     for c in contacts:
-        try:
-            mobile = _validate_mobile(c.mobile_no)
-        except ValueError:
-            continue          # unusable number — silently excluded, never sent
+        mobile = phone.try_normalize(c.mobile_no, region)
+        if mobile is None:
+            try:
+                mobile = _validate_mobile(c.mobile_no)
+            except ValueError:
+                continue          # unusable number — silently excluded, never sent
         seen.setdefault(mobile, c)
 
     if len(seen) > MAX_RECIPIENTS_PER_CAMPAIGN:

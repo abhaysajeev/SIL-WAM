@@ -26,6 +26,7 @@ from app.models.agent import Agent, AgentPhonebook, AgentSession, AgentTemplate
 from app.models.phonebook import Phonebook, PhonebookContact
 from app.models.whatsapp import WhatsAppTemplate
 from app.models.user import User
+from app.services import agent_timeline
 from app.utils.error_logger import log_error
 
 router = APIRouter(
@@ -414,6 +415,11 @@ def upsert_agent_config(
     # otherwise a live token keeps working until the next request happens to check.
     if not payload.is_active:
         _revoke_sessions(db, agent.id, "admin")
+        # …and stop customer replies reaching them. Teammates who also contacted the
+        # customer keep the chat; otherwise it is visible in the web panel only.
+        # (Releasing a device does NOT do this: the same agent carries on with their
+        # chats on the new handset.)
+        agent_timeline.remove_agent_everywhere(db, agent.id)
 
     try:
         db.commit()

@@ -21,6 +21,14 @@ Two screens come out of these endpoints:
 
 ---
 
+## Who sees a conversation
+
+Only agents who **contacted the customer** — sent them a broadcast or a reply from the
+app — in the **last 30 days**. Teammates who both contacted the same customer both see
+it, including each other's replies (`sent_by_agent_id` on each message). Everyone else
+gets `404` for that thread on every endpoint. A customer who answers after 30 days is
+seen in the web panel, not in the app; the next contact restores the conversation.
+
 ## `GET /threads` — the inbox
 
 ```
@@ -103,7 +111,8 @@ GET /agent-api/v1/threads/b4760a72-…/messages?limit=2
 |---|---|---|
 | `limit` | 30 | Max 100 |
 | `before_seq` | — | **Scroll up**: the messages immediately older than this `seq` |
-| `after_seq` | — | **Sync**: everything newer than this `seq` |
+| `after_seq` | — | Newer messages only (kept for older app builds — prefer `changed_after_rev`) |
+| `changed_after_rev` | — | **Sync**: every message that is new **or changed** (status tick, reaction, media) since this `rev`, oldest change first. `has_more: true` → call again from the highest `rev` returned |
 
 ```json
 {
@@ -207,13 +216,30 @@ GET …/messages?limit=30&before_seq=71      → the next 30 older (seq 70…41)
 
 Stop when `has_more` is `false`.
 
-**Sync** — catching up on what arrived while you were away:
+**Sync** — catching up on everything that happened while you were away:
 
 ```
-GET …/messages?after_seq=<highest seq you hold>
+GET …/messages?changed_after_rev=<highest rev you hold>
 ```
 
-Returned **oldest first**, so you can append them in order.
+Every thread and every message carries a `rev` — the thread's **change number**. It goes
+up by one for every change: a new message, a delivery status (✓ → ✓✓ → blue), a
+reaction, an attachment finishing its download. A message's `rev` is the number of its
+latest change.
+
+* Keep, per thread, the highest `rev` you have applied.
+* Call with `changed_after_rev=<that>`. Each returned message is either **new** (you do
+  not hold its `id` — insert it at its `seq`) or **changed** (you do — replace it).
+* Results are ordered by `rev`. If `has_more` is true, call again from the last `rev`.
+* `thread.rev` in the thread list tells you, without opening the chat, whether there is
+  anything to sync: it is larger than what you hold.
+* Sync on app start, on return to the foreground, on every push, and on reconnect.
+
+`after_seq` still works and returns new messages only — it **cannot** deliver status
+changes, because a status change updates an existing message and allocates no new `seq`.
+
+`seq` is still the message's **position** — sort the chat by `seq`, scroll up with
+`before_seq`. `rev` is only for "what changed".
 
 > **Why `seq` and not a timestamp.** The sequence is allocated per thread under a
 > database row lock, so it is gap-free: if you hold up to seq 40 and ask for

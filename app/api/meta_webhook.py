@@ -5,16 +5,21 @@ Handles:
   - GET  /webhook/meta  → Meta subscription verification handshake
   - POST /webhook/meta  → inbound messages, status receipts, button taps
 
-Auth: HMAC-SHA256 signature on X-Hub-Signature-256 using META_APP_SECRET.
-Always returns HTTP 200 to Meta (Meta retries on non-200 aggressively).
+Auth: HMAC-SHA256 signature on X-Hub-Signature-256, checked against META_APP_SECRET
+and any extra secrets in META_APP_SECRETS (one per Meta app subscribed to our WABAs).
+Always returns HTTP 200 to Meta once the signature is good (Meta retries on non-200).
 
-Processing is offloaded to a BackgroundTask with its own DB session so the
-HTTP response is returned to Meta immediately (avoids timeout retries).
+Processing depends on WEBHOOK_INBOX_MODE (see app/core/config.py):
+  off    — processed in a BackgroundTask with its own session; nothing stored first.
+  shadow — stored in webhook_inbox (status 'shadow') AND processed the old way.
+  on     — stored in webhook_inbox and committed BEFORE the 200, then processed from
+           there; the scheduler sweeps anything the BackgroundTask did not finish.
 """
 import hashlib
 import hmac
 import logging
 import traceback as tb_module
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -23,7 +28,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.failed_webhook import FailedWebhook
 from app.models.whatsapp import WhatsAppAccount
-from app.services import conversation_engine
+from app.services import account_health, conversation_engine, webhook_inbox
 from app.utils.error_logger import log_error
 
 logger = logging.getLogger(__name__)
@@ -66,6 +71,29 @@ async def meta_inbound(request: Request, background_tasks: BackgroundTasks):
     except Exception:
         return JSONResponse({"status": "ok"})
 
+    mode = (settings.WEBHOOK_INBOX_MODE or "off").lower()
+    if mode in ("on", "shadow"):
+        db = SessionLocal()
+        try:
+            row_id = webhook_inbox.store(
+                db, raw_body, body, status="pending" if mode == "on" else "shadow")
+        except Exception as exc:
+            db.rollback()
+            log_error("Webhook inbox store failed", "POST /webhook/meta", exc)
+            # Not acknowledged: Meta retries, and the retry gets another chance to store.
+            # Answering 200 here would lose the event, which is what the inbox prevents.
+            if mode == "on":
+                return JSONResponse({"error": "temporarily unavailable"}, status_code=503)
+            row_id = None
+        finally:
+            db.close()
+
+        if mode == "on":
+            if row_id is not None:
+                background_tasks.add_task(webhook_inbox.process_now, row_id)
+            # row_id None = an identical body is already stored; nothing more to do.
+            return JSONResponse({"status": "ok"})
+
     background_tasks.add_task(_process_payload_bg, body)
 
     # Always return 200 immediately — Meta retries on non-200
@@ -74,14 +102,31 @@ async def meta_inbound(request: Request, background_tasks: BackgroundTasks):
 
 # ── Signature verification ────────────────────────────────────────────────────
 
+def _app_secrets() -> list[str]:
+    """Every secret a genuine delivery may be signed with. Whitespace is stripped: a
+    secret pasted into .env with a trailing space or newline is the most common reason
+    a correct secret still fails."""
+    raw = [settings.META_APP_SECRET or ""] + (settings.META_APP_SECRETS or "").split(",")
+    seen: list[str] = []
+    for s in raw:
+        s = s.strip()
+        if s and s not in seen:
+            seen.append(s)
+    return seen
+
+
 def _verify_signature(body: bytes, header: str) -> bool:
-    if not settings.META_APP_SECRET:
+    secrets = _app_secrets()
+    if not secrets:
         logger.warning("META_APP_SECRET not set — skipping signature check (dev mode)")
         return True
-    expected = "sha256=" + hmac.new(
-        settings.META_APP_SECRET.encode(), body, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, header)
+    ok = False
+    for secret in secrets:
+        expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        # No early exit: every secret is compared, so timing does not reveal which
+        # position in the list matched.
+        ok = hmac.compare_digest(expected, header or "") or ok
+    return ok
 
 
 # ── Background processor (own DB session) ─────────────────────────────────────
@@ -121,7 +166,11 @@ def _process_payload(body: dict, db) -> None:
     for entry in body.get("entry", []):
         for change in entry.get("changes", []):
             if change.get("field") != "messages":
-                logger.info("META WEBHOOK skipping field=%s", change.get("field"))
+                # Template status, phone-number quality: account health, not messages.
+                if not account_health.handle_field(db, change.get("field"),
+                                                   change.get("value") or {},
+                                                   entry.get("id")):
+                    logger.info("META WEBHOOK skipping field=%s", change.get("field"))
                 continue
             value = change.get("value", {})
             meta  = value.get("metadata", {})
@@ -147,6 +196,10 @@ def _process_payload(body: dict, db) -> None:
                 logger.info("Meta webhook: no account for phone_number_id=%s", phone_number_id)
                 continue
 
+            # For the silence alarm. Its own statement, so a failure in a handler
+            # below cannot roll it back — hearing from Meta is true either way.
+            _touch_last_webhook(db, account)
+
             # Status receipts (delivered / read / failed)
             for status in statuses:
                 _handle_status(db, status, account)
@@ -156,9 +209,21 @@ def _process_payload(body: dict, db) -> None:
                 _handle_message(db, msg, account)
 
 
+def _touch_last_webhook(db, account) -> None:
+    try:
+        account.last_webhook_at = datetime.now(timezone.utc)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("Could not record last_webhook_at: %s", exc)
+
+
 def _handle_status(db, status: dict, account) -> None:
     conversation_engine.handle_status(db, status, account)
 
 
 def _handle_message(db, msg: dict, account) -> None:
     conversation_engine.handle_inbound(db, account, msg)
+    # Only reached when handling succeeded, so the fast-path key never marks a
+    # message that was not actually stored.
+    conversation_engine.remember_wamid(msg.get("id"))

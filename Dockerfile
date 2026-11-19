@@ -23,6 +23,7 @@ COPY static/ ./static/
 COPY alembic/ ./alembic/
 COPY alembic.ini .
 COPY run.py .
+COPY scripts/ ./scripts/
 
 EXPOSE 8000
 

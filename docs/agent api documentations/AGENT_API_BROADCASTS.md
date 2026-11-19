@@ -34,24 +34,47 @@ Content-Type:  application/json
 
 ```json
 {
-  "phonebook_id": "3f88c2a1-77de-4b30-9c11-0a4e6b2f9d55",
-  "contact_ids":  ["7932ad5b-a365-46e6-a939-30f43f083d02",
-                   "5d616872-05e9-4a0e-bb0b-9f5fbd2d9a9e"],
-  "template_id":  "50cf9403-741f-48b8-8baf-cf8f89fec74d",
-  "params":       ["Abhay", "LED TVs"],
-  "rendered":     "Hi Abhay, our Diwali offer on LED TVs is live.",
-  "name":         "Diwali — Kerala retail"
+  "phonebook_ids": ["3f88c2a1-77de-4b30-9c11-0a4e6b2f9d55",
+                    "a1b2c3d4-0000-4b30-9c11-0a4e6b2f9d55"],
+  "contact_ids":   ["7932ad5b-a365-46e6-a939-30f43f083d02",
+                    "5d616872-05e9-4a0e-bb0b-9f5fbd2d9a9e"],
+  "template_id":   "50cf9403-741f-48b8-8baf-cf8f89fec74d",
+  "params":        ["Abhay", "LED TVs"],
+  "header_media":  { "media_id": "0b9d6e1c-5a4f-4a43-9b0e-2f1d0c7b8a11" },
+  "rendered":      "Hi Abhay, our Diwali offer on LED TVs is live.",
+  "name":          "Diwali — Kerala retail"
 }
 ```
 
 | Field | Required | Notes |
 |---|---|---|
-| `phonebook_id` | yes | Must be one of **this agent's** phonebooks, from `GET /phonebooks` |
-| `contact_ids` | no | Send to only these contacts. **Omit for the whole phonebook** — see **Sending to some contacts** below |
+| `phonebook_ids` | yes | One or more of **this agent's** phonebooks, from `GET /phonebooks` (max 20). A number that is in two of them — in any spelling — is messaged **once** |
+| `phonebook_id` | — | Older single-book form, still accepted. Prefer `phonebook_ids` |
+| `contact_ids` | no | Send to only these contacts (from any of the chosen books). **Omit for every contact** — see **Sending to some contacts** below |
 | `template_id` | yes | Must be one of **this agent's** templates, from `GET /templates` |
 | `params` | yes | Ordered values for `{{1}}`, `{{2}}`, … Exactly `param_count` of them |
+| `header_media` | when the template has a media header | `{ "media_id": … }` from `POST /media`. **Required** when the template's `header.format` is `IMAGE`, `VIDEO` or `DOCUMENT`; **refused** otherwise. See **Media templates** below |
 | `rendered` | no | Your preview text. See **Rendering** below |
-| `name` | no | Campaign name shown in the web panel. Defaults to `"<phonebook> — <template>"` |
+| `name` | no | Campaign name shown in the web panel. Defaults to `"<first book> +N — <template>"` |
+
+### Media templates
+
+1. `POST /agent-api/v1/media` with the image (multipart field `file`) → `{ "media_id", "format", "expires_at", … }`.
+2. Send the broadcast with `"header_media": { "media_id": "<that id>" }`.
+
+The file is uploaded to WhatsApp **once**, at step 1, and that single upload is sent to
+every recipient. Upload as soon as the agent picks the file — a wrong type or a file
+that is too large is refused there, before the agent fills in the rest. See
+`AGENT_API_MEDIA.md` for the size and type rules.
+
+| `code` | HTTP | When |
+|---|---|---|
+| `header_media_required` | 400 | Media template, no `header_media`. `format` says which kind is needed |
+| `header_media_not_allowed` | 400 | `header_media` sent for a template without a media header |
+| `header_media_mismatch` | 400 | Wrong kind of file (`expected`, `supplied`) — e.g. a PDF for an IMAGE template |
+| `media_expired` | 410 | The file is older than 30 days — upload it again |
+| `not_found` / `media_not_found` | 404 | Unknown phonebook / file |
+| `too_many_phonebooks` | 400 | More than 20 phonebooks |
 
 > **`params` are the same for every recipient.** Per-recipient values come from a CSV
 > import in the web panel; the app sends one message to a list.

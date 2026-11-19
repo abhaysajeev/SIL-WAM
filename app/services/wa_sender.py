@@ -33,8 +33,10 @@ GRAPH_BASE = "https://graph.facebook.com/v21.0"
 # identifies it as retryable.
 SendResult = namedtuple(
     "SendResult",
-    ["ok", "meta_message_id", "error", "is_transient"],
-    defaults=[False],
+    # error_code: Meta's numeric code ("131047") when Meta gave one — for callers that
+    # need to classify a failure without parsing the human-readable `error`.
+    ["ok", "meta_message_id", "error", "is_transient", "error_code"],
+    defaults=[False, None],
 )
 
 
@@ -246,6 +248,33 @@ def send_document(
     return _post_message(account, message_body, "send_document")
 
 
+def send_media(
+    account: WhatsAppAccount,
+    to_phone: str,
+    fmt: str,
+    media_id: str,
+    caption: str | None = None,
+    filename: str | None = None,
+) -> SendResult:
+    """Send an image, video or document by Meta media id (an agent's reply)."""
+    kind = str(fmt or "image").lower()
+    if kind not in ("image", "video", "document"):
+        return SendResult(ok=False, meta_message_id=None,
+                          error=f"Unsupported media type '{fmt}'")
+    obj: dict = {"id": media_id}
+    if caption:
+        obj["caption"] = caption
+    if kind == "document" and filename:
+        obj["filename"] = filename
+    message_body = {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": kind,
+        kind: obj,
+    }
+    return _post_message(account, message_body, "send_media")
+
+
 # ── Shared POST helper ────────────────────────────────────────────────────────
 
 def _post_message(account: WhatsAppAccount, message_body: dict, caller: str) -> SendResult:
@@ -262,10 +291,13 @@ def _post_message(account: WhatsAppAccount, message_body: dict, caller: str) -> 
         if res.status_code == 200 and data.get("messages"):
             wamid = data["messages"][0].get("id")
             return SendResult(ok=True, meta_message_id=wamid, error=None)
-        err_msg = data.get("error", {}).get("message", f"Meta returned HTTP {res.status_code}")
+        err = data.get("error", {}) or {}
+        err_msg = err.get("message", f"Meta returned HTTP {res.status_code}")
+        code = err.get("code")
         # Preserve raw error for 131026 detection by callers
         return SendResult(ok=False, meta_message_id=None, error=err_msg,
-                          is_transient=_status_is_transient(res.status_code))
+                          is_transient=_status_is_transient(res.status_code),
+                          error_code=str(code) if code is not None else None)
     except Exception as e:
         log_error(
             f"WhatsApp {caller} failed",

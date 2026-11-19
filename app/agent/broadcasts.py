@@ -27,28 +27,46 @@ from app.core import broadcast_config, template_body
 from app.core.database import get_db
 from app.models.broadcast_campaign import BroadcastCampaign, BroadcastRecipient
 from app.models.whatsapp import WhatsAppAccount, WhatsAppTemplate
-from app.services import broadcast_builder, broadcast_screening
+from app.services import account_health, broadcast_builder, broadcast_screening, media_assets
 from app.utils.error_logger import log_error
 
 router = APIRouter(prefix="/broadcasts", tags=["Agent App"])
 
 
+MAX_PHONEBOOKS = 20
+
+
+class HeaderMediaIn(BaseModel):
+    # The id POST /agent-api/v1/media returned. One upload serves every recipient.
+    media_id: str
+
+
 class BroadcastIn(BaseModel):
-    phonebook_id: str
-    # Optional subset of that phonebook — the rows the agent ticked. **Omit the field**
-    # to send to the whole book; an empty list is refused rather than read as "all"
-    # (see errors.nothing_selected). Ids come from GET /phonebooks, which already
-    # returns every contact's id.
+    # One or more of this agent's phonebooks. A number in two of them is messaged once.
+    phonebook_ids: list[str] | None = None
+    # Deprecated single-book form, still accepted from older app builds.
+    phonebook_id: str | None = None
+    # Optional subset of those phonebooks — the rows the agent ticked. **Omit the field**
+    # to send to every contact; an empty list is refused rather than read as "all"
+    # (see errors.nothing_selected). Ids come from GET /phonebooks.
     contact_ids:  list[str] | None = None
     template_id:  str
     # Ordered values for {{1}}, {{2}}, … Must match the template's placeholder count,
     # which the app should re-read immediately before sending — see AGENT_API_TEMPLATES.
     params: list[str] = Field(default_factory=list)
+    # Required when the template's header is IMAGE, VIDEO or DOCUMENT; refused otherwise.
+    header_media: HeaderMediaIn | None = None
     # Optional. The app's own rendering of the message, accepted so the composer's
     # preview and the chat bubble read identically. The server renders independently
     # and warns on a mismatch — see below.
     rendered: str | None = None
     name: str | None = None
+
+    def book_ids(self) -> list[str]:
+        ids = list(self.phonebook_ids or [])
+        if self.phonebook_id:
+            ids.append(self.phonebook_id)
+        return list(dict.fromkeys(i for i in ids if i))
 
 
 class BroadcastOut(BaseModel):
@@ -81,16 +99,36 @@ def start_broadcast(
     # Checked by joining the mapping table rather than filtering afterwards, so a
     # phonebook id belonging to the right company but the wrong agent is a 404 and not
     # a partially-processed request.
-    book = db.execute(
+    wanted_books = payload.book_ids()
+    if not wanted_books:
+        raise errors.not_found("phonebook")
+    if len(wanted_books) > MAX_PHONEBOOKS:
+        raise errors.too_many_phonebooks(MAX_PHONEBOOKS)
+    bad_ids = []
+    for i in wanted_books:
+        try:
+            uuid.UUID(i)
+        except (ValueError, AttributeError, TypeError):
+            bad_ids.append(i)
+    if bad_ids:
+        raise errors.not_found("phonebook")
+    # Canonical spelling, so an upper-case id and its lower-case twin are one book.
+    wanted_books = list(dict.fromkeys(str(uuid.UUID(i)) for i in wanted_books))
+
+    books = db.execute(
         text("""SELECT p.id, p.name FROM phonebooks p
                   JOIN agent_phonebooks ap ON ap.phonebook_id = p.id
-                 WHERE ap.agent_id = :agent AND p.id = CAST(:pid AS uuid)
+                 WHERE ap.agent_id = :agent AND p.id = ANY(CAST(:pids AS uuid[]))
                    AND p.company_id = :company"""),
-        {"agent": ctx.agent_row_id, "pid": payload.phonebook_id,
-         "company": ctx.company_id},
-    ).first()
-    if book is None:
+        {"agent": ctx.agent_row_id, "pids": wanted_books, "company": ctx.company_id},
+    ).fetchall()
+    # All or nothing: one book the agent was not given makes the whole request a 404,
+    # never a broadcast to the books that did resolve.
+    if len(books) != len(wanted_books):
         raise errors.not_found("phonebook")
+    book_by_id = {str(b.id): b for b in books}
+    ordered_books = [book_by_id[i] for i in wanted_books]
+    book_uuid_list = [b.id for b in ordered_books]
 
     # ── Narrow to the selected contacts, if any ─────────────────────────────
     # Validated here rather than in the builder because only this layer knows how to
@@ -105,9 +143,6 @@ def start_broadcast(
         # counting it twice would make the cap check below reject a legal selection.
         wanted = list(dict.fromkeys(payload.contact_ids))
 
-        # Anything that is not a UUID is reported as stale rather than allowed to reach
-        # the CAST below, where Postgres would raise and the agent would see a 500 for
-        # what is really a bad id in the request.
         malformed = []
         for i in wanted:
             try:
@@ -119,14 +154,14 @@ def start_broadcast(
 
         found = db.execute(
             text("""SELECT pc.id FROM phonebook_contacts pc
-                     WHERE pc.phonebook_id = :pid
+                     WHERE pc.phonebook_id = ANY(CAST(:pids AS uuid[]))
                        AND pc.id = ANY(CAST(:ids AS uuid[]))"""),
-            {"pid": str(book.id), "ids": wanted},
+            {"pids": [str(b) for b in book_uuid_list], "ids": wanted},
         ).fetchall()
         found_ids = {str(r.id) for r in found}
 
-        # Scoped to this phonebook, so an id belonging to a book this agent was never
-        # given reads as unknown rather than quietly resolving.
+        # Scoped to the chosen phonebooks, so an id belonging to a book this agent was
+        # never given (or did not choose) reads as unknown rather than quietly resolving.
         missing = [i for i in wanted if i not in found_ids]
         if missing:
             raise errors.unknown_contacts(missing)
@@ -150,9 +185,22 @@ def start_broadcast(
     if len(payload.params) != expected:
         raise errors.param_count_mismatch(expected, len(payload.params))
 
-    if db.query(WhatsAppAccount).filter(
-            WhatsAppAccount.company_id == ctx.company_id).first() is None:
+    account = db.query(WhatsAppAccount).filter(
+        WhatsAppAccount.company_id == ctx.company_id).first()
+    if account is None:
         raise errors.no_whatsapp_account()
+    blocked = account_health.block_for(db, ctx.company_id)
+    if blocked:
+        raise errors.account_unavailable(blocked)
+
+    # The header file: required for an IMAGE/VIDEO/DOCUMENT template, refused for any
+    # other, and it must be the kind the template was approved with.
+    try:
+        header_media = media_assets.header_media_for(
+            db, account, template,
+            payload.header_media.media_id if payload.header_media else None)
+    except media_assets.MediaError as exc:
+        raise errors.media(exc.code, exc.message, **exc.extra)
 
     # The server renders from the approved components regardless. If the app supplied
     # its own string and they differ, the template changed at Meta after the app cached
@@ -169,7 +217,7 @@ def start_broadcast(
 
     campaign = BroadcastCampaign(
         company_id    = ctx.company_id,
-        name          = payload.name or f"{book.name} — {template.name}",
+        name          = payload.name or _auto_name(ordered_books, template),
         template_id   = template.id,
         param_mode    = "same",
         status        = "draft",
@@ -183,8 +231,9 @@ def start_broadcast(
     try:
         built = broadcast_builder.build_from_phonebooks(
             db, campaign, template,
-            phonebook_ids=[book.id],
+            phonebook_ids=book_uuid_list,
             params=list(payload.params),
+            header_media=header_media,
             contact_ids=selected,
         )
     except broadcast_builder.BuildError as exc:
@@ -251,3 +300,9 @@ def start_broadcast(
         status=campaign.status,
         server_time=datetime.now(timezone.utc),
     )
+
+
+def _auto_name(books, template) -> str:
+    first = books[0].name
+    more = f" +{len(books) - 1}" if len(books) > 1 else ""
+    return f"{first}{more} — {template.name}"[:200]
